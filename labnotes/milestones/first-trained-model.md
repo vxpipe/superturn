@@ -14,8 +14,9 @@ Read this section first when picking up the work.
   trained without it: real conversation labels are English only (AMI, ICSI);
   other languages rely on read and spontaneous speech, and non-English
   conversation is measured on Indic DiarBench.
-- Waiting on the user: Emilia access terms; Common Voice terms acceptance and
-  dataset IDs; `.env` filled in. Persistent storage is optional and decided
+- Emilia access: granted to the user's Hugging Face account (2026-11-20).
+- Waiting on the user: Common Voice terms acceptance and dataset IDs; `.env`
+  filled in. Persistent storage is optional and decided
   after the first campaign.
 - Next step: checkpoint A, "Labelling", starting with the per-track labeller
   tested on generated fixtures. Then shard writer, augmentation, features,
