@@ -1,0 +1,6 @@
+data/
+*.onnx
+*.pt
+*.ckpt
+.venv/
+__pycache__/
