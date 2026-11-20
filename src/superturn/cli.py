@@ -1,11 +1,11 @@
-"""Command line: `superturn plan|download|check-licences`."""
+"""Command line: `superturn plan|download|check-licences|inspect-archive|refresh-url-lists`."""
 
 from __future__ import annotations
 
 import argparse
 import sys
 
-from .acquire import check_licences, download, plan_source
+from .acquire import _hf_auth, check_licences, download, inspect_archive, plan_source
 from .sources import budget_bytes, load_sources, select
 
 
@@ -72,6 +72,29 @@ def cmd_check_licences(args) -> int:
     return 1 if problems else 0
 
 
+def cmd_inspect_archive(args) -> int:
+    """Show the member order at the start of an archive, to check that a
+    capped stream reaches the parts we need (for example MUSAN noise)."""
+    url = args.url
+    headers = {}
+    if not url.startswith("http"):  # REPO:PATH on Hugging Face
+        from huggingface_hub import hf_hub_url
+
+        repo, path = url.split(":", 1)
+        url, headers = hf_hub_url(repo, path, repo_type="dataset"), _hf_auth()
+    directories: dict[str, list[int]] = {}
+    for name, size, read in inspect_archive(url, int(args.mb * 1e6), headers):
+        key = "/".join(name.split("/")[: args.depth])
+        if key not in directories:
+            directories[key] = [0, 0, read]
+            print(f"{read / 1e6:9.1f} MB  first member in {key}")
+        directories[key][0] += 1
+        directories[key][1] += size
+    for key, (count, size, first) in directories.items():
+        print(f"{key}: {count} members, {size / 1e6:.1f} MB, starts at {first / 1e6:.1f} MB")
+    return 0
+
+
 def cmd_refresh_url_lists(args) -> int:
     from .url_lists import refresh
 
@@ -97,6 +120,14 @@ def main(argv: list[str] | None = None) -> int:
 
     p = sub.add_parser("check-licences", help="fail on raw data without a configured licence")
     p.set_defaults(func=cmd_check_licences)
+
+    p = sub.add_parser(
+        "inspect-archive", help="list member order at the start of an archive (reads --mb, saves nothing)"
+    )
+    p.add_argument("url", help="HTTPS URL or REPO:PATH of a Hugging Face dataset file")
+    p.add_argument("--mb", type=float, default=5.0, help="megabytes to read (default 5)")
+    p.add_argument("--depth", type=int, default=2, help="path components to group by")
+    p.set_defaults(func=cmd_inspect_archive)
 
     p = sub.add_parser("refresh-url-lists", help="rebuild the AMI headset URL list")
     p.set_defaults(func=cmd_refresh_url_lists)

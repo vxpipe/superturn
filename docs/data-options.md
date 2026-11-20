@@ -25,7 +25,7 @@ The model sees the audio up to the pause and must predict which one.
 
 | Source | Licence (as read 2026-11-20) | Languages | Role |
 |---|---|---|---|
-| Common Voice | CC0 (sentence text confirmed CC0; confirm the audio terms where it is downloaded) | 100+ | Language and speaker breadth: real voices on everyday microphones, cut at word boundaries for holds. |
+| Common Voice 17.0 | CC0 | 25 chosen languages | Language and speaker breadth: real voices on everyday microphones, cut at word boundaries for holds. Downloaded from the `fsicoli/common_voice_17_0` copy on Hugging Face, whose per-clip metadata (speaker, sentence) is in separate TSV files. |
 | VoxPopuli (data only) | CC0 | 16+ European | Spontaneous mid-sentence pauses and sentence endings. |
 | Emilia-YODAS (YODAS subset only) | CC BY 4.0; upstream YODAS2 is CC BY 3.0 | 6 | Spontaneous in-the-wild speech. |
 | FLEURS | CC BY 4.0 | ~100 | Held-out test set only: the same sentences in every language. |
@@ -110,9 +110,10 @@ uses:
   file footer is read, then only the chosen row groups are fetched. The
   publisher's row-group size is the smallest unit: ~124 MB for Indic
   DiarBench, ~0.5 GB for VoxPopuli.
-- **Partial tar streams** (Emilia-YODAS and FLEURS on Hugging Face, MUSAN,
-  Common Voice): the archive is read from the start and the connection closed
-  at a byte cap, keeping the members already read.
+- **Partial tar streams** (Emilia-YODAS, FLEURS and Common Voice on Hugging
+  Face, MUSAN): the archive is read from the start and the connection closed
+  at a byte cap, keeping the members already read. Metadata files are fetched
+  whole first.
 
 Measured on 2026-11-20 by `bin/plan-downloads`:
 
@@ -120,13 +121,13 @@ Measured on 2026-11-20 by `bin/plan-downloads`:
 |---|---|---|
 | AMI | 4-minute window per meeting, all 687 headset tracks | 5.3 GB |
 | Indic DiarBench | row groups up to 160 MB per language, 22 languages (test) | 3.0 GB |
-| Common Voice 27.0 | first 120 MB of each of 25 locale archives (~5 h each) | 2.9 GB |
+| Common Voice 17.0 | metadata TSV plus the first 120 MB of each of 25 language archives (~5 h each) | 2.7 GB |
 | FLEURS | first 60 MB of the test archive, 30 languages (test) | 1.8 GB |
 | Emilia-YODAS | first 300 MB of one archive, 6 languages | 1.8 GB |
 | VoxPopuli | one row group each for Spanish, Italian, Polish | 1.8 GB |
 | MUSAN | first 1.5 GB of the archive, noise and music only | 1.5 GB |
 | OpenSLR 26 | 16 kHz simulated RIRs | 0.2 GB |
-| **Total** | | **18.3 GB** |
+| **Total** | | **18.1 GB** |
 
 The smoke-test sample (`--sample`) is 0.9 GB.
 
@@ -134,13 +135,26 @@ Not downloaded: ICSI, whose files are shorten-compressed and can only be
 fetched whole; whole Common Voice locales (947 GB for all 295); whole FLEURS
 (878 GB); Emilia beyond one partial archive per language (2.1 TB).
 
-Known risks of partial streams, checked in the smoke test:
+Partial streams and how their risks are handled:
 
-- Common Voice keeps per-clip metadata (speaker ID, sentence) in TSV files.
-  If they come after the clips in the archive, a partial stream misses them;
-  the downloader records a warning when no TSV was read.
-- MUSAN may store noise after music; if the cap stops before noise, the
-  augmentation adds synthetic noise instead.
+- Common Voice: Mozilla's own archives keep the per-clip metadata (speaker ID,
+  sentence) inside the archive, possibly after the clips, so a partial stream
+  could miss it; they also need an account, terms accepted per language and
+  allow 30 downloads a day. The Hugging Face copy of release 17.0 keeps the
+  metadata in separate TSV files, so it is fetched whole first. Release 17.0
+  (2024) is older than 27.0, which does not matter for ~5 h per language.
+  Because the metadata is known first, the smoke test reports how many
+  speakers the streamed clips cover per language; if the start of an archive
+  is concentrated on few speakers, the byte budget is spread across the
+  archive's split files.
+- MUSAN may store noise after music and speech. `superturn inspect-archive`
+  reads the first few MB and lists the member order without saving anything;
+  the smoke test runs it. Noise does not depend on MUSAN alone: augmentation
+  also makes babble (3-8 other speakers from our own data mixed in, the most
+  realistic background for calls), white, pink and brown noise, mains hum,
+  line hiss, and codec and packet-loss effects. If benchmarks show
+  environmental noise (traffic, cafe, keyboard) matters and MUSAN's noise is
+  out of reach, a small permissive noise set is added file by file.
 - Emilia-YODAS audio has been through source separation and quality
   filtering, so it is mostly clean; noise comes from augmentation for every
   source.

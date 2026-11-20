@@ -77,7 +77,6 @@ def plan_source(source: Source, sample: bool = False) -> Plan:
         "hf_rowgroups": _plan_hf_rowgroups,
         "hf_tar_stream": _plan_hf_tar_stream,
         "http_tar_stream": _plan_http_tar_stream,
-        "mdc_tar_stream": _plan_mdc_tar_stream,
         "http": _plan_http,
     }[source.kind](source, sample)
 
@@ -192,22 +191,6 @@ def _plan_http(source: Source, sample: bool) -> Plan:
     )
 
 
-def _plan_mdc_tar_stream(source: Source, sample: bool) -> Plan:
-    with _request(source.get("release_metadata")) as response:
-        locales = json.load(response)["locales"]
-    cap = source.pick("max_bytes_per_file", sample)
-    ids = source.get("dataset_ids", {})
-    files, missing = [], []
-    for locale in source.pick("locales", sample):
-        if locale not in locales:
-            raise SystemExit(f"{source.name}: no release for locale {locale!r}")
-        files.append(PlannedFile(path=locale, size=min(int(locales[locale]["size"]), cap)))
-        if locale not in ids:
-            missing.append(locale)
-    note = f"dataset IDs not yet recorded for: {', '.join(missing)}" if missing else ""
-    return Plan(source, files, revision=source.get("release"), note=note)
-
-
 # ------------------------------------------------------- streaming helpers
 
 
@@ -270,6 +253,20 @@ def wav_bytes(fmt: bytes, pcm: bytes) -> bytes:
     return b"RIFF" + struct.pack("<I", len(body)) + body
 
 
+def inspect_archive(url: str, max_bytes: int, headers: dict | None = None) -> list[tuple[str, int, int]]:
+    """List (member name, size, bytes read so far) from the start of a tar
+    archive until `max_bytes` have been read. Nothing is written to disk."""
+    members = []
+    with _request(url, headers=headers) as response:
+        reader = CountingReader(response)
+        with tarfile.open(fileobj=reader, mode="r|*") as archive:
+            for member in archive:
+                members.append((member.name, member.size, reader.count))
+                if reader.count >= max_bytes:
+                    break
+    return members
+
+
 # ------------------------------------------------------------- downloading
 
 
@@ -281,7 +278,6 @@ def download(plan: Plan, workers: int = 8) -> None:
         "hf_rowgroups": _fetch_rowgroups,
         "hf_tar_stream": _fetch_hf_tar,
         "http_tar_stream": _fetch_http_tar,
-        "mdc_tar_stream": _fetch_mdc_tar,
         "http": _fetch_http,
     }[plan.source.kind]
     results = {}
@@ -379,30 +375,6 @@ def _fetch_http(plan: Plan, f: PlannedFile, target: Path) -> dict:
     if destination.stat().st_size != f.size:
         raise RuntimeError(f"{f.url}: size {destination.stat().st_size} != {f.size}")
     return {"bytes": f.size}
-
-
-@_once
-def _fetch_mdc_tar(plan: Plan, f: PlannedFile, target: Path) -> dict:
-    from datacollective.api_utils import _get_api_url
-
-    dataset_id = plan.source.get("dataset_ids", {}).get(f.path)
-    if not dataset_id:
-        raise SystemExit(
-            f"{plan.source.name}: accept the terms for locale {f.path} in the Mozilla Data "
-            "Collective web UI and record its dataset ID in configs/sources.toml"
-        )
-    key = os.environ.get("MDC_API_KEY") or ""
-    with _request(
-        f"{_get_api_url()}/datasets/{dataset_id}/download",
-        method="POST",
-        headers={"Authorization": f"Bearer {key}"},
-    ) as response:
-        download_url = json.load(response)["downloadUrl"]
-    with _request(download_url) as response:
-        result = stream_tar(response, target / f.path, f.size)
-    if not any((target / f.path).rglob("*.tsv")):
-        result["warning"] = "no TSV metadata within the streamed part of the archive"
-    return result
 
 
 def _write_manifest(plan: Plan, target: Path, results: dict) -> None:

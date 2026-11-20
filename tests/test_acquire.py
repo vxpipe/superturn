@@ -93,9 +93,19 @@ def test_configured_caps_fit_the_budget_without_network():
         s = sources[name]
         bound += len(s.get("languages")) * s.get("max_bytes_per_file")
     cv = sources["common_voice"]
-    bound += len(cv.get("locales")) * cv.get("max_bytes_per_file")
+    bound += len(cv.get("languages")) * (cv.get("max_bytes_per_file") + 5_000_000)  # + TSV
     bound += sources["musan"].get("max_bytes_per_file")
     bound += 22 * sources["indic_diarbench"].get("max_bytes_per_file")  # 22 language files
     bound += 3 * 600_000_000  # VoxPopuli: one row group (~0.5 GB) for 3 languages
     bound += 200_000_000  # OpenSLR 26
     assert bound <= budget_bytes(), f"{bound / 1e9:.1f} GB"
+
+
+def test_inspect_archive_lists_member_order_without_writing(tmp_path):
+    from superturn.acquire import inspect_archive
+
+    archive = tmp_path / "a.tar.gz"
+    archive.write_bytes(_tar_bytes({"musan/music/m.wav": b"m" * 1000, "musan/noise/n.wav": b"n" * 10}))
+    members = inspect_archive(archive.as_uri(), max_bytes=10**9)
+    assert [name for name, _, _ in members] == ["musan/music/m.wav", "musan/noise/n.wav"]
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["a.tar.gz"]

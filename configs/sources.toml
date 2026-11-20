@@ -10,9 +10,9 @@
 #   hf_rowgroups     selected row groups of Hugging Face parquet files; only
 #                    those column chunks are downloaded
 #   hf_tar_stream    read a Hugging Face tar archive from the start and stop at
-#                    `max_bytes_per_file`, keeping the members already read
+#                    `max_bytes_per_file`, keeping the members already read;
+#                    `extra_files` (metadata) are fetched whole
 #   http_tar_stream  the same for a plain HTTPS archive
-#   mdc_tar_stream   the same for Mozilla Data Collective archives (Common Voice)
 #   http             small whole files
 #
 # `bin/plan-downloads` prices each source from provider listings and file
@@ -85,8 +85,8 @@ attribution = "MUSAN, OpenSLR 17 (CC BY 4.0)"
 role = "noise"
 urls = ["https://www.openslr.org/resources/17/musan.tar.gz"]
 # Noise and music only; the speech part is not needed. Stops at the cap even
-# if the archive order leaves noise short; augmentation then adds synthetic
-# noise.
+# if the archive order leaves noise short (check with `superturn
+# inspect-archive`); augmentation also makes babble and synthetic noise.
 keep = ["musan/noise/*", "musan/music/*"]
 max_bytes_per_file = 1_500_000_000
 sample_max_bytes_per_file = 50_000_000
@@ -120,25 +120,23 @@ sample_files = ["sl/train-00000-of-*.parquet"]
 order = 3
 
 [sources.common_voice]
-kind = "mdc_tar_stream"
+kind = "hf_tar_stream"
+repo = "fsicoli/common_voice_17_0"
 licence = "CC0"
-attribution = "Mozilla Common Voice (CC0)"
+attribution = "Mozilla Common Voice 17.0 (CC0), from the fsicoli/common_voice_17_0 copy on Hugging Face"
 role = "train-read"
-release = "27.0"
-release_metadata = "https://raw.githubusercontent.com/common-voice/cv-dataset/main/datasets/scripted-speech/cv-corpus-27.0-2026-09-11.json"
-# Mozilla Data Collective allows 30 dataset downloads per day; terms are
-# accepted per dataset in the web UI. Each locale archive is read from the
-# start and stopped at the cap (~5 h of clips). `dataset_ids` maps locale to
-# the MDC dataset ID once its terms are accepted.
-locales = [
+# A copy of the official Common Voice 17.0 release. Unlike the official
+# archives, the per-clip metadata (client_id = speaker, sentence, gender) is in
+# separate TSV files, fetched whole (about 1-2 MB per language) before the
+# audio archive is read from the start and stopped at the cap (~5 h of clips).
+languages = [
   "hi", "bn", "ta", "te", "mr", "ml", "pa-IN", "ur", "or",
   "sw", "vi", "id", "th", "tr", "fa", "ja", "ko", "zh-CN",
   "it", "pl", "nl", "pt", "ru", "uk", "ar",
 ]
+files = ["audio/{language}/train/{language}_train_0.tar"]
+extra_files = ["transcript/{language}/train.tsv"]
 max_bytes_per_file = 120_000_000
-sample_locales = ["te"]
+sample_languages = ["te"]
 sample_max_bytes_per_file = 20_000_000
 order = 4
-
-[sources.common_voice.dataset_ids]
-# locale = "mdc-dataset-id"

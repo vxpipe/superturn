@@ -67,6 +67,21 @@ parameter turn model needs. Every source now fetches only the bytes it uses:
   offers from $0.12/h. Persistent storage is unnecessary: re-downloading
   20 GB is cheap.
 
+## Partial-stream risks
+
+- Common Voice switched to `fsicoli/common_voice_17_0` on Hugging Face (CC0
+  tag; copy of the official 17.0 release; 122 locales, all 25 chosen present).
+  Layout: `transcript/<lang>/<split>.tsv` (columns include client_id, path,
+  sentence, gender) and `audio/<lang>/<split>/<lang>_<split>_<n>.tar`. The TSV
+  is fetched whole, the tar streamed to the cap: 2.7 GB for 25 languages.
+  Removes the Mozilla account, API key, per-language terms and the 30/day
+  limit. The `datacollective` dependency is dropped.
+- MUSAN: no noise-only copy on Hugging Face (`noisy-alpaca-test/MUSAN-noise-
+  audio-only` is speech pre-mixed with noise; `csukuangfj/musan` is empty).
+  `superturn inspect-archive` reads the start of an archive and lists member
+  order without saving; run it in the smoke test. Babble and synthetic noise
+  are added to the augmentation plan so noise does not depend on MUSAN.
+
 ## Decisions
 
 - No downloads locally (user instruction); code is tested with generated

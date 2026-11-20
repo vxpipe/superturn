@@ -16,8 +16,10 @@ Read this section first when picking up the work.
   other languages rely on read and spontaneous speech, and non-English
   conversation is measured on Indic DiarBench.
 - Emilia access: granted to the user's Hugging Face account (2026-11-20).
-- Waiting on the user: Common Voice terms acceptance and dataset IDs; `.env`
-  filled in. Persistent storage is optional and decided
+- Common Voice comes from a Hugging Face copy of release 17.0 with separate
+  metadata TSVs, so no Mozilla account, API key or per-language terms are
+  needed (user agreed 2026-11-20).
+- Waiting on the user: `.env` filled in (`HF_TOKEN`, `SUPERTURN_SSH_KEY`). Persistent storage is optional and decided
   after the first campaign.
 - Next step: checkpoint A, "Labelling", starting with the per-track labeller
   tested on generated fixtures. Then shard writer, augmentation, features,
@@ -144,6 +146,8 @@ machine.
   Collective API; writes a manifest per source; ends with the licence check.
 - [x] Partial fetchers, unit-tested: WAV time slices by HTTP range, parquet
   row groups, tar streams stopped at a byte cap.
+- [x] `superturn inspect-archive`: member order at the start of an archive,
+  nothing saved.
 - [x] `superturn refresh-url-lists`: rebuilds the AMI headset list.
 - [x] Reproducible, per-dataset, speaker-disjoint splits with tests.
 - [x] Campaign scripts: `bin/vast-offers`, `vast-up`, `vast-push`,
@@ -166,7 +170,9 @@ machine.
 - [ ] Shard writer: pause-centred clips at 16 kHz (window plus decision
   silence plus a margin) with labels and metadata, compressed, fixed-size
   shards; deletes a source's raw files once its shards are written.
-- [ ] Augmentation, on the fly, seeded and logged: telephone channel (8 kHz
+- [ ] Augmentation, on the fly, seeded and logged: babble (3-8 other
+  speakers from our own training split mixed in); white, pink and brown
+  noise, mains hum and line hiss; telephone channel (8 kHz
   resample, G.711 μ-law and A-law round trip, 300–3400 Hz band-pass, packet
   loss 0–5%, jitter); Opus at 16 kHz and low bitrates; MUSAN noise at SNR
   0–30 dB; OpenSLR 26 reverb; gain; speed 0.9–1.1×; pitch ±2 semitones;
@@ -189,8 +195,10 @@ machine.
 
 Follows the [campaign runbook](../../docs/campaign-plan.md#runbook).
 
-- [ ] Access in place (Emilia, Common Voice IDs), `.env` filled.
-- [ ] Machine rented with `bin/vast-up`; smoke test passes on it.
+- [ ] `.env` filled (Emilia access is already granted).
+- [ ] Machine rented with `bin/vast-up`; smoke test passes on it, including
+  the speaker count of the streamed Common Voice sample and the MUSAN member
+  order from `superturn inspect-archive`.
 - [ ] All sources downloaded, manifests written, licence check passes.
 - [ ] Labels, speaker report, splits, frozen test sets and shards built per
   source; raw files deleted after shards are written.

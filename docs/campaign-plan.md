@@ -20,9 +20,7 @@ machine for anything that will be repeated; add or fix a script instead.
 - `bin/plan-downloads` prices the selection from provider listings; it
   downloads nothing.
 - Access is in place: Emilia access terms accepted for the Hugging Face
-  account in `HF_TOKEN`; Common Voice terms accepted for each locale in the
-  Mozilla Data Collective web UI and the dataset IDs recorded in
-  `configs/sources.toml` (30 downloads per day at most).
+  account in `HF_TOKEN`. All other sources are public.
 - `.env` filled from `.env.example`: tokens and the SSH key registered with
   vast.ai; optionally a storage remote.
 
@@ -58,8 +56,10 @@ worth keeping shards.
 2. `bin/vast-up OFFER_ID` rents the machine, waits for it, copies the repo and
    `.env` (`bin/vast-push`) and installs everything (`bin/vast-bootstrap`).
 3. Smoke test: `bin/vast-run -n smoke 'bin/download --sample'`, then the
-   pipeline's smoke command on the sample. Fix and `bin/vast-push` until it
-   passes. About 1 GB.
+   pipeline's smoke command on the sample, and `uv run superturn
+   inspect-archive https://www.openslr.org/resources/17/musan.tar.gz --mb 50`
+   to see whether MUSAN noise falls inside its cap. Fix and `bin/vast-push`
+   until it passes. About 1 GB.
 4. Acquire: `bin/vast-run -n download 'bin/download'`. Rerun after an
    interruption; it resumes. Ends with the licence check.
 5. Prepare, experiment, export and benchmark: the commands the milestone adds
