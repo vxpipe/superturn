@@ -22,18 +22,6 @@
 #
 # `sample_*` keys select the small subset used by the on-machine smoke test.
 
-[sources.basis]
-kind = "hf"
-repo = "basis-ai/basis-conversations-1500"
-licence = "Basis Data License 1.0"
-attribution = "Developed using Basis Conversations 1500, published by Basis"
-role = "train-conversation"
-gated = "manual"           # access approved per person by Basis
-include = ["*"]
-exclude = ["*.gif"]
-sample_include = ["README.md", "LICENSE", "fr/*.jsonl", "fr/audio/1R0v3Xgnt2bShDevp2Wr/*"]
-order = 3
-
 [sources.ami]
 kind = "urllist"
 list = "configs/url-lists/ami-headsets.tsv"
@@ -110,7 +98,7 @@ release = "27.0"
 release_metadata = "https://raw.githubusercontent.com/common-voice/cv-dataset/main/datasets/scripted-speech/cv-corpus-27.0-2026-09-11.json"
 # At most 30 per day (API limit). Chosen for languages the conversation and
 # spontaneous sets cover thinly. Spanish, German and French are left out: they
-# are large here (52, 37 and 31 GB) and well covered by Basis, VoxPopuli and
+# are large here (52, 37 and 31 GB) and covered by VoxPopuli and
 # Emilia-YODAS. Kannada and Gujarati have no Common Voice release.
 # `dataset_ids` maps locale to the MDC dataset ID once its terms are accepted
 # in the web UI.

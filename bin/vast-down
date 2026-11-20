@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
-# Release the campaign machine. Pushes results to persistent storage first;
-# refuses unless --yes is given, because everything not synced is lost.
+# Release the campaign machine. First copies results here (bin/vast-fetch) and,
+# if SUPERTURN_REMOTE is set, pushes processed data to that storage too.
+# Refuses unless --yes is given, and keeps the machine if any copy fails.
 source "$(dirname "$0")/_lib.sh"
 id="$(instance_id)"
-[[ "${1:-}" == "--yes" ]] || die "this destroys instance $id and its disk; rerun with --yes after checking bin/vast-ssh 'cd $REMOTE_REPO && bin/sync push' succeeded"
-remote "cd $REMOTE_REPO && export SUPERTURN_DATA=$REMOTE_DATA && bin/sync push" || die "final sync failed; instance kept"
+[[ "${1:-}" == "--yes" ]] || die "this destroys instance $id and its disk (raw data and shards are lost unless SUPERTURN_REMOTE is set); rerun with --yes"
+"$ROOT/bin/vast-fetch" || die "fetching results failed; instance kept"
+if [[ -n "${SUPERTURN_REMOTE:-}" ]]; then
+  remote "cd $REMOTE_REPO && export SUPERTURN_DATA=$REMOTE_DATA && bin/sync push" || die "push to storage failed; instance kept"
+fi
 vast destroy instance "$id"
 rm -f "$STATE/instance"
-echo "instance $id destroyed"
+echo "instance $id destroyed; results in data/campaigns/$id"

@@ -34,6 +34,16 @@ Measured with `bin/plan-downloads` from provider listings; nothing downloaded.
   languages, ~108 h, 12.1 GB; mono mixes with human-corrected
   speaker-attributed timestamps. Added as a test-only source.
 
+## Basis not available
+
+Basis access was not granted (user, 2026-11-20). Removed from
+`configs/sources.toml`; the selection drops from 685 GB to 430 GB. Real
+conversation training data is now English only (AMI, ICSI); see
+`docs/data-options.md`. Without Basis no source needs datacenter hosting: the
+offer query now allows verified community hosts (40 offers from $0.24/h,
+against 5 datacenter-only). Persistent storage became optional:
+`bin/vast-fetch` brings results back locally.
+
 ## Decisions
 
 - No downloads locally (user instruction); code is tested with generated

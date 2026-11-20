@@ -51,7 +51,7 @@ The current milestone, with a handover section on where work stands, is in
   machine, following `docs/campaign-plan.md`.
 - Cloud machines are rented for planned campaigns, not created and destroyed
   ad hoc. A campaign downloads once, runs a whole queue of experiments and
-  benchmarks, and syncs results to persistent storage before release.
+  benchmarks, and copies results back (`bin/vast-fetch`) before release.
 - Record each dataset's exact licence in `configs/sources.toml` and `docs/`
   before using it. Only permissive licences that allow commercial training and
   publishing the weights; no non-commercial or share-alike-on-the-model data.

@@ -111,7 +111,7 @@ in a conjunction, preposition or filler.
 
 ## Evaluation
 
-- Held-out sets: FLEURS, held-out Basis conversations per language, and local
+- Held-out sets: FLEURS, Indic DiarBench, held-out AMI and ICSI meetings, and local
   call recordings.
 - Conditions: wideband, telephone (8 kHz G.711), noisy.
 - Metrics: false-complete rate at a fixed pause length, accuracy, and median

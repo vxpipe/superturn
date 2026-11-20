@@ -25,55 +25,44 @@ The model sees the audio up to the pause and must predict which one.
 
 | Source | Licence (as read 2026-11-20) | Languages | Role |
 |---|---|---|---|
-| Basis Conversations 1500 | Basis Data License 1.0 (custom) | 22 | Main training data: ~1,500 h of real conversation, one 48 kHz FLAC per speaker on a shared clock, 2,645 speakers. Labels from Silero VAD on each track. |
 | Common Voice | CC0 (sentence text confirmed CC0; confirm the audio terms where it is downloaded) | 100+ | Language and speaker breadth: real voices on everyday microphones, cut at word boundaries for holds. |
 | VoxPopuli (data only) | CC0 | 16+ European | Spontaneous mid-sentence pauses and sentence endings. |
 | Emilia-YODAS (YODAS subset only) | CC BY 4.0; upstream YODAS2 is CC BY 3.0 | 6 | Spontaneous in-the-wild speech. |
 | FLEURS | CC BY 4.0 | ~100 | Held-out test set only: the same sentences in every language. |
 | Indic DiarBench | CC BY 4.0 | 22 Indian languages | Test set only: ~108 h of natural multi-speaker conversation (53 h near-field from one microphone per speaker, mixed to mono), human-corrected speaker-attributed timestamps. |
-| AMI, ICSI | CC BY 4.0 | English | Training conversations with one headset per speaker (see below). |
+| AMI, ICSI | CC BY 4.0 | English | The only training conversations: one headset per speaker, real hold/shift labels (see below). |
 | MUSAN | CC BY 4.0 | n/a | Noise, music and babble for augmentation. |
 | OpenSLR 26 (simulated RIRs) | Apache 2.0 | n/a | Room reverberation. |
 
-### Per-speaker conversation sources besides Basis
+### Per-speaker conversation sources
 
-English meetings recorded with a close-talk microphone per speaker. They give
-real hold/shift labels from per-track VAD and need no access approval, so the
-per-track labelling pipeline can be built and tested on them before Basis
-access is granted. Meetings have more overlap and more than two speakers, so
-they are weaker than one-to-one calls.
+Basis Conversations 1500 was the intended main source (22 languages, one track
+per speaker) but access was not granted (2026-11-20), so the model is trained
+without it. The per-speaker conversation data is English meetings recorded with
+a close-talk microphone per speaker. They give real hold/shift labels from
+per-track VAD. Meetings have more overlap and more than two speakers, so they
+are weaker than one-to-one calls.
 
 | Source | Licence | Languages | Notes |
 |---|---|---|---|
-| AMI Meeting Corpus | CC BY 4.0 per the current Edinburgh download page; older releases were under a modified NC-SA licence, so use only the current release | English | ~100 h, individual headset microphones. |
-| ICSI Meeting Corpus | CC BY 4.0 per its Edinburgh licence page | English | ~70 h, close-talk microphones. |
-| NOTSOFAR-1 | CC BY 4.0 (reported by a derivative card; confirm on the official page) | English | Close-talk per speaker in train and dev splits only. |
-| Full-duplex dual-track set (arXiv 2509.04093) | CC BY 4.0 (verify) | Chinese, English | ~15 h, one track per speaker. Small. |
+| AMI Meeting Corpus | CC BY 4.0 per the current Edinburgh download page; older releases were under a modified NC-SA licence, so use only the current release | English | ~100 h, individual headset microphones. Selected. |
+| ICSI Meeting Corpus | CC BY 4.0 per its Edinburgh licence page | English | ~70 h, close-talk microphones. Selected. |
+| NOTSOFAR-1 | CC BY 4.0 (reported by a derivative card; confirm on the official page) | English | Close-talk per speaker in train and dev splits only. Candidate. |
+| Full-duplex dual-track set (arXiv 2509.04093) | CC BY 4.0 (verify) | Chinese, English | ~15 h, one track per speaker. Small. Candidate. |
 
-No large, permissively licensed, multilingual per-speaker conversation source
-other than Basis was found on 2026-11-20. Without Basis, non-English shift
-labels come only from the weak segment ends of spontaneous speech and from
-read-speech sentence ends.
+No other large, permissively licensed, multilingual per-speaker conversation
+source was found on 2026-11-20. Consequences:
+
+- Real shift labels ("someone else took the turn") exist only in English
+  training data. In other languages, shift examples come from read-speech
+  sentence ends and the weak segment ends of spontaneous speech.
+- Non-English conversational behaviour is measured only on test sets: Indic
+  DiarBench (22 Indian languages, human-labelled turns). The benchmark must
+  report how far non-English results fall behind English; that gap decides
+  whether more conversation data is needed.
 
 ### Licence notes
 
-- **Basis Data License 1.0** allows training for research and commercial
-  purposes and publishing, distributing and selling the resulting models. It
-  states that a model is not a copy of the dataset and imposes no share-alike.
-  Conditions: attribution to Basis in the model card; no redistribution of the
-  audio beyond short excerpts (30 s per clip, 5 min per publication); no
-  attempt to identify or contact participants; no voice clones of
-  participants. Models made before any termination may still be used. The
-  model can be open, but the training audio cannot be republished; others can
-  request access from Basis to reproduce training.
-- Basis access is approved per person by Basis and is non-transferable; each
-  person downloading needs their own access. Cloud compute and storage are
-  allowed when the provider is bound by written confidentiality terms and does
-  not use the data for itself. Required attribution: "Developed using Basis
-  Conversations 1500, published by Basis", with the repository URL and release
-  identifier, in the model card. Basis may terminate only for an uncured
-  material breach (30 days to cure); models made before termination remain
-  usable. No field-of-use restrictions; no indemnity; California law.
 - **VoxPopuli**: only the data is CC0. Its released pretrained models and
   code are CC BY-NC 4.0 and must not be used.
 - **Emilia**: download only the YODAS subset. The original Emilia subset is
@@ -90,6 +79,7 @@ read-speech sentence ends.
 | Seamless Interaction | CC BY-NC 4.0 |
 | Original Emilia subset | CC BY-NC 4.0 |
 | Global-Conversational-Speech | Paid commercial licence |
+| Basis Conversations 1500 | Access requested 2026-11-20 and not granted. Its licence (Basis Data License 1.0) would have allowed commercial training and open weights. |
 | Switchboard, Fisher, CALLHOME (LDC) | Paid, restricted licence |
 
 ## Channel augmentation
@@ -112,7 +102,6 @@ the selections in `configs/sources.toml`, not whole datasets.
 
 | Source | Selection | Files | Size | Whole dataset |
 |---|---|---|---|---|
-| Basis Conversations 1500 | everything | 13,764 | 254.6 GB | same |
 | Common Voice 27.0 | 25 locales | 25 | 168.3 GB | 947 GB, 295 locales |
 | VoxPopuli | 2 training shards per language | 29 | 75.8 GB | ~339 GB per-language data |
 | FLEURS | test split, all languages | 204 | 50.7 GB | 878 GB including a parquet copy |
@@ -122,15 +111,10 @@ the selections in `configs/sources.toml`, not whole datasets.
 | Indic DiarBench | everything | 23 | 12.1 GB | same |
 | MUSAN | everything | 1 | 11.1 GB | same |
 | OpenSLR 26 | 16 kHz simulated RIRs | 1 | 0.2 GB | same |
-| **Total** | | | **685 GB** | |
-
-Basis is uneven across languages: Spanish 82 GB, Arabic 48 GB, Hindi 33 GB,
-English 28 GB and Portuguese 21 GB of audio; most other languages have
-1–7 GB, and French, German, Polish, Dutch, Mingrelian and Ukrainian less than
-1.2 GB each. Its 22 languages are not 22 equal training sets.
+| **Total** | | | **430 GB** | |
 
 Common Voice: Spanish (52 GB), German (37 GB) and French (31 GB) are left out
-because Basis, VoxPopuli and Emilia-YODAS cover them; Kannada and Gujarati
+because VoxPopuli (all three) and Emilia-YODAS (German, French) cover them; Kannada and Gujarati
 have no release. Each locale is one archive, so a locale cannot be partly
 downloaded, and Mozilla Data Collective allows 30 dataset downloads per day
 after its terms are accepted in the web UI per dataset.
@@ -145,9 +129,8 @@ after its terms are accepted in the web UI per dataset.
 - Small, essential sources download first (`order` in the config), so
   labelling can start while the large ones are still arriving.
 - Each source is processed into shards and its raw files deleted once the
-  shards are synced to persistent storage, so the machine needs ~1 TB of disk
-  rather than raw plus processed copies. Later campaigns pull shards, never raw
-  data.
+  shards are written, so the machine needs well under 1 TB of disk rather
+  than raw plus processed copies.
 
 ## Speaker variety
 
@@ -156,7 +139,6 @@ speakers, and no speaker may dominate.
 
 | Source | Speakers (as stated) |
 |---|---|
-| Basis | 2,645 |
 | Common Voice, 25 chosen locales | 81,574 contributors in total; the smallest locale (pa-IN) has 75 |
 | Indic DiarBench | 485 in meetings plus ~750 in-the-wild |
 | AMI, ICSI, VoxPopuli, FLEURS, Emilia-YODAS | not stated on the cards; counted from the data during labelling |

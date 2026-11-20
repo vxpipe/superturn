@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Copy campaign results from the machine to this computer, under
+# data/campaigns/<instance>/: reports, logs, download manifests, run metrics,
+# checkpoints and ONNX exports. Small (model files are ~1-4 MB each). Raw
+# audio and shards are not copied. Safe to rerun.
+source "$(dirname "$0")/_lib.sh"
+id="$(instance_id)"
+dest="$ROOT/data/campaigns/$id"
+mkdir -p "$dest"
+ssh_target
+mapfile -t opts < <(ssh_opts)
+remote "mkdir -p $REMOTE_DATA/manifests && cp -f $REMOTE_DATA/raw/*/MANIFEST.json $REMOTE_DATA/manifests/ 2>/dev/null; true"
+for d in reports logs manifests runs exports; do
+  rsync -az -e "ssh ${opts[*]}" --exclude '*.tar' --exclude '*.flac' --exclude '*.wav' \
+    "$SSH_HOST:$REMOTE_DATA/$d" "$dest/" 2>/dev/null || [[ $? -eq 23 ]]
+done
+du -sh "$dest"

@@ -7,12 +7,16 @@ Status: in progress (checkpoint A). Last updated 2026-11-20.
 Read this section first when picking up the work.
 
 - Done: data sources chosen and licences read; the download selection is
-  codified and priced (685 GB); downloads, licence check, reproducible
+  codified and priced (430 GB); downloads, licence check, reproducible
   speaker-disjoint splits and the vast.ai campaign scripts are written; unit
   tests pass (`uv run pytest`).
-- Waiting on the user: Basis access approval (requested 2026-11-20); Common
-  Voice terms acceptance and dataset IDs; Emilia access terms; persistent
-  storage choice (`SUPERTURN_REMOTE`); `.env` filled in.
+- Basis Conversations 1500 access was not granted (2026-11-20). The model is
+  trained without it: real conversation labels are English only (AMI, ICSI);
+  other languages rely on read and spontaneous speech, and non-English
+  conversation is measured on Indic DiarBench.
+- Waiting on the user: Emilia access terms; Common Voice terms acceptance and
+  dataset IDs; `.env` filled in. Persistent storage is optional and decided
+  after the first campaign.
 - Next step: checkpoint A, "Labelling", starting with the per-track labeller
   tested on generated fixtures. Then shard writer, augmentation, features,
   models, export, benchmark, experiment queue, and one smoke command.
@@ -77,8 +81,9 @@ only if the first one's decision record calls for it.
   then continues, with no other speaker starting in between.
 - Backchannels ("mm-hm", "yeah") from the other speaker during a pause do not
   make it a shift. Speech shorter than 1 s on the other track, with the first
-  speaker continuing afterwards, is treated as a backchannel. Basis human
-  backchannel labels are used to check this rule.
+  speaker continuing afterwards, is treated as a backchannel. The AMI and ICSI
+  dialogue-act annotations, which mark backchannels, are used to check this
+  rule.
 - Indic DiarBench labels come from its human-corrected speaker-attributed
   timestamps instead of VAD on separate tracks.
 - Each example records: source, language, speaker ID, recording ID, group,
@@ -116,7 +121,7 @@ Implemented in `src/superturn/splits.py`, tested in `tests/test_splits.py`.
   otherwise.
 - Never downloaded locally; only on the campaign machine.
 - Each source is processed into shards and its raw files deleted once the
-  shards are synced to persistent storage.
+  shards are written.
 
 ## Checkpoints
 
@@ -130,18 +135,19 @@ machine.
 - [x] Source registry `configs/sources.toml` with licence, attribution, role,
   selection and smoke-test sample per source.
 - [x] `bin/plan-downloads`: exact sizes from provider listings, no downloads.
-  Full selection 685 GB; smoke-test sample about 4 GB.
+  Full selection 430 GB; smoke-test sample about 3 GB.
 - [x] `bin/download`: Hugging Face (pinned commit, size-verified), HTTP and
   URL lists (resumable, size-verified), Common Voice via the Mozilla Data
   Collective API; writes a manifest per source; ends with the licence check.
 - [x] `superturn refresh-url-lists`: rebuilds the AMI and ICSI headset lists.
 - [x] Reproducible, per-dataset, speaker-disjoint splits with tests.
 - [x] Campaign scripts: `bin/vast-offers`, `vast-up`, `vast-push`,
-  `vast-bootstrap`, `vast-run`, `vast-ssh`, `vast-down`, `bin/sync`.
+  `vast-bootstrap`, `vast-run`, `vast-ssh`, `vast-fetch`, `vast-down`, and
+  `bin/sync` for optional persistent storage.
 - [ ] Add PyTorch, ONNX, ONNX Runtime, Silero VAD and pyannote to the project
   when the code that needs them lands; pin in the lockfile.
 - [ ] Labelling (rules above), each with fixture tests:
-  - per-track labeller (Basis, AMI, ICSI): Silero VAD per track, hold/shift;
+  - per-track labeller (AMI, ICSI): Silero VAD per track, hold/shift;
   - human-timestamp labeller (Indic DiarBench);
   - read speech (Common Voice, FLEURS): a permissively licensed multilingual
     forced aligner, its licence and models recorded (aligners whose models are
@@ -154,7 +160,7 @@ machine.
   language.
 - [ ] Shard writer: pause-centred clips at 16 kHz (window plus decision
   silence plus a margin) with labels and metadata, compressed, fixed-size
-  shards; deletes a source's raw files only after its shards are synced.
+  shards; deletes a source's raw files once its shards are written.
 - [ ] Augmentation, on the fly, seeded and logged: telephone channel (8 kHz
   resample, G.711 μ-law and A-law round trip, 300–3400 Hz band-pass, packet
   loss 0–5%, jitter); Opus at 16 kHz and low bitrates; MUSAN noise at SNR
@@ -178,12 +184,11 @@ machine.
 
 Follows the [campaign runbook](../../docs/campaign-plan.md#runbook).
 
-- [ ] Access in place (Basis, Emilia, Common Voice IDs), `.env` filled,
-  storage remote reachable.
+- [ ] Access in place (Emilia, Common Voice IDs), `.env` filled.
 - [ ] Machine rented with `bin/vast-up`; smoke test passes on it.
 - [ ] All sources downloaded, manifests written, licence check passes.
 - [ ] Labels, speaker report, splits, frozen test sets and shards built per
-  source; raw files deleted after shards are synced.
+  source; raw files deleted after shards are written.
 - [ ] 50 randomly sampled labelled pauses per language listened to and marked
   correct or wrong in labnotes; per-track labels at least 90% correct.
 
@@ -196,7 +201,8 @@ stage's results automatically.
 - [ ] **Stage 1, architecture and size**: model A and model B at about 150k,
   500k and 1M parameters; 3 s window; all data; two seeds each.
 - [ ] **Stage 2, window**: the best two from stage 1 at 1, 2, 4 and 8 s.
-- [ ] **Stage 3, data mix**: the best configuration on conversations only;
+- [ ] **Stage 3, data mix**: the best configuration on English conversations
+  only;
   plus read-speech cuts; plus spontaneous speech; all data; with and without
   the weak-shift class.
 - [ ] **Stage 4, cut-off cost**: the false-complete loss weight at three
@@ -204,7 +210,8 @@ stage's results automatically.
 - [ ] **Stage 5, export**: the best three configurations exported to int8
   ONNX; int8 against float on validation, AUC drop at most 0.01
   (quantisation-aware training if not).
-- [ ] Every run's metrics, checkpoint and report synced to storage.
+- [ ] Every run's metrics, checkpoint and report fetched locally
+  (`bin/vast-fetch`).
 
 ### D. Benchmark and decision
 
@@ -248,6 +255,8 @@ stage 1 results, and any change is recorded here with its reason.
   condition.
 - [ ] No language in the test sets has a false-complete rate more than twice
   the overall rate; languages that miss are listed with their example counts.
+  The English-to-non-English gap on conversation test sets is reported
+  separately, since only English has real conversation training data.
 - [ ] Telephone plus noise (10 dB) costs at most 3 percentage points of
   false-complete rate against clean.
 - [ ] Beats every silence-only baseline on time to decision at an equal or

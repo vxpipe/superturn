@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# Copy campaign results between $SUPERTURN_DATA and persistent storage
-# ($SUPERTURN_REMOTE, an rclone remote). Usage: bin/sync push|pull [DIR...]
-# Default directories hold processed data and results, never raw audio. Basis
-# audio and anything containing it stays in private storage only.
+# Optional: copy processed data and results between $SUPERTURN_DATA and
+# persistent storage ($SUPERTURN_REMOTE, an rclone remote), so shards survive
+# the campaign machine. Usage: bin/sync push|pull [DIR...]
+# Default directories hold processed data and results, never raw audio.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [[ -f .env ]] && { set -a; source .env; set +a; }

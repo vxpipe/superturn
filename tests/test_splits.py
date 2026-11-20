@@ -5,8 +5,8 @@ from superturn.splits import assign, speaker_groups, split_recordings
 
 def test_split_is_reproducible_and_order_independent():
     recordings = [(f"conv{i}", [f"spk{i}", f"spk{i + 1000}"]) for i in range(200)]
-    first = split_recordings("basis", "train-conversation", recordings)
-    second = split_recordings("basis", "train-conversation", list(reversed(recordings)))
+    first = split_recordings("icsi", "train-conversation", recordings)
+    second = split_recordings("icsi", "train-conversation", list(reversed(recordings)))
     assert first == second
 
 
@@ -25,7 +25,7 @@ def test_no_speaker_crosses_splits_when_speakers_repeat_across_recordings():
 
 
 def test_every_dataset_is_split_in_roughly_the_agreed_shares():
-    for source in ("basis", "ami", "voxpopuli"):
+    for source in ("icsi", "ami", "voxpopuli"):
         counts = Counter(assign(source, f"g{i}", "train-read") for i in range(5000))
         assert 0.77 < counts["train"] / 5000 < 0.83
         assert 0.08 < counts["validation"] / 5000 < 0.12
