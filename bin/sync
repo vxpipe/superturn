@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Copy campaign results between $SUPERTURN_DATA and persistent storage
+# ($SUPERTURN_REMOTE, an rclone remote). Usage: bin/sync push|pull [DIR...]
+# Default directories hold processed data and results, never raw audio. Basis
+# audio and anything containing it stays in private storage only.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+[[ -f .env ]] && { set -a; source .env; set +a; }
+: "${SUPERTURN_DATA:?set SUPERTURN_DATA}"
+: "${SUPERTURN_REMOTE:?set SUPERTURN_REMOTE in .env}"
+direction="${1:?usage: bin/sync push|pull [DIR...]}"; shift
+dirs=("$@"); [[ ${#dirs[@]} -eq 0 ]] && dirs=(shards tests runs reports logs manifests)
+mkdir -p "$SUPERTURN_DATA/manifests"
+cp -f "$SUPERTURN_DATA"/raw/*/MANIFEST.json "$SUPERTURN_DATA/manifests/" 2>/dev/null || true
+for d in "${dirs[@]}"; do
+  case "$direction" in
+    push) [[ -d "$SUPERTURN_DATA/$d" ]] && rclone copy --transfers 16 "$SUPERTURN_DATA/$d" "$SUPERTURN_REMOTE/$d" ;;
+    pull) rclone copy --transfers 16 "$SUPERTURN_REMOTE/$d" "$SUPERTURN_DATA/$d" ;;
+    *) echo "usage: bin/sync push|pull [DIR...]" >&2; exit 2 ;;
+  esac
+done

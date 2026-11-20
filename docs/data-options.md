@@ -1,6 +1,7 @@
 # Training data options
 
-Status: research, 2026-11-20. Nothing downloaded yet.
+Status: research, 2026-11-20. Nothing downloaded yet. Sources and download
+selections are codified in `configs/sources.toml`.
 
 ## Licence policy
 
@@ -29,8 +30,30 @@ The model sees the audio up to the pause and must predict which one.
 | VoxPopuli (data only) | CC0 | 16+ European | Spontaneous mid-sentence pauses and sentence endings. |
 | Emilia-YODAS (YODAS subset only) | CC BY 4.0; upstream YODAS2 is CC BY 3.0 | 6 | Spontaneous in-the-wild speech. |
 | FLEURS | CC BY 4.0 | ~100 | Held-out test set only: the same sentences in every language. |
+| Indic DiarBench | CC BY 4.0 | 22 Indian languages | Test set only: ~108 h of natural multi-speaker conversation (53 h near-field from one microphone per speaker, mixed to mono), human-corrected speaker-attributed timestamps. |
+| AMI, ICSI | CC BY 4.0 | English | Training conversations with one headset per speaker (see below). |
 | MUSAN | CC BY 4.0 | n/a | Noise, music and babble for augmentation. |
 | OpenSLR 26 (simulated RIRs) | Apache 2.0 | n/a | Room reverberation. |
+
+### Per-speaker conversation sources besides Basis
+
+English meetings recorded with a close-talk microphone per speaker. They give
+real hold/shift labels from per-track VAD and need no access approval, so the
+per-track labelling pipeline can be built and tested on them before Basis
+access is granted. Meetings have more overlap and more than two speakers, so
+they are weaker than one-to-one calls.
+
+| Source | Licence | Languages | Notes |
+|---|---|---|---|
+| AMI Meeting Corpus | CC BY 4.0 per the current Edinburgh download page; older releases were under a modified NC-SA licence, so use only the current release | English | ~100 h, individual headset microphones. |
+| ICSI Meeting Corpus | CC BY 4.0 per its Edinburgh licence page | English | ~70 h, close-talk microphones. |
+| NOTSOFAR-1 | CC BY 4.0 (reported by a derivative card; confirm on the official page) | English | Close-talk per speaker in train and dev splits only. |
+| Full-duplex dual-track set (arXiv 2509.04093) | CC BY 4.0 (verify) | Chinese, English | ~15 h, one track per speaker. Small. |
+
+No large, permissively licensed, multilingual per-speaker conversation source
+other than Basis was found on 2026-11-20. Without Basis, non-English shift
+labels come only from the weak segment ends of spontaneous speech and from
+read-speech sentence ends.
 
 ### Licence notes
 
@@ -80,6 +103,72 @@ over the phone, so this matters more than room noise.
 Production call recordings are the closest match to real use, but they are
 customer data: local evaluation only, never used for training, committed or
 published.
+
+## Download plan and sizes
+
+Measured on 2026-11-20 by `bin/plan-downloads` from provider file listings
+(Hugging Face trees, HEAD requests, Common Voice release metadata). Sizes are
+the selections in `configs/sources.toml`, not whole datasets.
+
+| Source | Selection | Files | Size | Whole dataset |
+|---|---|---|---|---|
+| Basis Conversations 1500 | everything | 13,764 | 254.6 GB | same |
+| Common Voice 27.0 | 25 locales | 25 | 168.3 GB | 947 GB, 295 locales |
+| VoxPopuli | 2 training shards per language | 29 | 75.8 GB | ~339 GB per-language data |
+| FLEURS | test split, all languages | 204 | 50.7 GB | 878 GB including a parquet copy |
+| AMI | individual headsets, 171 meetings | 687 | 46.6 GB | adds mixes, lapels, arrays, video |
+| ICSI | individual headsets | 922 | 34.1 GB | adds mixes |
+| Emilia-YODAS | 5 shards (~1 GB each) per language | 30 | 31.6 GB | 2.1 TB |
+| Indic DiarBench | everything | 23 | 12.1 GB | same |
+| MUSAN | everything | 1 | 11.1 GB | same |
+| OpenSLR 26 | 16 kHz simulated RIRs | 1 | 0.2 GB | same |
+| **Total** | | | **685 GB** | |
+
+Basis is uneven across languages: Spanish 82 GB, Arabic 48 GB, Hindi 33 GB,
+English 28 GB and Portuguese 21 GB of audio; most other languages have
+1–7 GB, and French, German, Polish, Dutch, Mingrelian and Ukrainian less than
+1.2 GB each. Its 22 languages are not 22 equal training sets.
+
+Common Voice: Spanish (52 GB), German (37 GB) and French (31 GB) are left out
+because Basis, VoxPopuli and Emilia-YODAS cover them; Kannada and Gujarati
+have no release. Each locale is one archive, so a locale cannot be partly
+downloaded, and Mozilla Data Collective allows 30 dataset downloads per day
+after its terms are accepted in the web UI per dataset.
+
+### How downloads are made cheaper
+
+- Only the parts used are listed: test splits only for test sets, a few shards
+  of the very large sets, individual headset tracks only for AMI and ICSI.
+- Each plan is priced exactly before anything downloads.
+- Hugging Face downloads pin the dataset commit and verify every file size;
+  HTTP downloads resume and verify sizes; everything is idempotent.
+- Small, essential sources download first (`order` in the config), so
+  labelling can start while the large ones are still arriving.
+- Each source is processed into shards and its raw files deleted once the
+  shards are synced to persistent storage, so the machine needs ~1 TB of disk
+  rather than raw plus processed copies. Later campaigns pull shards, never raw
+  data.
+
+## Speaker variety
+
+The model must work for voices it has never heard, so every source needs many
+speakers, and no speaker may dominate.
+
+| Source | Speakers (as stated) |
+|---|---|
+| Basis | 2,645 |
+| Common Voice, 25 chosen locales | 81,574 contributors in total; the smallest locale (pa-IN) has 75 |
+| Indic DiarBench | 485 in meetings plus ~750 in-the-wild |
+| AMI, ICSI, VoxPopuli, FLEURS, Emilia-YODAS | not stated on the cards; counted from the data during labelling |
+
+Rules, enforced in code during labelling and splitting:
+
+- Speaker counts are computed from the data for every source and language and
+  reported; a source or language below 50 speakers is flagged.
+- Examples are capped per speaker, so one voice cannot exceed a fixed share of
+  any source's training examples.
+- Splits are speaker-disjoint (see the milestone), and benchmark results come
+  only from voices never seen in training.
 
 ## Labelling tools
 

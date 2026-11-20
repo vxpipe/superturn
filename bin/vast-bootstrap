@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Runs ON the campaign machine (called by bin/vast-up): system packages, uv,
+# rclone, the Python environment, and the data directory. Safe to rerun.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+source configs/campaign.env
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq
+apt-get install -y -qq ffmpeg tmux rsync curl ca-certificates unzip >/dev/null
+command -v rclone >/dev/null || curl -fsSL https://rclone.org/install.sh | bash >/dev/null
+bin/setup
+mkdir -p "$REMOTE_DATA/logs"
+grep -q SUPERTURN_DATA ~/.bashrc 2>/dev/null || echo "export SUPERTURN_DATA=$REMOTE_DATA" >> ~/.bashrc
+df -h "$REMOTE_DATA" | tail -1
+nproc; nvidia-smi -L || true

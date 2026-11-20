@@ -4,3 +4,6 @@ data/
 *.ckpt
 .venv/
 __pycache__/
+.env
+.campaign/
+.pytest_cache/

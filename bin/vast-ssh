@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Open a shell on (or run a command on) the campaign machine.
+source "$(dirname "$0")/_lib.sh"
+remote -t "$@"

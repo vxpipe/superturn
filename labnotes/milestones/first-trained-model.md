@@ -1,6 +1,23 @@
 # First trained turn model
 
-Status: specified 2026-11-20, not started.
+Status: in progress (checkpoint A). Last updated 2026-11-20.
+
+## Handover: current state and next step
+
+Read this section first when picking up the work.
+
+- Done: data sources chosen and licences read; the download selection is
+  codified and priced (685 GB); downloads, licence check, reproducible
+  speaker-disjoint splits and the vast.ai campaign scripts are written; unit
+  tests pass (`uv run pytest`).
+- Waiting on the user: Basis access approval (requested 2026-11-20); Common
+  Voice terms acceptance and dataset IDs; Emilia access terms; persistent
+  storage choice (`SUPERTURN_REMOTE`); `.env` filled in.
+- Next step: checkpoint A, "Labelling", starting with the per-track labeller
+  tested on generated fixtures. Then shard writer, augmentation, features,
+  models, export, benchmark, experiment queue, and one smoke command.
+- Evidence and decisions so far:
+  [labnotes/20261120-1600-dataset-sizes-and-scaffold.md](../20261120-1600-dataset-sizes-and-scaffold.md).
 
 ## Outcome
 
@@ -8,21 +25,24 @@ A first round of experiments that ends in a decision: which model to take
 forward, or what the next round must test. The candidate is a 100k–1M
 parameter model that runs on CPU, exported as a single int8 ONNX file of at
 most 1 MB and trained only on permissively licensed data. It takes raw 16 kHz
-mono PCM and the silence elapsed, and returns P(turn complete).
+mono PCM and the silence elapsed, and returns P(turn complete). It must be
+speaker independent: it is judged only on voices it never trained on.
 
 This is not expected to be a single training run. The work is organised as a
-local build-out followed by one planned cloud campaign that runs a whole
-experiment matrix; a second campaign is planned only if the first one's
-decision record calls for it.
+local build-out, followed by one planned cloud campaign that downloads the
+data once and runs a whole experiment matrix. A second campaign is planned
+only if the first one's decision record calls for it.
 
 ## Design sources
 
 - [Training data options](../../docs/data-options.md): sources, licences,
-  exclusions, labelling tools.
+  sizes, speaker variety, exclusions, labelling tools.
 - [Model design](../../docs/model-design.md): call contract, input, candidate
   networks, training and evaluation.
-- [Cloud campaign plan](../../docs/campaign-plan.md): machine, storage and
-  campaign stages.
+- [Cloud campaign plan](../../docs/campaign-plan.md): machine, storage and the
+  `bin/` runbook.
+- `configs/sources.toml` and `configs/campaign.env`: the codified selection and
+  machine defaults.
 
 ## Out of scope
 
@@ -59,68 +79,82 @@ decision record calls for it.
   make it a shift. Speech shorter than 1 s on the other track, with the first
   speaker continuing afterwards, is treated as a backchannel. Basis human
   backchannel labels are used to check this rule.
-- Each example records: source, language, speaker ID, conversation or
-  recording ID, pause start, pause length, label, and how the label was made
-  (per-track, diarized or cut).
+- Indic DiarBench labels come from its human-corrected speaker-attributed
+  timestamps instead of VAD on separate tracks.
+- Each example records: source, language, speaker ID, recording ID, group,
+  split, pause start, pause length, label, and how the label was made
+  (per-track, human timestamps, diarized or cut).
 
-### Splits and held-out test sets
+### Splits: reproducible, per dataset, speaker-disjoint
 
-- A held-out test set is data the model never trains on, kept aside to measure
-  how it does on conversations and voices it has not heard.
-- For Basis, a fixed share of whole conversations per language (about 10%) is
-  set aside before any training. Splitting by conversation and by speaker
-  means no conversation and no voice appears in both training and test; a
-  random split by clip would let the model recognise voices it trained on and
-  overstate its accuracy.
-- FLEURS is used only as a test set.
-- A validation split, also by conversation and speaker, is used to pick
-  checkpoints and thresholds; test sets are never used for choices.
-- Test sets are frozen once built; their manifests record a content hash.
+Implemented in `src/superturn/splits.py`, tested in `tests/test_splits.py`.
+
+- Every dataset is split on its own: 80% train, 10% validation, 10% test of
+  its groups. Every training dataset therefore appears in every split in about
+  the same proportion; no dataset lands wholly in one split.
+- Recordings that share any speaker form one group (AMI reuses the same four
+  people across each series of meetings), so no voice appears in two splits.
+- A group's split is a hash of the source name and group key: identical on
+  every machine and every run, independent of file order, with no stored
+  random state. Changing the rule means bumping the hash salt and recording
+  why.
+- Test-role sources (FLEURS, Indic DiarBench) are test only.
+- Validation picks checkpoints and thresholds; test sets are never used for
+  choices. Test manifests are frozen with a content hash.
+
+### Speaker variety
+
+- Speaker counts are computed from the data per source and language and
+  reported; any source or language below 50 speakers is flagged.
+- Training examples are capped per speaker (initially at most 0.5% of a
+  source's training examples), so no voice dominates.
+- All reported metrics are on voices never seen in training.
+
+### Downloads
+
+- Only datasets with a recorded permissive licence; the licence check fails
+  otherwise.
+- Never downloaded locally; only on the campaign machine.
+- Each source is processed into shards and its raw files deleted once the
+  shards are synced to persistent storage.
 
 ## Checkpoints
 
-### A. Local build-out (no cloud)
+### A. Local build-out (no downloads)
 
-Everything runs end to end locally on a small sample before a machine is
-rented.
+Everything is exercised locally with unit tests and small generated audio
+fixtures. The first run on real data is the smoke test on the campaign
+machine.
 
-- [ ] Python project with `uv`: package `superturn`, PyTorch, ONNX,
-  ONNX Runtime, Silero VAD, pyannote. Versions pinned in the lockfile.
-- [ ] `data/` (git-ignored) layout: `raw/<source>/`, `shards/`, `tests/`,
-  `runs/`, `reports/`. The root is configurable by environment variable; sync
-  to and from the campaign bucket is one command.
-- [ ] Source manifest in `docs/` for each dataset: URL, version or download
-  date, licence, attribution text, and the hash of each downloaded archive.
-- [ ] Download scripts, one per source, idempotent and resumable, with a
-  `--sample` mode for local runs:
-  - Basis Conversations 1500: access is requested on its dataset page and
-    reviewed by Basis; each person downloading needs their own approved
-    access.
-  - Common Voice: per language from its current distribution site; confirm and
-    record the audio licence there before use. Capped slice per language
-    (about 20–50 h).
-  - VoxPopuli: transcribed data only, downloaded directly. Its released code
-    and models (CC BY-NC) are not used or vendored.
-  - Emilia-YODAS: accept the access terms, then download only the YODAS
-    subset; refuse any file outside it. About 1–2k h.
-  - FLEURS: all languages, test use only.
-  - MUSAN and OpenSLR 26: noise and room impulse responses.
-- [ ] Licence check: fails if any file under `data/raw/` belongs to a source
-  without a recorded permissive licence.
-- [ ] Labelling (rules above):
-  - Basis: Silero VAD per speaker track, then hold/shift labels.
-  - Read speech (Common Voice, FLEURS): a permissively licensed multilingual
-    forced aligner, with its licence and models recorded (aligners whose
-    models are non-commercial are excluded). Holds are cut at word boundaries
-    away from the sentence end, followed by real silence from the same
-    recording, never digital zeros. Shifts come from the natural sentence end.
-  - Spontaneous speech (VoxPopuli, Emilia-YODAS): Silero VAD pauses inside a
-    segment are holds; segment ends are weak shifts in their own label class,
-    so their weight can be tuned or dropped.
-  - Mixed single-track audio, if used: pyannote diarization, flagged as
-    diarized and kept out of test sets.
-- [ ] Shard writer: pause-centred clips (window plus decision silence plus a
-  margin) with labels and metadata, compressed, in fixed-size shards.
+- [x] Python project with `uv` (Python 3.12), package `superturn`.
+- [x] Source registry `configs/sources.toml` with licence, attribution, role,
+  selection and smoke-test sample per source.
+- [x] `bin/plan-downloads`: exact sizes from provider listings, no downloads.
+  Full selection 685 GB; smoke-test sample about 4 GB.
+- [x] `bin/download`: Hugging Face (pinned commit, size-verified), HTTP and
+  URL lists (resumable, size-verified), Common Voice via the Mozilla Data
+  Collective API; writes a manifest per source; ends with the licence check.
+- [x] `superturn refresh-url-lists`: rebuilds the AMI and ICSI headset lists.
+- [x] Reproducible, per-dataset, speaker-disjoint splits with tests.
+- [x] Campaign scripts: `bin/vast-offers`, `vast-up`, `vast-push`,
+  `vast-bootstrap`, `vast-run`, `vast-ssh`, `vast-down`, `bin/sync`.
+- [ ] Add PyTorch, ONNX, ONNX Runtime, Silero VAD and pyannote to the project
+  when the code that needs them lands; pin in the lockfile.
+- [ ] Labelling (rules above), each with fixture tests:
+  - per-track labeller (Basis, AMI, ICSI): Silero VAD per track, hold/shift;
+  - human-timestamp labeller (Indic DiarBench);
+  - read speech (Common Voice, FLEURS): a permissively licensed multilingual
+    forced aligner, its licence and models recorded (aligners whose models are
+    non-commercial are excluded); holds cut at word boundaries away from the
+    sentence end and followed by real silence from the same recording, never
+    digital zeros; shifts from the natural sentence end;
+  - spontaneous speech (VoxPopuli, Emilia-YODAS): pauses inside a segment are
+    holds; segment ends are weak shifts in their own label class.
+- [ ] Speaker counting and per-speaker caps; speaker report per source and
+  language.
+- [ ] Shard writer: pause-centred clips at 16 kHz (window plus decision
+  silence plus a margin) with labels and metadata, compressed, fixed-size
+  shards; deletes a source's raw files only after its shards are synced.
 - [ ] Augmentation, on the fly, seeded and logged: telephone channel (8 kHz
   resample, G.711 μ-law and A-law round trip, 300–3400 Hz band-pass, packet
   loss 0–5%, jitter); Opus at 16 kHz and low bitrates; MUSAN noise at SNR
@@ -129,29 +163,29 @@ rented.
 - [ ] Pre-rendered test copies per condition: clean, telephone, telephone plus
   noise at 10 dB SNR.
 - [ ] Feature front end as exportable PyTorch modules; parity test of ONNX
-  Runtime against PyTorch on 1,000 clips, maximum absolute difference below
-  1e-3 (float); pitch accuracy check against a reference pitch tracker.
+  Runtime against PyTorch, maximum absolute difference below 1e-3 (float);
+  pitch accuracy check against a reference pitch tracker.
 - [ ] Models A (recurrent) and B (conformer-style) at configurable sizes;
   one-command training from a config file with a fixed seed, per-epoch metrics,
-  and checkpoint choice on the validation split.
-- [ ] Export to int8 ONNX and the benchmark command (metrics below).
-- [ ] Experiment queue runner: takes the matrix below, runs it unattended, keeps
-  going past a failed run, and syncs each finished run to the bucket.
-- [ ] Local smoke test: the whole pipeline on the sample in one command, from
-  download to benchmark report, with a tiny training run.
+  checkpoint choice on validation.
+- [ ] Export to int8 ONNX and the benchmark command (metrics in D).
+- [ ] Experiment queue runner: takes the stage C matrix, runs it unattended,
+  keeps going past a failed run, syncs each finished run.
+- [ ] One smoke command: on the downloaded sample, labels, shards, a tiny
+  training run, export and a benchmark report, end to end.
 
 ### B. Campaign 1: data
 
-Follows the [cloud campaign plan](../../docs/campaign-plan.md).
+Follows the [campaign runbook](../../docs/campaign-plan.md#runbook).
 
-- [ ] Machine provisioned to the plan (datacenter-hosted, under confidentiality
-  terms suitable for Basis data); smoke test passes on it.
-- [ ] All sources downloaded, hashes recorded, licence check passes.
-- [ ] Labels, splits, frozen test sets and shards built; labelling report per
-  source and language (counts, hold/shift balance, pause lengths).
+- [ ] Access in place (Basis, Emilia, Common Voice IDs), `.env` filled,
+  storage remote reachable.
+- [ ] Machine rented with `bin/vast-up`; smoke test passes on it.
+- [ ] All sources downloaded, manifests written, licence check passes.
+- [ ] Labels, speaker report, splits, frozen test sets and shards built per
+  source; raw files deleted after shards are synced.
 - [ ] 50 randomly sampled labelled pauses per language listened to and marked
-  correct or wrong in labnotes; Basis per-track labels at least 90% correct.
-- [ ] Shards, test sets and manifests synced to the bucket.
+  correct or wrong in labnotes; per-track labels at least 90% correct.
 
 ### C. Campaign 1: experiment round
 
@@ -162,21 +196,21 @@ stage's results automatically.
 - [ ] **Stage 1, architecture and size**: model A and model B at about 150k,
   500k and 1M parameters; 3 s window; all data; two seeds each.
 - [ ] **Stage 2, window**: the best two from stage 1 at 1, 2, 4 and 8 s.
-- [ ] **Stage 3, data mix**: the best configuration on Basis only; Basis plus
-  read-speech cuts; Basis plus spontaneous speech; all data; with and without
+- [ ] **Stage 3, data mix**: the best configuration on conversations only;
+  plus read-speech cuts; plus spontaneous speech; all data; with and without
   the weak-shift class.
 - [ ] **Stage 4, cut-off cost**: the false-complete loss weight at three
   values on the best configuration.
 - [ ] **Stage 5, export**: the best three configurations exported to int8
   ONNX; int8 against float on validation, AUC drop at most 0.01
   (quantisation-aware training if not).
-- [ ] Every run's metrics, checkpoint and report synced to the bucket.
+- [ ] Every run's metrics, checkpoint and report synced to storage.
 
 ### D. Benchmark and decision
 
 One command produces `data/reports/<run>/report.md` plus machine-readable
-results. Every number is reported per language, per condition (clean,
-telephone, telephone plus noise) and overall.
+results. Every number is reported per source, per language, per condition
+(clean, telephone, telephone plus noise) and overall, on unseen voices only.
 
 - [ ] **False-complete rate** at 200, 300 and 500 ms of silence: the share of
   holds the model calls complete at the chosen threshold.
@@ -203,10 +237,12 @@ stage 1 results, and any change is recorded here with its reason.
 
 - [ ] Only permissively licensed sources in training and test data; the
   licence check passes.
+- [ ] Splits reproduce exactly from the code; no speaker in more than one
+  split; every training source present in train, validation and test.
 - [ ] int8 ONNX file at most 1 MB, 100k–1M parameters, raw PCM in.
 - [ ] p99 inference under 2 ms per call on one CPU core.
-- [ ] At the chosen threshold and 300 ms of silence, on Basis held-out
-  conversations, telephone condition: false-complete rate at most 5% with
+- [ ] At the chosen threshold and 300 ms of silence, on held-out conversation
+  test splits, telephone condition: false-complete rate at most 5% with
   complete recall at least 80%.
 - [ ] Median time to decision on shifts at most 500 ms of silence, telephone
   condition.

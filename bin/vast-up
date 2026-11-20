@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Rent the campaign machine from an offer ID (see bin/vast-offers), wait until
+# it runs, push the repo and bootstrap it. Records the instance in .campaign/.
+source "$(dirname "$0")/_lib.sh"
+offer="${1:?usage: bin/vast-up OFFER_ID}"
+[[ -s "$STATE/instance" ]] && die "instance $(cat "$STATE/instance") already recorded; bin/vast-down it first"
+out="$(vast create instance "$offer" --image "$VAST_IMAGE" --disk "$VAST_DISK_GB" --ssh --direct --raw)"
+id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["new_contract"])' "$out")"
+echo "$id" > "$STATE/instance"
+echo "instance $id created; waiting for it to run"
+for _ in $(seq 1 90); do
+  status="$(vast show instance "$id" --raw | python3 -c 'import json,sys; print(json.load(sys.stdin).get("actual_status"))')"
+  [[ "$status" == "running" ]] && break
+  sleep 20
+done
+[[ "$status" == "running" ]] || die "instance $id not running after 30 min (status: $status)"
+sleep 20   # let sshd come up
+"$ROOT/bin/vast-push"
+remote "bash $REMOTE_REPO/bin/vast-bootstrap"
+echo "instance $id ready. Next: bin/vast-run 'bin/download --sample' (smoke test)"

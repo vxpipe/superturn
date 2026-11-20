@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Download sources into $SUPERTURN_DATA/raw. Run on the campaign machine, not
+# locally. Resumable: rerun after an interruption. Options: --only NAMES,
+# --sample, --workers N.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+[[ -f .env ]] && { set -a; source .env; set +a; }
+: "${SUPERTURN_DATA:?set SUPERTURN_DATA (the campaign machine sets it in bin/vast-bootstrap)}"
+uv run superturn download "$@"
+uv run superturn check-licences

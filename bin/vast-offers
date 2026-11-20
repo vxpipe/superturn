@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# List matching vast.ai offers, cheapest first. Override the query with
+# VAST_QUERY=... (see configs/campaign.env).
+source "$(dirname "$0")/_lib.sh"
+vast search offers "$VAST_QUERY" -o "$VAST_ORDER" | head -n "${1:-15}"

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Run a command on the campaign machine inside tmux (survives disconnects),
+# logging to $REMOTE_DATA/logs/<name>.log. Usage: bin/vast-run [-n NAME] 'command'
+source "$(dirname "$0")/_lib.sh"
+name="job-$(date +%Y%m%d-%H%M%S)"
+if [[ "${1:-}" == "-n" ]]; then name="$2"; shift 2; fi
+cmd="${1:?usage: bin/vast-run [-n NAME] 'command'}"
+log="$REMOTE_DATA/logs/$name.log"
+remote "cd $REMOTE_REPO && export SUPERTURN_DATA=$REMOTE_DATA && tmux new-session -d -s '$name' \"($cmd) 2>&1 | tee $log; echo exit=\\\$? >> $log\""
+echo "started '$name'; follow with: bin/vast-ssh tail -f $log"

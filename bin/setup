@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+# Install the Python environment (uv + locked dependencies). Safe to rerun.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+if ! command -v uv >/dev/null 2>&1; then
+  curl -LsSf https://astral.sh/uv/install.sh | sh
+  export PATH="$HOME/.local/bin:$PATH"
+fi
+uv sync --frozen 2>/dev/null || uv sync

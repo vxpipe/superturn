@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Release the campaign machine. Pushes results to persistent storage first;
+# refuses unless --yes is given, because everything not synced is lost.
+source "$(dirname "$0")/_lib.sh"
+id="$(instance_id)"
+[[ "${1:-}" == "--yes" ]] || die "this destroys instance $id and its disk; rerun with --yes after checking bin/vast-ssh 'cd $REMOTE_REPO && bin/sync push' succeeded"
+remote "cd $REMOTE_REPO && export SUPERTURN_DATA=$REMOTE_DATA && bin/sync push" || die "final sync failed; instance kept"
+vast destroy instance "$id"
+rm -f "$STATE/instance"
+echo "instance $id destroyed"

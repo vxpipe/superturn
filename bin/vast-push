@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Copy the working tree (without data, .venv or git internals) and .env to the
+# campaign machine. Rerun after changing code locally.
+source "$(dirname "$0")/_lib.sh"
+ssh_target
+mapfile -t opts < <(ssh_opts)
+remote "mkdir -p $REMOTE_REPO"
+rsync -az --delete -e "ssh ${opts[*]}" \
+  --exclude data/ --exclude .venv/ --exclude .campaign/ --exclude .git/ \
+  "$ROOT/" "$SSH_HOST:$REMOTE_REPO/"

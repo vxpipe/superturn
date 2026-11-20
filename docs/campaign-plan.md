@@ -1,65 +1,75 @@
 # Cloud campaign plan
 
-Status: proposal, 2026-11-20.
+Status: scripts written 2026-11-20; no campaign run yet.
 
-Downloading the datasets is the expensive, slow step: roughly 1 TB in total
-(estimate). Rented GPU machines are therefore not created and destroyed ad
-hoc. Work is grouped into planned campaigns: one machine, rented once, that
-downloads, labels, runs a whole round of experiments and benchmarks, and saves
-everything worth keeping before it is released.
+Datasets are never downloaded locally. Downloading is the expensive, slow
+step (the full selection is 685 GB; see
+[data options](data-options.md#download-plan-and-sizes)), so rented machines
+are not created and destroyed ad hoc. Work is grouped into planned campaigns:
+one machine, rented once, that downloads, labels, runs a whole round of
+experiments and benchmarks, and saves everything worth keeping before it is
+released.
 
-## Before any campaign: everything runs locally first
+Every step below is a script in `bin/`. Do not run ad hoc commands on the
+machine for anything that will be repeated; add or fix a script instead.
 
-Every script (download, labelling, augmentation, features, training, export,
-benchmark) runs end to end on a small local sample before a machine is rented:
-a few Basis conversations, a few FLEURS and Common Voice languages, a few MUSAN
-files. Cloud time is for scale, not debugging.
+## Before a campaign
+
+- Code runs locally against small generated audio fixtures and unit tests
+  (`uv run pytest`). No dataset audio is downloaded locally.
+- `bin/plan-downloads` prices the selection from provider listings; it
+  downloads nothing.
+- Access is in place: Basis approved for the Hugging Face account in
+  `HF_TOKEN`; Emilia access terms accepted; Common Voice terms accepted for
+  each locale in the Mozilla Data Collective web UI and the dataset IDs
+  recorded in `configs/sources.toml` (30 downloads per day at most).
+- `.env` filled from `.env.example`: tokens, the SSH key registered with
+  vast.ai, and the rclone remote for persistent storage.
 
 ## Machine
 
-- One GPU with 24 GB or more. The models are small; the GPU mostly needs to be
-  kept fed.
-- 32 or more CPU cores: decoding, VAD, alignment and on-the-fly augmentation are
-  CPU-bound.
-- 2–3 TB of local NVMe: raw downloads, decoded audio and shards side by side.
-- Hosted in a datacenter under written confidentiality terms. The Basis
-  licence allows cloud compute and storage only under such obligations, so
-  community-hosted machines are not used for Basis data.
+`configs/campaign.env` holds the offer query and disk size:
+
+- one GPU with 24 GB or more; the models are small, the GPU mostly needs to be
+  kept fed;
+- 24 or more CPU cores: decoding, VAD, alignment and augmentation are
+  CPU-bound;
+- 1 TB of disk: sources are processed one at a time and their raw files
+  deleted after their shards are synced;
+- at least 500 Mb/s download;
+- datacenter-hosted only. The Basis licence allows cloud compute and storage
+  only under written confidentiality terms, so community-hosted machines are
+  not used.
 
 ## Persistent storage
 
-A private object-storage bucket holds what must outlive a machine:
+A private rclone remote (`SUPERTURN_REMOTE`) holds what must outlive a
+machine: processed shards, frozen test sets, raw-download manifests,
+checkpoints, ONNX exports, reports and logs. Basis audio and anything derived
+from it that still contains audio stay private: the licence forbids
+redistributing it. Only trained models, reports and code are published.
 
-- processed shards (pause-centred clips with labels), so later campaigns start
-  from shards instead of re-downloading raw corpora;
-- frozen test sets and their manifests;
-- checkpoints, ONNX exports, benchmark reports and logs.
+## Runbook
 
-Basis audio and anything derived from it that still contains its audio stay
-private: the licence forbids redistributing it. Only trained models, reports
-and code are published.
-
-## Campaign stages
-
-1. **Provision**: rent the machine, attach storage, install the locked
-   environment, run the local smoke test on the machine.
-2. **Acquire**: run all download scripts in parallel; verify hashes against the
-   source manifest; run the licence check.
-3. **Prepare**: decode to 16 kHz mono, label, cut pause-centred clips, build
-   splits, freeze test sets, write shards. Sync shards and test sets to the
-   bucket as soon as each source finishes.
-4. **Experiment**: run the experiment queue (see the milestone) unattended.
-   Each run writes its checkpoint, metrics and benchmark report and syncs them
-   to the bucket when it finishes.
-5. **Select and export**: export the best candidates to int8 ONNX, run the full
-   benchmark including CPU latency, and write the comparison report.
-6. **Save and release**: confirm everything is in the bucket, record the
-   campaign in labnotes (machine, hours, cost, what ran, what failed), then
-   release the machine.
+1. `bin/vast-offers` lists matching offers, cheapest first.
+2. `bin/vast-up OFFER_ID` rents the machine, waits for it, copies the repo and
+   `.env` (`bin/vast-push`) and installs everything (`bin/vast-bootstrap`).
+3. Smoke test: `bin/vast-run -n smoke 'bin/download --sample'`, then the
+   pipeline's smoke command on the sample. Fix and `bin/vast-push` until it
+   passes. About 4 GB.
+4. Acquire: `bin/vast-run -n download 'bin/download'`. Rerun after an
+   interruption; it resumes. Ends with the licence check.
+5. Prepare, experiment, export and benchmark: the commands the milestone adds
+   for each stage, each started with `bin/vast-run` so it survives
+   disconnects and logs to `$REMOTE_DATA/logs/`.
+6. `bin/vast-ssh` to inspect; `bin/sync push` copies results to storage.
+7. `bin/vast-down --yes` pushes results once more and destroys the machine
+   only if that push succeeds.
 
 A failed run must not stop the queue; it is logged and the next run starts.
 
 ## Later campaigns
 
-Later campaigns start from the shards in the bucket, so they need a machine for
-training only. Raw data is downloaded again only when a new source is added.
+Later campaigns start from the shards in storage (`bin/sync pull`), so they
+need a machine for training only. Raw data is downloaded again only when a new
+source is added.
