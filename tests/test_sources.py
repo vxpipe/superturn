@@ -1,4 +1,4 @@
-from superturn.sources import load_sources, matches, read_url_list
+from superturn.sources import expand, load_sources, matches, read_url_list
 
 PERMISSIVE_MARKERS = ("CC0", "CC BY 4.0", "Apache 2.0")
 
@@ -11,20 +11,21 @@ def test_every_source_has_a_permissive_licence_and_attribution():
 
 def test_emilia_only_downloads_the_yodas_subset():
     emilia = load_sources()["emilia_yodas"]
-    include, exclude = emilia.get("include"), emilia.get("exclude")
-    assert matches("Emilia-YODAS/DE/DE-B000000.tar", include, exclude)
-    assert not matches("Emilia/DE/DE-B000000.tar", include, exclude)
+    for path in expand(emilia.get("files"), emilia.get("languages")):
+        assert path.startswith("Emilia-YODAS/"), path
 
 
-def test_voxpopuli_skips_the_combined_copy():
+def test_voxpopuli_takes_one_row_group_per_file():
     vox = load_sources()["voxpopuli"]
-    include, exclude = vox.get("include"), vox.get("exclude")
-    assert matches("de/train-00000-of-00016.parquet", include, exclude)
-    assert not matches("multilang/train-00000-of-00103.parquet", include, exclude)
+    assert vox.get("max_bytes_per_file") == 1  # select_row_groups keeps at least one
+    assert not any(f.startswith("multilang/") for f in vox.get("files"))
 
 
-def test_url_lists_are_complete():
-    sources = load_sources()
-    for name in ("ami", "icsi"):
-        rows = read_url_list(sources[name])
-        assert rows and all(size > 0 and url.startswith("https://") for size, url in rows)
+def test_ami_url_list_is_complete():
+    rows = read_url_list(load_sources()["ami"])
+    assert len(rows) > 600 and all(size > 0 and url.startswith("https://") for size, url in rows)
+
+
+def test_matches():
+    assert matches("Hindi/test-00000-of-00001.parquet", ["*/test-*.parquet"])
+    assert not matches("Emilia/DE/x.tar", ["Emilia-YODAS/*"])

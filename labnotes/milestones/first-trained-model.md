@@ -7,11 +7,12 @@ Status: in progress (checkpoint A). Last updated 2026-11-20.
 Read this section first when picking up the work.
 
 - Done: data sources chosen and licences read; the download selection is
-  codified and priced (430 GB); downloads, licence check, reproducible
+  codified and priced (18.3 GB under a 20 GB budget, fetching only the parts
+  used); downloads, licence check, reproducible
   speaker-disjoint splits and the vast.ai campaign scripts are written; unit
   tests pass (`uv run pytest`).
 - Basis Conversations 1500 access was not granted (2026-11-20). The model is
-  trained without it: real conversation labels are English only (AMI, ICSI);
+  trained without it: real conversation labels are English only (AMI);
   other languages rely on read and spontaneous speech, and non-English
   conversation is measured on Indic DiarBench.
 - Emilia access: granted to the user's Hugging Face account (2026-11-20).
@@ -82,7 +83,7 @@ only if the first one's decision record calls for it.
   then continues, with no other speaker starting in between.
 - Backchannels ("mm-hm", "yeah") from the other speaker during a pause do not
   make it a shift. Speech shorter than 1 s on the other track, with the first
-  speaker continuing afterwards, is treated as a backchannel. The AMI and ICSI
+  speaker continuing afterwards, is treated as a backchannel. The AMI
   dialogue-act annotations, which mark backchannels, are used to check this
   rule.
 - Indic DiarBench labels come from its human-corrected speaker-attributed
@@ -136,11 +137,14 @@ machine.
 - [x] Source registry `configs/sources.toml` with licence, attribution, role,
   selection and smoke-test sample per source.
 - [x] `bin/plan-downloads`: exact sizes from provider listings, no downloads.
-  Full selection 430 GB; smoke-test sample about 3 GB.
+  Total capped by `budget_gb` (20 GB) and refused above it; current
+  selection 18.3 GB, smoke-test sample 0.9 GB.
 - [x] `bin/download`: Hugging Face (pinned commit, size-verified), HTTP and
   URL lists (resumable, size-verified), Common Voice via the Mozilla Data
   Collective API; writes a manifest per source; ends with the licence check.
-- [x] `superturn refresh-url-lists`: rebuilds the AMI and ICSI headset lists.
+- [x] Partial fetchers, unit-tested: WAV time slices by HTTP range, parquet
+  row groups, tar streams stopped at a byte cap.
+- [x] `superturn refresh-url-lists`: rebuilds the AMI headset list.
 - [x] Reproducible, per-dataset, speaker-disjoint splits with tests.
 - [x] Campaign scripts: `bin/vast-offers`, `vast-up`, `vast-push`,
   `vast-bootstrap`, `vast-run`, `vast-ssh`, `vast-fetch`, `vast-down`, and
@@ -148,7 +152,7 @@ machine.
 - [ ] Add PyTorch, ONNX, ONNX Runtime, Silero VAD and pyannote to the project
   when the code that needs them lands; pin in the lockfile.
 - [ ] Labelling (rules above), each with fixture tests:
-  - per-track labeller (AMI, ICSI): Silero VAD per track, hold/shift;
+  - per-track labeller (AMI): Silero VAD per track, hold/shift;
   - human-timestamp labeller (Indic DiarBench);
   - read speech (Common Voice, FLEURS): a permissively licensed multilingual
     forced aligner, its licence and models recorded (aligners whose models are
@@ -206,6 +210,10 @@ stage's results automatically.
   only;
   plus read-speech cuts; plus spontaneous speech; all data; with and without
   the weak-shift class.
+- [ ] **Stage 3b, learning curve**: the best configuration on 25%, 50% and
+  100% of the training data. Flat from 50% to 100% means more data will not
+  help; still rising means a later campaign fetches more of the source or
+  language that is short.
 - [ ] **Stage 4, cut-off cost**: the false-complete loss weight at three
   values on the best configuration.
 - [ ] **Stage 5, export**: the best three configurations exported to int8

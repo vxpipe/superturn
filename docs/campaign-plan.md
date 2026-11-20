@@ -2,10 +2,10 @@
 
 Status: scripts written 2026-11-20; no campaign run yet.
 
-Datasets are never downloaded locally. Downloading is the expensive, slow
-step (the full selection is 430 GB; see
-[data options](data-options.md#download-plan-and-sizes)), so rented machines
-are not created and destroyed ad hoc. Work is grouped into planned campaigns:
+Datasets are never downloaded locally. Downloads are capped at 20 GB and
+fetch only the parts of each dataset that are used (18.3 GB; see
+[data options](data-options.md#download-plan-and-sizes)). Rented machines are
+still not created and destroyed ad hoc. Work is grouped into planned campaigns:
 one machine, rented once, that downloads, labels, runs a whole round of
 experiments and benchmarks, and brings back everything worth keeping before it
 is released.
@@ -32,11 +32,11 @@ machine for anything that will be repeated; add or fix a script instead.
 
 - one GPU with 24 GB or more; the models are small, the GPU mostly needs to be
   kept fed;
-- 24 or more CPU cores: decoding, VAD, alignment and augmentation are
+- 16 or more CPU cores: decoding, VAD, alignment and augmentation are
   CPU-bound;
-- 1 TB of disk: sources are processed one at a time and their raw files
-  deleted after their shards are written;
-- at least 500 Mb/s download;
+- 200 GB of disk: 20 GB of downloads plus decoded audio, shards,
+  checkpoints and logs;
+- at least 300 Mb/s download;
 - verified hosts with a reliability record above 0.98. No selected source
   requires datacenter hosting.
 
@@ -47,11 +47,10 @@ download manifests, run metrics, checkpoints and ONNX exports to
 `data/campaigns/<instance>/` on the local computer. These are small: a model
 file is 1–4 MB. Raw audio and shards stay on the machine and are lost with it.
 
-Persistent storage (`SUPERTURN_REMOTE`, any rclone remote such as an
-S3-compatible bucket) is optional. It only matters for keeping processed
-shards between campaigns, so a later campaign can skip re-downloading and
-re-processing (~430 GB, a few hours of machine time). Decide after the first
-campaign, when the shard size and the processing time are known.
+Persistent storage (`SUPERTURN_REMOTE`, any rclone remote) is not needed: a
+later campaign re-downloads the 20 GB selection, which takes minutes. It stays
+available in `bin/sync` in case processing ever becomes slow enough to be
+worth keeping shards.
 
 ## Runbook
 
@@ -60,7 +59,7 @@ campaign, when the shard size and the processing time are known.
    `.env` (`bin/vast-push`) and installs everything (`bin/vast-bootstrap`).
 3. Smoke test: `bin/vast-run -n smoke 'bin/download --sample'`, then the
    pipeline's smoke command on the sample. Fix and `bin/vast-push` until it
-   passes. About 3 GB.
+   passes. About 1 GB.
 4. Acquire: `bin/vast-run -n download 'bin/download'`. Rerun after an
    interruption; it resumes. Ends with the licence check.
 5. Prepare, experiment, export and benchmark: the commands the milestone adds

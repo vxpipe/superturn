@@ -1,7 +1,7 @@
 # Training data options
 
-Status: research, 2026-11-20. Nothing downloaded yet. Sources and download
-selections are codified in `configs/sources.toml`.
+Status: 2026-11-20. Nothing downloaded yet. Sources and download selections
+are codified in `configs/sources.toml`.
 
 ## Licence policy
 
@@ -30,7 +30,7 @@ The model sees the audio up to the pause and must predict which one.
 | Emilia-YODAS (YODAS subset only) | CC BY 4.0; upstream YODAS2 is CC BY 3.0 | 6 | Spontaneous in-the-wild speech. |
 | FLEURS | CC BY 4.0 | ~100 | Held-out test set only: the same sentences in every language. |
 | Indic DiarBench | CC BY 4.0 | 22 Indian languages | Test set only: ~108 h of natural multi-speaker conversation (53 h near-field from one microphone per speaker, mixed to mono), human-corrected speaker-attributed timestamps. |
-| AMI, ICSI | CC BY 4.0 | English | The only training conversations: one headset per speaker, real hold/shift labels (see below). |
+| AMI | CC BY 4.0 | English | The only training conversations: one headset per speaker, real hold/shift labels (see below). |
 | MUSAN | CC BY 4.0 | n/a | Noise, music and babble for augmentation. |
 | OpenSLR 26 (simulated RIRs) | Apache 2.0 | n/a | Room reverberation. |
 
@@ -45,8 +45,8 @@ are weaker than one-to-one calls.
 
 | Source | Licence | Languages | Notes |
 |---|---|---|---|
-| AMI Meeting Corpus | CC BY 4.0 per the current Edinburgh download page; older releases were under a modified NC-SA licence, so use only the current release | English | ~100 h, individual headset microphones. Selected. |
-| ICSI Meeting Corpus | CC BY 4.0 per its Edinburgh licence page | English | ~70 h, close-talk microphones. Selected. |
+| AMI Meeting Corpus | CC BY 4.0 per the current Edinburgh download page; older releases were under a modified NC-SA licence, so use only the current release | English | ~100 h, individual headset microphones. Selected (4-minute window per meeting). |
+| ICSI Meeting Corpus | CC BY 4.0 per its Edinburgh licence page | English | ~70 h, close-talk microphones. Not selected: files are compressed and only downloadable whole (34 GB). |
 | NOTSOFAR-1 | CC BY 4.0 (reported by a derivative card; confirm on the official page) | English | Close-talk per speaker in train and dev splits only. Candidate. |
 | Full-duplex dual-track set (arXiv 2509.04093) | CC BY 4.0 (verify) | Chinese, English | ~15 h, one track per speaker. Small. Candidate. |
 
@@ -96,41 +96,54 @@ published.
 
 ## Download plan and sizes
 
-Measured on 2026-11-20 by `bin/plan-downloads` from provider file listings
-(Hugging Face trees, HEAD requests, Common Voice release metadata). Sizes are
-the selections in `configs/sources.toml`, not whole datasets.
+The whole download is capped at 20 GB (`budget_gb` in `configs/sources.toml`);
+`bin/plan-downloads` and `bin/download` refuse a selection over it. A model of
+100k–1M parameters deciding hold or shift from prosody needs a few hundred
+thousand labelled pauses with many voices, languages and conditions, not
+hundreds of hours per language. So every source downloads only the bytes it
+uses:
 
-| Source | Selection | Files | Size | Whole dataset |
-|---|---|---|---|---|
-| Common Voice 27.0 | 25 locales | 25 | 168.3 GB | 947 GB, 295 locales |
-| VoxPopuli | 2 training shards per language | 29 | 75.8 GB | ~339 GB per-language data |
-| FLEURS | test split, all languages | 204 | 50.7 GB | 878 GB including a parquet copy |
-| AMI | individual headsets, 171 meetings | 687 | 46.6 GB | adds mixes, lapels, arrays, video |
-| ICSI | individual headsets | 922 | 34.1 GB | adds mixes |
-| Emilia-YODAS | 5 shards (~1 GB each) per language | 30 | 31.6 GB | 2.1 TB |
-| Indic DiarBench | everything | 23 | 12.1 GB | same |
-| MUSAN | everything | 1 | 11.1 GB | same |
-| OpenSLR 26 | 16 kHz simulated RIRs | 1 | 0.2 GB | same |
-| **Total** | | | **430 GB** | |
+- **Time slices of uncompressed WAV** (AMI): HTTP range requests fetch the same
+  4-minute window from every headset track of each of the 171 meetings, so all
+  speakers are kept.
+- **Parquet row groups** (Indic DiarBench, VoxPopuli on Hugging Face): the
+  file footer is read, then only the chosen row groups are fetched. The
+  publisher's row-group size is the smallest unit: ~124 MB for Indic
+  DiarBench, ~0.5 GB for VoxPopuli.
+- **Partial tar streams** (Emilia-YODAS and FLEURS on Hugging Face, MUSAN,
+  Common Voice): the archive is read from the start and the connection closed
+  at a byte cap, keeping the members already read.
 
-Common Voice: Spanish (52 GB), German (37 GB) and French (31 GB) are left out
-because VoxPopuli (all three) and Emilia-YODAS (German, French) cover them; Kannada and Gujarati
-have no release. Each locale is one archive, so a locale cannot be partly
-downloaded, and Mozilla Data Collective allows 30 dataset downloads per day
-after its terms are accepted in the web UI per dataset.
+Measured on 2026-11-20 by `bin/plan-downloads`:
 
-### How downloads are made cheaper
+| Source | What is fetched | Size |
+|---|---|---|
+| AMI | 4-minute window per meeting, all 687 headset tracks | 5.3 GB |
+| Indic DiarBench | row groups up to 160 MB per language, 22 languages (test) | 3.0 GB |
+| Common Voice 27.0 | first 120 MB of each of 25 locale archives (~5 h each) | 2.9 GB |
+| FLEURS | first 60 MB of the test archive, 30 languages (test) | 1.8 GB |
+| Emilia-YODAS | first 300 MB of one archive, 6 languages | 1.8 GB |
+| VoxPopuli | one row group each for Spanish, Italian, Polish | 1.8 GB |
+| MUSAN | first 1.5 GB of the archive, noise and music only | 1.5 GB |
+| OpenSLR 26 | 16 kHz simulated RIRs | 0.2 GB |
+| **Total** | | **18.3 GB** |
 
-- Only the parts used are listed: test splits only for test sets, a few shards
-  of the very large sets, individual headset tracks only for AMI and ICSI.
-- Each plan is priced exactly before anything downloads.
-- Hugging Face downloads pin the dataset commit and verify every file size;
-  HTTP downloads resume and verify sizes; everything is idempotent.
-- Small, essential sources download first (`order` in the config), so
-  labelling can start while the large ones are still arriving.
-- Each source is processed into shards and its raw files deleted once the
-  shards are written, so the machine needs well under 1 TB of disk rather
-  than raw plus processed copies.
+The smoke-test sample (`--sample`) is 0.9 GB.
+
+Not downloaded: ICSI, whose files are shorten-compressed and can only be
+fetched whole; whole Common Voice locales (947 GB for all 295); whole FLEURS
+(878 GB); Emilia beyond one partial archive per language (2.1 TB).
+
+Known risks of partial streams, checked in the smoke test:
+
+- Common Voice keeps per-clip metadata (speaker ID, sentence) in TSV files.
+  If they come after the clips in the archive, a partial stream misses them;
+  the downloader records a warning when no TSV was read.
+- MUSAN may store noise after music; if the cap stops before noise, the
+  augmentation adds synthetic noise instead.
+- Emilia-YODAS audio has been through source separation and quality
+  filtering, so it is mostly clean; noise comes from augmentation for every
+  source.
 
 ## Speaker variety
 
@@ -141,7 +154,7 @@ speakers, and no speaker may dominate.
 |---|---|
 | Common Voice, 25 chosen locales | 81,574 contributors in total; the smallest locale (pa-IN) has 75 |
 | Indic DiarBench | 485 in meetings plus ~750 in-the-wild |
-| AMI, ICSI, VoxPopuli, FLEURS, Emilia-YODAS | not stated on the cards; counted from the data during labelling |
+| AMI, VoxPopuli, FLEURS, Emilia-YODAS | not stated on the cards; counted from the data during labelling |
 
 Rules, enforced in code during labelling and splitting:
 

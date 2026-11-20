@@ -1,125 +1,72 @@
 # Dataset sources for Superturn.
 #
-# Every source names its licence and role. `bin/plan-downloads` prices each
-# source exactly from the provider's file listing before anything is
-# downloaded. `bin/download` downloads them on the campaign machine.
+# The whole selection must fit `budget_gb`. A turn model of 100k-1M parameters
+# needs a few hundred thousand labelled pauses with many voices, languages and
+# conditions, not hundreds of hours per language. So instead of downloading
+# whole archives, every source fetches only the bytes it uses:
 #
-# kind:
-#   hf       Hugging Face dataset repo; `include`/`exclude` are glob patterns
-#            over repo paths; `revision` pins the commit once recorded.
-#   urllist  Plain HTTPS files listed in a TSV of `size<TAB>url`.
-#   http     A fixed list of HTTPS archives.
-#   mdc      Mozilla Data Collective datasets, one per locale. Terms must be
-#            accepted in the web UI per dataset first; the API allows 30
-#            dataset downloads per organisation per day.
+#   wav_slices       a time window from each uncompressed WAV via HTTP range
+#                    requests (the same window for all tracks of one meeting)
+#   hf_rowgroups     selected row groups of Hugging Face parquet files; only
+#                    those column chunks are downloaded
+#   hf_tar_stream    read a Hugging Face tar archive from the start and stop at
+#                    `max_bytes_per_file`, keeping the members already read
+#   http_tar_stream  the same for a plain HTTPS archive
+#   mdc_tar_stream   the same for Mozilla Data Collective archives (Common Voice)
+#   http             small whole files
 #
-# role:
-#   train-conversation  per-speaker tracks; real hold/shift labels
-#   train-read          read speech; holds cut at word boundaries
-#   train-spontaneous   spontaneous speech; pause holds, weak shifts
-#   test                never trained on
-#   noise / reverb      augmentation only
-#
+# `bin/plan-downloads` prices each source from provider listings and file
+# metadata (parquet footers, HEAD requests) and refuses a plan over budget.
+# role: train-conversation | train-read | train-spontaneous | test | noise | reverb
 # `sample_*` keys select the small subset used by the on-machine smoke test.
 
+budget_gb = 20
+
 [sources.ami]
-kind = "urllist"
+kind = "wav_slices"
 list = "configs/url-lists/ami-headsets.tsv"
+strip_prefix = "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/"
 licence = "CC BY 4.0"
 attribution = "AMI Meeting Corpus, University of Edinburgh (CC BY 4.0)"
 role = "train-conversation"
-strip_prefix = "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/"
+# 4 minutes from each of 171 meetings keeps every speaker while using a
+# fraction of the 46.6 GB of headset audio. The window starts 30% into the
+# meeting, past introductions.
+minutes_per_meeting = 4.0
+start_fraction = 0.3
+sample_minutes_per_meeting = 1.0
 sample_match = "/ES2002a/"
 order = 1
 
-[sources.icsi]
-kind = "urllist"
-list = "configs/url-lists/icsi-headsets.tsv"
-licence = "CC BY 4.0"
-attribution = "ICSI Meeting Corpus, International Computer Science Institute (CC BY 4.0)"
-role = "train-conversation"
-strip_prefix = "https://groups.inf.ed.ac.uk/ami/ICSIsignals/SPH/"
-sample_match = "/Bmr013/"
-order = 1
-
 [sources.indic_diarbench]
-kind = "hf"
+kind = "hf_rowgroups"
 repo = "sarvamai/indic-diarbench"
 licence = "CC BY 4.0"
 attribution = "Indic DiarBench (CC BY 4.0)"
 role = "test"
-include = ["*/test-*.parquet", "README.md"]
-sample_include = ["Kashmiri/*", "README.md"]
+files = ["*/test-*.parquet"]
+# Row groups are taken in order until the cap; at least one per file.
+max_bytes_per_file = 160_000_000
+sample_files = ["Kashmiri/test-*.parquet"]
 order = 1
 
 [sources.fleurs]
-kind = "hf"
+kind = "hf_tar_stream"
 repo = "google/fleurs"
 licence = "CC BY 4.0"
 attribution = "FLEURS, Google (CC BY 4.0)"
 role = "test"
-include = ["data/*/test.tsv", "data/*/audio/test.tar.gz"]
-sample_include = ["data/hi_in/test.tsv", "data/hi_in/audio/test.tar.gz"]
-order = 2
-
-[sources.voxpopuli]
-kind = "hf"
-repo = "facebook/voxpopuli"
-licence = "CC0 (data only; the project's code and models are CC BY-NC and are not used)"
-attribution = "VoxPopuli, Meta (CC0)"
-role = "train-spontaneous"
-# Two training shards per language; the combined `multilang` copy and the
-# accented-English set are skipped.
-include = ["*/train-00000-of-*.parquet", "*/train-00001-of-*.parquet"]
-exclude = ["multilang/*", "en_accented/*"]
-sample_include = ["sl/train-00000-of-*.parquet"]
-order = 4
-
-[sources.emilia_yodas]
-kind = "hf"
-repo = "amphion/Emilia-Dataset"
-licence = "CC BY 4.0 (Emilia-YODAS subset only)"
-attribution = "Emilia-YODAS, Amphion (CC BY 4.0)"
-role = "train-spontaneous"
-gated = "auto"
-# Five ~1 GB shards per language. Only the Emilia-YODAS folder: the original
-# Emilia subset is CC BY-NC and is refused.
-include = ["Emilia-YODAS/*/*-B00000[0-4].tar"]
-exclude = ["Emilia/*"]
-sample_include = ["Emilia-YODAS/DE/DE-B000000.tar"]
-order = 4
-
-[sources.common_voice]
-kind = "mdc"
-licence = "CC0"
-attribution = "Mozilla Common Voice (CC0)"
-role = "train-read"
-release = "27.0"
-release_metadata = "https://raw.githubusercontent.com/common-voice/cv-dataset/main/datasets/scripted-speech/cv-corpus-27.0-2026-09-11.json"
-# At most 30 per day (API limit). Chosen for languages the conversation and
-# spontaneous sets cover thinly. Spanish, German and French are left out: they
-# are large here (52, 37 and 31 GB) and covered by VoxPopuli and
-# Emilia-YODAS. Kannada and Gujarati have no Common Voice release.
-# `dataset_ids` maps locale to the MDC dataset ID once its terms are accepted
-# in the web UI.
-locales = [
-  "hi", "bn", "ta", "te", "mr", "ml", "pa-IN", "ur", "or",
-  "sw", "vi", "id", "th", "tr", "fa", "ja", "ko", "zh-CN",
-  "it", "pl", "nl", "pt", "ru", "uk", "ar",
+languages = [
+  "en_us", "es_419", "fr_fr", "de_de", "it_it", "pt_br", "nl_nl", "pl_pl",
+  "ru_ru", "uk_ua", "tr_tr", "ar_eg", "fa_ir", "hi_in", "bn_in", "ta_in",
+  "te_in", "mr_in", "kn_in", "ml_in", "gu_in", "ur_pk", "sw_ke", "vi_vn",
+  "id_id", "th_th", "ja_jp", "ko_kr", "cmn_hans_cn", "yo_ng",
 ]
-sample_locales = ["te"]
-order = 5
-
-[sources.common_voice.dataset_ids]
-# locale = "mdc-dataset-id"
-
-[sources.musan]
-kind = "http"
-licence = "CC BY 4.0"
-attribution = "MUSAN, OpenSLR 17 (CC BY 4.0)"
-role = "noise"
-urls = ["https://www.openslr.org/resources/17/musan.tar.gz"]
-sample_urls = []
+files = ["data/{language}/audio/test.tar.gz"]
+extra_files = ["data/{language}/test.tsv"]
+max_bytes_per_file = 60_000_000
+sample_languages = ["hi_in"]
+sample_max_bytes_per_file = 20_000_000
 order = 2
 
 [sources.openslr26]
@@ -130,3 +77,68 @@ role = "reverb"
 urls = ["https://www.openslr.org/resources/26/sim_rir_16k.zip"]
 sample_urls = ["https://www.openslr.org/resources/26/sim_rir_16k.zip"]
 order = 2
+
+[sources.musan]
+kind = "http_tar_stream"
+licence = "CC BY 4.0"
+attribution = "MUSAN, OpenSLR 17 (CC BY 4.0)"
+role = "noise"
+urls = ["https://www.openslr.org/resources/17/musan.tar.gz"]
+# Noise and music only; the speech part is not needed. Stops at the cap even
+# if the archive order leaves noise short; augmentation then adds synthetic
+# noise.
+keep = ["musan/noise/*", "musan/music/*"]
+max_bytes_per_file = 1_500_000_000
+sample_max_bytes_per_file = 50_000_000
+order = 2
+
+[sources.emilia_yodas]
+kind = "hf_tar_stream"
+repo = "amphion/Emilia-Dataset"
+licence = "CC BY 4.0 (Emilia-YODAS subset only)"
+attribution = "Emilia-YODAS, Amphion (CC BY 4.0)"
+role = "train-spontaneous"
+# Only the Emilia-YODAS folder: the original Emilia subset is CC BY-NC.
+languages = ["EN", "DE", "FR", "JA", "KO", "ZH"]
+files = ["Emilia-YODAS/{language}/{language}-B000000.tar"]
+max_bytes_per_file = 300_000_000
+sample_languages = ["DE"]
+sample_max_bytes_per_file = 20_000_000
+order = 3
+
+[sources.voxpopuli]
+kind = "hf_rowgroups"
+repo = "facebook/voxpopuli"
+licence = "CC0 (data only; the project's code and models are CC BY-NC and are not used)"
+attribution = "VoxPopuli, Meta (CC0)"
+role = "train-spontaneous"
+# Languages Emilia-YODAS does not cover. One row group (~0.5 GB) each, the
+# smallest unit the files allow.
+files = ["es/train-00000-of-*.parquet", "it/train-00000-of-*.parquet", "pl/train-00000-of-*.parquet"]
+max_bytes_per_file = 1
+sample_files = ["sl/train-00000-of-*.parquet"]
+order = 3
+
+[sources.common_voice]
+kind = "mdc_tar_stream"
+licence = "CC0"
+attribution = "Mozilla Common Voice (CC0)"
+role = "train-read"
+release = "27.0"
+release_metadata = "https://raw.githubusercontent.com/common-voice/cv-dataset/main/datasets/scripted-speech/cv-corpus-27.0-2026-09-11.json"
+# Mozilla Data Collective allows 30 dataset downloads per day; terms are
+# accepted per dataset in the web UI. Each locale archive is read from the
+# start and stopped at the cap (~5 h of clips). `dataset_ids` maps locale to
+# the MDC dataset ID once its terms are accepted.
+locales = [
+  "hi", "bn", "ta", "te", "mr", "ml", "pa-IN", "ur", "or",
+  "sw", "vi", "id", "th", "tr", "fa", "ja", "ko", "zh-CN",
+  "it", "pl", "nl", "pt", "ru", "uk", "ar",
+]
+max_bytes_per_file = 120_000_000
+sample_locales = ["te"]
+sample_max_bytes_per_file = 20_000_000
+order = 4
+
+[sources.common_voice.dataset_ids]
+# locale = "mdc-dataset-id"

@@ -6,41 +6,59 @@ import argparse
 import sys
 
 from .acquire import check_licences, download, plan_source
-from .sources import load_sources, select
+from .sources import budget_bytes, load_sources, select
 
 
 def _gb(n: int) -> str:
     return f"{n / 1e9:8.1f} GB"
 
 
-def cmd_plan(args) -> int:
+def _plans(args):
     sources = load_sources()
-    total = 0
+    return [plan_source(s, sample=args.sample) for s in select(sources, args.only)]
+
+
+def _over_budget(plans, args) -> bool:
+    total, budget = sum(p.size for p in plans), budget_bytes()
+    if args.only or args.sample or total <= budget:
+        return False
+    print(
+        f"plan is {total / 1e9:.1f} GB, over the {budget / 1e9:.0f} GB budget in "
+        "configs/sources.toml; reduce the selection",
+        file=sys.stderr,
+    )
+    return not args.allow_over_budget
+
+
+def cmd_plan(args) -> int:
+    plans = _plans(args)
     print(f"{'source':18s} {'role':20s} {'files':>7s} {'size':>11s}  licence")
-    for source in select(sources, args.only):
-        plan = plan_source(source, sample=args.sample)
-        total += plan.size
+    for plan in plans:
+        source = plan.source
         print(
             f"{source.name:18s} {source.role:20s} {len(plan.files):7d} "
             f"{_gb(plan.size)}  {source.licence}"
         )
         if plan.note:
             print(f"{'':18s} note: {plan.note}")
-    print(f"{'total':18s} {'':20s} {'':7s} {_gb(total)}")
-    return 0
+    total = sum(p.size for p in plans)
+    print(f"{'total':18s} {'':20s} {'':7s} {_gb(total)}  (budget {budget_bytes() / 1e9:.0f} GB)")
+    return 2 if _over_budget(plans, args) else 0
 
 
 def cmd_download(args) -> int:
-    sources = load_sources()
+    plans = _plans(args)
+    if _over_budget(plans, args):
+        return 2
     failed = []
-    for source in select(sources, args.only):
-        plan = plan_source(source, sample=args.sample)
-        print(f"== {source.name}: {len(plan.files)} files, {_gb(plan.size).strip()}", flush=True)
+    for plan in plans:
+        name = plan.source.name
+        print(f"== {name}: {len(plan.files)} files, up to {_gb(plan.size).strip()}", flush=True)
         try:
             download(plan, workers=args.workers)
         except (Exception, SystemExit) as error:  # keep going; report at the end
-            print(f"!! {source.name} failed: {error}", file=sys.stderr, flush=True)
-            failed.append(source.name)
+            print(f"!! {name} failed: {error}", file=sys.stderr, flush=True)
+            failed.append(name)
     if failed:
         print(f"failed: {', '.join(failed)}", file=sys.stderr)
         return 1
@@ -72,6 +90,7 @@ def main(argv: list[str] | None = None) -> int:
         p = sub.add_parser(name, help=text)
         p.add_argument("--only", nargs="+", help="source names (default: all)")
         p.add_argument("--sample", action="store_true", help="smoke-test subset only")
+        p.add_argument("--allow-over-budget", action="store_true", help="proceed despite the budget")
         p.set_defaults(func=func)
         if name == "download":
             p.add_argument("--workers", type=int, default=8)
@@ -79,7 +98,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("check-licences", help="fail on raw data without a configured licence")
     p.set_defaults(func=cmd_check_licences)
 
-    p = sub.add_parser("refresh-url-lists", help="rebuild the AMI and ICSI headset URL lists")
+    p = sub.add_parser("refresh-url-lists", help="rebuild the AMI headset URL list")
     p.set_defaults(func=cmd_refresh_url_lists)
 
     args = parser.parse_args(argv)

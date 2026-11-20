@@ -44,6 +44,29 @@ offer query now allows verified community hosts (40 offers from $0.24/h,
 against 5 datacenter-only). Persistent storage became optional:
 `bin/vast-fetch` brings results back locally.
 
+## 20 GB budget
+
+The user capped downloads at 20 GB: 430 GB is far more than a 100k-1M
+parameter turn model needs. Every source now fetches only the bytes it uses:
+
+- AMI WAVs are uncompressed (RIFF header, data at byte 44, 16 kHz 16-bit
+  mono), so HTTP range requests fetch a 4-minute window per meeting, the same
+  window for every headset: 5.3 GB instead of 46.6 GB, all speakers kept.
+- ICSI files are NIST SPHERE with `embedded-shorten-v2.00` compression, so they
+  cannot be range-sliced; ICSI is dropped.
+- Parquet footers (read with pyarrow over `HfFileSystem`, a few KB each) give
+  row-group sizes: VoxPopuli ~0.47-0.54 GB per row group, Indic DiarBench
+  ~124 MB (Hindi: 94 rows, 10 row groups). Only chosen row groups are fetched.
+- Tar archives (Emilia-YODAS, FLEURS, MUSAN, Common Voice) are streamed and the
+  connection closed at a byte cap.
+- Mozilla Data Collective: `POST {api}/datasets/{id}/download` with a Bearer
+  key returns `downloadUrl`, a presigned URL that can be streamed. The SDK also
+  has `list_datasets` (with a `locale` filter) and a sample-download endpoint.
+- Result: 18.3 GB total, 0.9 GB smoke sample. Disk 200 GB; the offer query
+  (24 GB GPU, 16 vCPUs, 300 Mb/s, verified, reliability > 0.98) matched 64
+  offers from $0.12/h. Persistent storage is unnecessary: re-downloading
+  20 GB is cheap.
+
 ## Decisions
 
 - No downloads locally (user instruction); code is tested with generated

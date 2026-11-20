@@ -46,6 +46,11 @@ The current milestone, with a handover section on where work stands, is in
   `superturn` subcommand, committed to the repo: setup, downloads, campaign
   machine provisioning, labelling, training, export, benchmarks, syncing. Do
   not rely on ad hoc commands typed on a machine.
+- Downloads are capped at 20 GB in total (`budget_gb` in
+  `configs/sources.toml`). Fetch only the parts of a dataset that are used
+  (time slices, parquet row groups, partial archive streams), never whole
+  archives for a slice of them. Grow a source only when an experiment shows
+  the model is short of that kind of data.
 - Datasets are never downloaded locally. Local work uses unit tests and small
   generated audio fixtures. Real data is downloaded only on the campaign
   machine, following `docs/campaign-plan.md`.

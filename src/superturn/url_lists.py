@@ -1,17 +1,15 @@
-"""Build the AMI and ICSI per-headset URL lists in configs/url-lists/.
+"""Build the AMI per-headset URL list in configs/url-lists/.
 
-Both corpora are served as plain files from the University of Edinburgh. AMI
-files are found by probing meeting IDs from the download page; ICSI files come
-from the download script its download form generates. Each list row is
-`size<TAB>url`, with the size from a HEAD request, so planning needs no
-network access to these servers.
+AMI is served as plain WAV files from the University of Edinburgh. Files are
+found by probing meeting IDs from the download page (series IDs such as ES2002
+expand to meetings ES2002a-d). Each row is `size<TAB>url`, with the size from
+a HEAD request, so planning needs no network access to that server.
 """
 
 from __future__ import annotations
 
 import concurrent.futures as cf
 import re
-import urllib.parse
 import urllib.request
 from pathlib import Path
 
@@ -19,8 +17,6 @@ from .sources import REPO_ROOT
 
 AMI_PAGE = "https://groups.inf.ed.ac.uk/ami/download/"
 AMI_BASE = "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus"
-ICSI_PAGE = "https://groups.inf.ed.ac.uk/ami/icsi/download/"
-ICSI_FORM = "https://homepages.inf.ed.ac.uk/cgi/simonk/ICSI/estimate.cgi"
 HEADERS = {"User-Agent": "superturn-downloader"}
 
 
@@ -61,16 +57,6 @@ def ami_urls() -> list[str]:
     ]
 
 
-def icsi_urls() -> list[str]:
-    page = _get(ICSI_PAGE)
-    sessions = re.findall(r"option value='([A-Za-z0-9]+)'", page)
-    form = [("sessionID", s) for s in sessions] + [("mediaType", "Headset-"), ("detailed", "no")]
-    result = _get(ICSI_FORM, urllib.parse.urlencode(form).encode())
-    script_url = re.search(r'href="([^"]*wget\.sh)"', result).group(1)
-    script = _get(script_url)
-    return sorted(u.replace("/ami//", "/ami/") for u in re.findall(r"https://\S+\.sph", script))
-
-
 def write(name: str, rows: list[tuple[int, str]]) -> Path:
     path = REPO_ROOT / "configs" / "url-lists" / f"{name}.tsv"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -79,7 +65,7 @@ def write(name: str, rows: list[tuple[int, str]]) -> Path:
 
 
 def refresh() -> None:
-    for name, urls in (("ami-headsets", ami_urls()), ("icsi-headsets", icsi_urls())):
+    for name, urls in (("ami-headsets", ami_urls()),):
         rows = _sized(urls)
         path = write(name, rows)
         print(f"{path.relative_to(REPO_ROOT)}: {len(rows)} files, {sum(s for s, _ in rows) / 1e9:.1f} GB")

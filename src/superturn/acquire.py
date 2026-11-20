@@ -1,7 +1,9 @@
-"""Plan and perform dataset downloads.
+"""Plan and perform partial dataset downloads.
 
-Planning reads only provider file listings and release metadata, so it is
-safe to run anywhere. Downloading is meant for the campaign machine.
+Every source downloads only the bytes it uses (see configs/sources.toml).
+Planning reads only listings and file metadata (parquet footers, HEAD
+requests), so it is safe to run anywhere. Downloading is for the campaign
+machine.
 """
 
 from __future__ import annotations
@@ -9,21 +11,26 @@ from __future__ import annotations
 import concurrent.futures as cf
 import json
 import os
+import struct
+import tarfile
 import time
 import urllib.request
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .sources import Source, data_root, matches, raw_dir, read_url_list
+from .sources import Source, data_root, expand, matches, raw_dir, read_url_list
 
 USER_AGENT = "superturn-downloader"
+WAV_BYTES_PER_SECOND = 16_000 * 2  # AMI headsets: 16 kHz, 16-bit, mono
 
 
 @dataclass
 class PlannedFile:
     path: str  # path relative to the source's raw directory
-    size: int
-    url: str | None = None  # for urllist/http sources
+    size: int  # bytes this plan downloads (an upper bound for streams)
+    url: str | None = None
+    extra: dict = field(default_factory=dict)
 
 
 @dataclass
@@ -38,84 +45,229 @@ class Plan:
         return sum(f.size for f in self.files)
 
 
+def _request(url: str, method: str = "GET", headers: dict | None = None, data: bytes | None = None):
+    all_headers = {"User-Agent": USER_AGENT, **(headers or {})}
+    return urllib.request.urlopen(
+        urllib.request.Request(url, data=data, method=method, headers=all_headers), timeout=120
+    )
+
+
+def _head_size(url: str) -> int:
+    with _request(url, "HEAD") as response:
+        return int(response.headers["Content-Length"])
+
+
+def _hf_api():
+    from huggingface_hub import HfApi
+
+    return HfApi(token=os.environ.get("HF_TOKEN"))
+
+
+def _hf_auth() -> dict:
+    token = os.environ.get("HF_TOKEN")
+    return {"Authorization": f"Bearer {token}"} if token else {}
+
+
 # ---------------------------------------------------------------- planning
 
 
 def plan_source(source: Source, sample: bool = False) -> Plan:
-    if source.kind == "hf":
-        return _plan_hf(source, sample)
-    if source.kind == "urllist":
-        return _plan_urllist(source, sample)
-    if source.kind == "http":
-        return _plan_http(source, sample)
-    if source.kind == "mdc":
-        return _plan_mdc(source, sample)
-    raise ValueError(source.kind)
+    return {
+        "wav_slices": _plan_wav_slices,
+        "hf_rowgroups": _plan_hf_rowgroups,
+        "hf_tar_stream": _plan_hf_tar_stream,
+        "http_tar_stream": _plan_http_tar_stream,
+        "mdc_tar_stream": _plan_mdc_tar_stream,
+        "http": _plan_http,
+    }[source.kind](source, sample)
 
 
-def _plan_hf(source: Source, sample: bool) -> Plan:
-    from huggingface_hub import HfApi
-
-    api = HfApi(token=os.environ.get("HF_TOKEN"))
-    repo = source.get("repo")
-    revision = source.get("revision") or api.dataset_info(repo).sha
-    include = source.get("sample_include") if sample else source.get("include")
-    exclude = source.get("exclude", [])
-    files = [
-        PlannedFile(path=entry.path, size=entry.size or 0)
-        for entry in api.list_repo_tree(
-            repo, repo_type="dataset", recursive=True, revision=revision
-        )
-        if getattr(entry, "size", None) is not None
-        and matches(entry.path, include, exclude)
-    ]
-    return Plan(source, sorted(files, key=lambda f: f.path), revision)
+def wav_window(sizes: list[int], minutes: float, start_fraction: float) -> tuple[float, float]:
+    """(start_s, length_s) of the window shared by all tracks of one meeting."""
+    duration = min((s - 44) / WAV_BYTES_PER_SECOND for s in sizes)
+    length = min(minutes * 60.0, duration)
+    start = min(duration * start_fraction, duration - length)
+    return max(start, 0.0), length
 
 
-def _plan_urllist(source: Source, sample: bool) -> Plan:
+def _plan_wav_slices(source: Source, sample: bool) -> Plan:
     prefix = source.get("strip_prefix")
     wanted = source.get("sample_match") if sample else None
-    files = [
-        PlannedFile(path=url.removeprefix(prefix), size=size, url=url)
-        for size, url in read_url_list(source)
-        if wanted is None or wanted in url
-    ]
+    minutes = source.pick("minutes_per_meeting", sample)
+    meetings: dict[str, list[tuple[int, str]]] = defaultdict(list)
+    for size, url in read_url_list(source):
+        if wanted is None or wanted in url:
+            meetings[url.removeprefix(prefix).split("/")[0]].append((size, url))
+    files = []
+    for meeting, tracks in sorted(meetings.items()):
+        start, length = wav_window([s for s, _ in tracks], minutes, source.get("start_fraction"))
+        for _, url in sorted(tracks, key=lambda t: t[1]):
+            files.append(
+                PlannedFile(
+                    path=url.removeprefix(prefix),
+                    size=44 + int(length * WAV_BYTES_PER_SECOND),
+                    url=url,
+                    extra={"meeting": meeting, "start_s": start, "length_s": length},
+                )
+            )
     return Plan(source, files)
 
 
-def _head_size(url: str) -> int:
-    request = urllib.request.Request(
-        url, method="HEAD", headers={"User-Agent": USER_AGENT}
+def _hf_revision(source: Source) -> str:
+    return source.get("revision") or _hf_api().dataset_info(source.get("repo")).sha
+
+
+def _hf_paths(source: Source, revision: str, patterns: list[str]) -> list[tuple[str, int]]:
+    tree = _hf_api().list_repo_tree(
+        source.get("repo"), repo_type="dataset", recursive=True, revision=revision
     )
-    with urllib.request.urlopen(request, timeout=60) as response:
-        return int(response.headers["Content-Length"])
+    return sorted(
+        (e.path, e.size) for e in tree if getattr(e, "size", None) is not None and matches(e.path, patterns)
+    )
+
+
+def select_row_groups(sizes: list[int], max_bytes: int) -> list[int]:
+    """Row groups taken in order until the cap; always at least one."""
+    chosen, total = [], 0
+    for index, size in enumerate(sizes):
+        if chosen and total + size > max_bytes:
+            break
+        chosen.append(index)
+        total += size
+    return chosen
+
+
+def _row_group_sizes(repo: str, path: str, revision: str) -> list[int]:
+    import pyarrow.parquet as pq
+    from huggingface_hub import HfFileSystem
+
+    fs = HfFileSystem(token=os.environ.get("HF_TOKEN"))
+    with fs.open(f"datasets/{repo}/{path}", "rb", revision=revision, block_size=256 * 1024) as f:
+        meta = pq.ParquetFile(f).metadata
+    return [
+        sum(meta.row_group(i).column(c).total_compressed_size for c in range(meta.num_columns))
+        for i in range(meta.num_row_groups)
+    ]
+
+
+def _plan_hf_rowgroups(source: Source, sample: bool) -> Plan:
+    revision = _hf_revision(source)
+    cap = source.pick("max_bytes_per_file", sample)
+    files = []
+    for path, _ in _hf_paths(source, revision, source.pick("files", sample)):
+        sizes = _row_group_sizes(source.get("repo"), path, revision)
+        groups = select_row_groups(sizes, cap)
+        files.append(
+            PlannedFile(path=path, size=sum(sizes[i] for i in groups), extra={"row_groups": groups})
+        )
+    return Plan(source, files, revision)
+
+
+def _plan_hf_tar_stream(source: Source, sample: bool) -> Plan:
+    revision = _hf_revision(source)
+    languages = source.pick("languages", sample)
+    cap = source.pick("max_bytes_per_file", sample)
+    archives = dict(_hf_paths(source, revision, expand(source.get("files"), languages)))
+    extras = dict(_hf_paths(source, revision, expand(source.get("extra_files", []), languages)))
+    files = [PlannedFile(path=p, size=min(s, cap), extra={"stream": True}) for p, s in archives.items()]
+    files += [PlannedFile(path=p, size=s, extra={"stream": False}) for p, s in extras.items()]
+    return Plan(source, sorted(files, key=lambda f: f.path), revision)
+
+
+def _plan_http_tar_stream(source: Source, sample: bool) -> Plan:
+    cap = source.pick("max_bytes_per_file", sample)
+    return Plan(
+        source,
+        [
+            PlannedFile(path=u.rsplit("/", 1)[1], size=min(_head_size(u), cap), url=u)
+            for u in source.get("urls")
+        ],
+    )
 
 
 def _plan_http(source: Source, sample: bool) -> Plan:
-    urls = source.get("sample_urls" if sample else "urls", [])
+    urls = source.pick("urls", sample, [])
     return Plan(
-        source,
-        [PlannedFile(path=u.rsplit("/", 1)[1], size=_head_size(u), url=u) for u in urls],
+        source, [PlannedFile(path=u.rsplit("/", 1)[1], size=_head_size(u), url=u) for u in urls]
     )
 
 
-def _plan_mdc(source: Source, sample: bool) -> Plan:
-    request = urllib.request.Request(
-        source.get("release_metadata"), headers={"User-Agent": USER_AGENT}
-    )
-    with urllib.request.urlopen(request, timeout=120) as response:
+def _plan_mdc_tar_stream(source: Source, sample: bool) -> Plan:
+    with _request(source.get("release_metadata")) as response:
         locales = json.load(response)["locales"]
-    wanted = source.get("sample_locales" if sample else "locales")
+    cap = source.pick("max_bytes_per_file", sample)
     ids = source.get("dataset_ids", {})
     files, missing = [], []
-    for locale in wanted:
+    for locale in source.pick("locales", sample):
         if locale not in locales:
-            raise SystemExit(f"common_voice: no release for locale {locale!r}")
-        files.append(PlannedFile(path=locale, size=int(locales[locale]["size"])))
+            raise SystemExit(f"{source.name}: no release for locale {locale!r}")
+        files.append(PlannedFile(path=locale, size=min(int(locales[locale]["size"]), cap)))
         if locale not in ids:
             missing.append(locale)
     note = f"dataset IDs not yet recorded for: {', '.join(missing)}" if missing else ""
     return Plan(source, files, revision=source.get("release"), note=note)
+
+
+# ------------------------------------------------------- streaming helpers
+
+
+class CountingReader:
+    """File-like wrapper that counts bytes read from an HTTP response."""
+
+    def __init__(self, raw):
+        self.raw = raw
+        self.count = 0
+
+    def read(self, n: int = -1) -> bytes:
+        chunk = self.raw.read(n)
+        self.count += len(chunk)
+        return chunk
+
+
+def stream_tar(fileobj, target: Path, max_bytes: int, keep: list[str] | None = None) -> dict:
+    """Extract regular members from a tar stream until `max_bytes` have been
+    read from the network, finishing the member in progress. Returns counts."""
+    reader = CountingReader(fileobj)
+    kept = skipped = 0
+    with tarfile.open(fileobj=reader, mode="r|*") as archive:
+        for member in archive:
+            if member.isfile() and (keep is None or matches(member.name, keep)):
+                destination = target / member.name
+                if not destination.resolve().is_relative_to(target.resolve()):
+                    raise RuntimeError(f"unsafe path in archive: {member.name}")
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                with archive.extractfile(member) as source, open(destination, "wb") as out:
+                    while chunk := source.read(1 << 20):
+                        out.write(chunk)
+                kept += 1
+            else:
+                skipped += 1
+            if reader.count >= max_bytes:
+                break
+    return {"members_kept": kept, "members_skipped": skipped, "bytes_read": reader.count}
+
+
+def parse_wav_header(header: bytes) -> tuple[bytes, int]:
+    """Return (fmt chunk payload, byte offset of the data chunk payload)."""
+    if header[:4] != b"RIFF" or header[8:12] != b"WAVE":
+        raise ValueError("not a WAV file")
+    offset, fmt = 12, None
+    while offset + 8 <= len(header):
+        chunk, size = header[offset : offset + 4], struct.unpack("<I", header[offset + 4 : offset + 8])[0]
+        if chunk == b"fmt ":
+            fmt = header[offset + 8 : offset + 8 + size]
+        if chunk == b"data":
+            if fmt is None:
+                raise ValueError("data chunk before fmt chunk")
+            return fmt, offset + 8
+        offset += 8 + size + (size & 1)
+    raise ValueError("no data chunk in header")
+
+
+def wav_bytes(fmt: bytes, pcm: bytes) -> bytes:
+    """A complete WAV file from a fmt payload and PCM data."""
+    body = b"WAVE" + b"fmt " + struct.pack("<I", len(fmt)) + fmt + b"data" + struct.pack("<I", len(pcm)) + pcm
+    return b"RIFF" + struct.pack("<I", len(body)) + body
 
 
 # ------------------------------------------------------------- downloading
@@ -124,91 +276,136 @@ def _plan_mdc(source: Source, sample: bool) -> Plan:
 def download(plan: Plan, workers: int = 8) -> None:
     target = raw_dir(plan.source)
     target.mkdir(parents=True, exist_ok=True)
-    kind = plan.source.kind
-    if kind == "hf":
-        _download_hf(plan, target, workers)
-    elif kind in ("urllist", "http"):
-        _download_urls(plan, target, workers)
-    elif kind == "mdc":
-        _download_mdc(plan, target)
-    _write_manifest(plan, target)
-
-
-def _download_hf(plan: Plan, target: Path, workers: int) -> None:
-    from huggingface_hub import snapshot_download
-
-    snapshot_download(
-        repo_id=plan.source.get("repo"),
-        repo_type="dataset",
-        revision=plan.revision,
-        allow_patterns=[f.path for f in plan.files],
-        local_dir=target,
-        max_workers=workers,
-        token=os.environ.get("HF_TOKEN"),
-    )
-    for f in plan.files:
-        actual = (target / f.path).stat().st_size
-        if actual != f.size:
-            raise RuntimeError(f"{f.path}: expected {f.size} bytes, got {actual}")
-
-
-def _fetch(url: str, dest: Path, size: int, attempts: int = 5) -> None:
-    if dest.exists() and dest.stat().st_size == size:
-        return
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    part = dest.with_name(dest.name + ".part")
-    for attempt in range(1, attempts + 1):
-        offset = part.stat().st_size if part.exists() else 0
-        headers = {"User-Agent": USER_AGENT}
-        if offset:
-            headers["Range"] = f"bytes={offset}-"
-        try:
-            request = urllib.request.Request(url, headers=headers)
-            with urllib.request.urlopen(request, timeout=120) as response:
-                mode = "ab" if offset and response.status == 206 else "wb"
-                with open(part, mode) as out:
-                    while chunk := response.read(1 << 20):
-                        out.write(chunk)
-            if part.stat().st_size != size:
-                raise OSError(f"size {part.stat().st_size} != {size}")
-            part.rename(dest)
-            return
-        except OSError as error:
-            if attempt == attempts:
-                raise RuntimeError(f"{url}: {error}") from error
-            time.sleep(2**attempt)
-
-
-def _download_urls(plan: Plan, target: Path, workers: int) -> None:
+    fetch = {
+        "wav_slices": _fetch_wav_slice,
+        "hf_rowgroups": _fetch_rowgroups,
+        "hf_tar_stream": _fetch_hf_tar,
+        "http_tar_stream": _fetch_http_tar,
+        "mdc_tar_stream": _fetch_mdc_tar,
+        "http": _fetch_http,
+    }[plan.source.kind]
+    results = {}
     with cf.ThreadPoolExecutor(workers) as pool:
-        futures = [
-            pool.submit(_fetch, f.url, target / f.path, f.size) for f in plan.files
-        ]
+        futures = {pool.submit(fetch, plan, f, target): f.path for f in plan.files}
         for future in cf.as_completed(futures):
-            future.result()
+            results[futures[future]] = future.result()
+    _write_manifest(plan, target, results)
 
 
-def _download_mdc(plan: Plan, target: Path) -> None:
-    from datacollective import download_dataset
+def _done(target: Path, path: str) -> Path:
+    return target / ".done" / (path.replace("/", "__") + ".json")
 
-    ids = plan.source.get("dataset_ids", {})
-    missing = [f.path for f in plan.files if f.path not in ids]
-    if missing:
+
+def _once(fetch):
+    """Skip files already fetched; record each file's result for the manifest."""
+
+    def wrapper(plan: Plan, f: PlannedFile, target: Path):
+        marker = _done(target, f.path)
+        if marker.exists():
+            return json.loads(marker.read_text())
+        result = fetch(plan, f, target) or {}
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(json.dumps(result))
+        return result
+
+    return wrapper
+
+
+@_once
+def _fetch_wav_slice(plan: Plan, f: PlannedFile, target: Path) -> dict:
+    with _request(f.url, headers={"Range": "bytes=0-4095"}) as response:
+        fmt, data_offset = parse_wav_header(response.read())
+    channels, rate, _, block_align = struct.unpack("<HIIH", fmt[2:14])
+    first = data_offset + int(f.extra["start_s"] * rate) * block_align
+    count = int(f.extra["length_s"] * rate) * block_align
+    with _request(f.url, headers={"Range": f"bytes={first}-{first + count - 1}"}) as response:
+        if response.status != 206:
+            raise RuntimeError(f"{f.url}: server ignored the range request")
+        pcm = response.read()
+    if len(pcm) != count:
+        raise RuntimeError(f"{f.url}: expected {count} bytes, got {len(pcm)}")
+    destination = target / f.path
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_bytes(wav_bytes(fmt, pcm))
+    return {"start_s": f.extra["start_s"], "length_s": f.extra["length_s"], "channels": channels, "rate": rate}
+
+
+@_once
+def _fetch_rowgroups(plan: Plan, f: PlannedFile, target: Path) -> dict:
+    import pyarrow.parquet as pq
+    from huggingface_hub import HfFileSystem
+
+    fs = HfFileSystem(token=os.environ.get("HF_TOKEN"))
+    remote = f"datasets/{plan.source.get('repo')}/{f.path}"
+    with fs.open(remote, "rb", revision=plan.revision, block_size=4 << 20) as handle:
+        table = pq.ParquetFile(handle).read_row_groups(f.extra["row_groups"])
+    destination = target / f.path
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    pq.write_table(table, destination)
+    return {"row_groups": f.extra["row_groups"], "rows": table.num_rows}
+
+
+def _hf_file_url(plan: Plan, path: str) -> str:
+    from huggingface_hub import hf_hub_url
+
+    return hf_hub_url(plan.source.get("repo"), path, repo_type="dataset", revision=plan.revision)
+
+
+@_once
+def _fetch_hf_tar(plan: Plan, f: PlannedFile, target: Path) -> dict:
+    url = _hf_file_url(plan, f.path)
+    if not f.extra.get("stream"):
+        destination = target / f.path
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with _request(url, headers=_hf_auth()) as response:
+            destination.write_bytes(response.read())
+        return {"bytes": destination.stat().st_size}
+    with _request(url, headers=_hf_auth()) as response:
+        return stream_tar(response, target / f.path.rsplit("/", 1)[0], f.size)
+
+
+@_once
+def _fetch_http_tar(plan: Plan, f: PlannedFile, target: Path) -> dict:
+    with _request(f.url) as response:
+        return stream_tar(response, target, f.size, plan.source.get("keep"))
+
+
+@_once
+def _fetch_http(plan: Plan, f: PlannedFile, target: Path) -> dict:
+    destination = target / f.path
+    with _request(f.url) as response, open(destination, "wb") as out:
+        while chunk := response.read(1 << 20):
+            out.write(chunk)
+    if destination.stat().st_size != f.size:
+        raise RuntimeError(f"{f.url}: size {destination.stat().st_size} != {f.size}")
+    return {"bytes": f.size}
+
+
+@_once
+def _fetch_mdc_tar(plan: Plan, f: PlannedFile, target: Path) -> dict:
+    from datacollective.api_utils import _get_api_url
+
+    dataset_id = plan.source.get("dataset_ids", {}).get(f.path)
+    if not dataset_id:
         raise SystemExit(
-            "common_voice: accept the terms for these locales in the Mozilla Data "
-            "Collective web UI and record their dataset IDs in configs/sources.toml: "
-            + ", ".join(missing)
+            f"{plan.source.name}: accept the terms for locale {f.path} in the Mozilla Data "
+            "Collective web UI and record its dataset ID in configs/sources.toml"
         )
-    for f in plan.files:
-        done = target / f.path / ".complete"
-        if done.exists():
-            continue
-        (target / f.path).mkdir(parents=True, exist_ok=True)
-        download_dataset(ids[f.path], download_directory=str(target / f.path))
-        done.touch()
+    key = os.environ.get("MDC_API_KEY") or ""
+    with _request(
+        f"{_get_api_url()}/datasets/{dataset_id}/download",
+        method="POST",
+        headers={"Authorization": f"Bearer {key}"},
+    ) as response:
+        download_url = json.load(response)["downloadUrl"]
+    with _request(download_url) as response:
+        result = stream_tar(response, target / f.path, f.size)
+    if not any((target / f.path).rglob("*.tsv")):
+        result["warning"] = "no TSV metadata within the streamed part of the archive"
+    return result
 
 
-def _write_manifest(plan: Plan, target: Path) -> None:
+def _write_manifest(plan: Plan, target: Path, results: dict) -> None:
     manifest = {
         "source": plan.source.name,
         "licence": plan.source.licence,
@@ -216,7 +413,9 @@ def _write_manifest(plan: Plan, target: Path) -> None:
         "role": plan.source.role,
         "revision": plan.revision,
         "downloaded_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "files": [{"path": f.path, "size": f.size} for f in plan.files],
+        "files": [
+            {"path": f.path, "planned_bytes": f.size, **results.get(f.path, {})} for f in plan.files
+        ],
     }
     (target / "MANIFEST.json").write_text(json.dumps(manifest, indent=2) + "\n")
 
