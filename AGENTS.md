@@ -2,14 +2,15 @@
 
 ## Goal
 
-Build a small, open, audio-only end-of-turn model for voice agents. Given the
-caller's recent audio at a pause and how long the silence has lasted, it
+Build a small, open end-of-turn model for voice agents. Given the caller's
+recent audio, elapsed silence and available live partial STT transcript, it
 returns the probability that the caller has finished their turn rather than
 pausing mid-thought. It must:
 
-- run on CPU in a few milliseconds, as an int8 ONNX file of at most 1 MB
-  (100k–1M parameters);
-- take raw 16 kHz mono PCM, with all feature extraction inside the model;
+- run both branches at p99 at most 3 ms per call on one CPU core, as one
+  int8 ONNX file of at most 2 MB;
+- take raw 16 kHz mono PCM and normalized transcript bytes, with acoustic
+  features and byte n-gram hashing inside the model;
 - work across many languages and on telephone audio (8 kHz G.711, line noise);
 - be speaker independent: judged only on voices it never trained on;
 - be released free for commercial and non-commercial use (Apache 2.0), trained
@@ -24,12 +25,15 @@ includes the handover.
 - Turn detection only. Voice activity detection and barge-in belong to the
   calling application, which runs Silero VAD and invokes Superturn when it
   sees a pause.
-- Superturn takes audio and silence time and returns a probability.
-  A separate text completeness model takes the live partial STT transcript
-  and has its own int8 ONNX artifact of at most 1 MB. VXPipe combines the
-  two scores. A language ships when both models pass its release checks.
-- The shipping model takes up to 3 s of caller audio and `silence_ms`.
-  Teacher-only analysis may use longer causal history.
+- The single model fuses up to 3 s of 16 kHz caller audio, `silence_ms`
+  and `text_bytes`, the last 128 normalized UTF-8 bytes of the current
+  live partial transcript, right-aligned and zero-padded. Use all zeros
+  when STT is missing. No timestamp alignment is required.
+- Report combined, masked audio-only and masked text-only quality by
+  language. Release a language only when combined quality passes and the
+  no-transcript fallback preserves the audio-only quality. Benchmark CPU
+  speed after the quality gate. Teacher-only analysis may use longer
+  causal history.
 - Train and fine-tune Superturn's own turn detector. Existing architectures
   and pretrained audio components from other tasks, such as TTS, are
   allowed, including as the basis of a general speech teacher trained on

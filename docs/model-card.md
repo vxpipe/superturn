@@ -15,16 +15,21 @@ are pending.
 
 Superturn estimates whether a caller has finished their turn at an elapsed
 pause. The caller runs its own voice activity detector and supplies a context
-window of 16 kHz mono PCM through the decision instant.
+window of 16 kHz mono PCM through the decision instant and the current live
+partial transcript if available. This is the approved combined interface
+for the release candidate.
 
 | Input | Format |
 |---|---|
-| `audio` | Float32 `[batch, samples]` in [-1, 1], zero-padded on the left |
+| `audio` | Float32 `[batch, 48000]` in [-1, 1], zero-padded on the left |
 | `silence_ms` | Float32 `[batch, 1]` |
+| `text_bytes` | Int32 `[batch, 128]`, right-aligned normalized UTF-8, zeros if unavailable |
 | `p_complete` | Float32 `[batch, 1]` probability output |
 
 The release will record the selected context length, parameter count,
 ONNX file size, probability threshold and single-core CPU latency.
+The int8 budget is 2 MB total and the one-core p99 target is at most 3 ms
+for both branches. Report masked audio and masked text results by language.
 Final thresholds are fitted on English AMI telephone validation pauses.
 The benchmark applies that threshold across languages and audio conditions.
 

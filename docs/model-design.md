@@ -1,12 +1,13 @@
 # Model design
 
-Status: proposal, 2026-11-20.
+Status: combined input contract approved 2026-11-21. Implementation pending.
 
 ## Call contract
 
 The application's VAD reports a pause. The application calls Superturn with
 the last 3 s of the caller's audio through the decision instant, including
-the pause (zero-padded at the start if shorter), and the silence elapsed so far in milliseconds. Superturn returns
+the pause (zero-padded at the start if shorter), the elapsed silence in
+milliseconds and the current live partial transcript bytes. Superturn returns
 P(turn complete). The application may call again as the pause grows, for
 example at 200, 300 and 500 ms.
 
@@ -26,15 +27,16 @@ come later if longer context helps.
   window. The normalisation is what makes "falling" relative to this speaker's
   own range. Energy per frame, normalised the same way.
 - Silence elapsed, as a scalar, joined after the recurrent layer.
-- All feature extraction is inside the exported ONNX graph. The application
-  passes raw PCM and computes nothing.
+- The exported graph computes acoustic features and text byte n-gram hashes.
+  The application passes raw PCM and packs the transcript bytes.
 
-Window length (1, 2, 3, 4, 8 s) is selected on validation and measured on the held-out test set.
+The combined contract uses 48,000 samples (3 seconds) per call.
 
 ## Network
 
-Budget: 100k–1M parameters. Two candidates, compared at the same budget on the
-same data:
+The single artifact has a 2 MB int8 budget and a p99 target of at most 3 ms
+per call for both branches on one CPU core. The audio development track
+compared these architectures on the same data:
 
 **A. Recurrent baseline**
 
@@ -63,10 +65,9 @@ data quality and coverage matter more than the choice between architectures.
 
 ## Pretraining
 
-Train from scratch rather than fine-tune an existing model. Pretrained speech
-encoders are 8M parameters and up, so fine-tuning one breaks the size budget,
-and what they learn is mostly words rather than prosody. Shrinking one would
-throw most of that knowledge away.
+Fit our own teacher head on real labels with a permitted general-purpose
+speech encoder. Distil it into the small audio branch using eligible causal
+audio. Use existing turn detectors for benchmark comparison only.
 
 The first version trains directly on hold/shift labels. If it falls short on
 languages or conditions with little labelled data, pretrain our own tiny
@@ -87,8 +88,9 @@ extract them itself, which is most of what a tiny model would otherwise lack.
 
 ## Training
 
-- Loss: binary cross-entropy on hold/shift labels, weighted so that a false
-  "complete" costs more than a false "incomplete".
+- Loss: binary cross-entropy on hold/shift labels. For the VXPipe policy
+  diagnostic, prioritize shift recall and distinguish long holds likely to
+  survive until playback from shorter holds that cost a discarded draft.
 - Optional auxiliary targets during training only: filler at the end, and time
   until the speaker resumes. They are dropped at export.
 - Language balance: temperature sampling across languages so small languages
@@ -104,10 +106,28 @@ int8 loses accuracy against float.
 
 ## Transcript input
 
-Not in the model. The transcript arrives after the pause, depends on language,
-and would make the model larger. The application can still apply cheap
-transcript rules on its side, such as holding when the partial transcript ends
-in a conjunction, preposition or filler.
+The current live STT partial arrives independently of the PCM. Take the
+snapshot visible at the 300 ms decision and require no word-to-audio
+alignment. Pack it by applying NFKC, Unicode lowercase, then removing
+Unicode punctuation and NUL. UTF-8 encode, take the last 128 bytes and
+left-pad with zeros. The graph consumes bytes as integers, including
+truncated UTF-8 sequences at the leading boundary. An absent partial
+becomes 128 zeros. The planned interface is:
+
+| Tensor | Type and shape |
+| --- | --- |
+| `audio` | Float32 `[batch, 48000]`, mono PCM in [-1, 1] |
+| `silence_ms` | Float32 `[batch, 1]` |
+| `text_bytes` | Int32 `[batch, 128]` |
+| `p_complete` | Float32 `[batch, 1]` |
+
+Compute rolling UTF-8 byte n-gram hashes in the graph with integer
+operations and a shared embedding table. Use byte-space boundaries for
+spaced writing and short character windows for unspaced writing. A small
+text GRU summarizes the byte features. Fuse its state, the audio state and
+elapsed silence in one probability head. Train with lag and blank-text
+dropout. Use real pause points and calibrate any open LLM text labeller
+on verified real labels before using its output.
 
 ## Evaluation
 
@@ -117,3 +137,12 @@ in a conjunction, preposition or filler.
 - Metrics: false-complete rate at a fixed pause length, accuracy, and median
   pause length needed to reach a confident decision. Compare against a larger
   teacher model and against silence-only timeouts.
+- Measure combined quality, audio-only with text zeroed, and text-only
+  with PCM zeroed. Compare the application policy against silence timers
+  by language at live STT latency and at 150/300/500 ms lag sensitivities.
+  Report responsiveness, false starts and wasted drafts. A language
+  qualifies when the combined model passes and blank text preserves the
+  current audio-only performance.
+- Measure single-core p99 after the quality checks. Profile the STFT first
+  and test a smaller FFT or larger hop if needed. Treat application-side
+  caching as a separate interface experiment.
