@@ -91,9 +91,12 @@ over the phone, so this matters more than room noise.
 
 ## Our own calls
 
-Production call recordings are the closest match to real use, but they are
-customer data: local evaluation only, never used for training, committed or
-published.
+Production call recordings may support training and evaluation when the
+customer terms and applicable consent cover that use and release of the
+trained weights. Confirm permitted processing and storage locations before
+copying calls. Split by customer and caller and reserve held-out customers for
+evaluation. Keep the recordings and identifiable derivatives in approved
+private storage. Publish aggregate evaluation results.
 
 ## Download plan and sizes
 
