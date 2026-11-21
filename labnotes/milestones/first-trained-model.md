@@ -89,14 +89,16 @@ Last updated 2026-11-21.
   4.79% false completes.
   Common Voice supplies 98.3% of pooled validation shifts. The reviewed
   ranking update uses AMI telephone validation for choosing configurations
-  and the int8 operating threshold. It will take effect at a run boundary.
+  and the int8 operating threshold. It is active in `experiments-ami`,
+  which reused five completed checkpoints.
   A validation-only export preflight for the first checkpoint produced
   a 302,367-byte int8 file with unchanged pooled AUC to four decimals.
   A 512-step training probe found identical weights and validation metrics
   with spawned workers in about 30% less time. The restarted queue reused
   all three completed checkpoints. The second 500k run finished in
-  19m04s, versus 29m29s for the threaded seed. The 1M GRU has started.
-  All 53 server tests passed.
+  19m04s, versus 29m29s for the threaded seed. The first 1M GRU seed
+  completed in 19m07s, with 5.11% recall at 4.79% false completes on AMI
+  telephone validation. The server suite passed 54 tests.
 
 ### Next step
 
