@@ -127,6 +127,15 @@ It stores the matched data beneath `shards/ami-pilot/`, the versioned
 validation report beneath `reports/ami-label-pilot/`, and the four
 checkpoint copies beneath `exports/ami-label-pilot/`.
 
+Compare matched training mixtures using the completed label pilot's report ID.
+
+```sh
+bin/vast-run -n ami-mixture 'uv run --no-sync python -m superturn.ami_mixture d57f1d5f05a30a91 --epochs 20 && bin/sync push exports reports && bin/sync verify exports reports'
+```
+
+The versioned reports and checkpoints live beneath `reports/ami-mixture/`
+and `exports/ami-mixture/`.
+
 ## Later campaigns
 
 A later campaign runs `bin/sync pull` after bootstrap and starts from the

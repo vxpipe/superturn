@@ -265,12 +265,39 @@ def prepare(root, destination):
     return report
 
 
-def run(root, device):
+def train_and_score(folder, name, config, validation, archive, device):
     import torch
 
     from .model import build
     from .train import _input, _stats, completed_run, paths, records, train
 
+    checkpoint = completed_run(folder, name, config, device)
+    if checkpoint is None:
+        checkpoint = train(folder, name, config, device)
+    saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    archive.mkdir(parents=True, exist_ok=True)
+    for filename in ("best.pt", "finished.json", "metrics.json"):
+        temporary = archive / f".{filename}.tmp"
+        shutil.copyfile(checkpoint.parent / filename, temporary)
+        temporary.replace(archive / filename)
+    model = build(config).to(device).eval()
+    model.load_state_dict(saved["state"])
+    scores, truth = [], []
+    with torch.inference_mode():
+        for rows in records(paths(validation, "crosscheck")):
+            audio = np.stack([_input(row, model.samples, DECISION_MS) for row in rows])
+            pcm = torch.from_numpy(audio.astype(np.float32) / 32768).to(device)
+            elapsed = torch.full((len(rows), 1), float(DECISION_MS), device=device)
+            scores.extend(model(pcm, elapsed).cpu().flatten().tolist())
+            truth.extend(int(row["label"] == "shift") for row in rows)
+    return {
+        "checkpoint_sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
+        "validation": saved["metrics"],
+        "original_supported_crosscheck": _stats(scores, truth, saved["metrics"]["threshold"]),
+    }
+
+
+def run(root, device):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("AMI label pilot uses the existing campaign machine and its private data")
     sources = [root / "labels" / "ami.jsonl", root / "labels" / "ami-verified-train.json",
@@ -290,7 +317,7 @@ def run(root, device):
         temporary.write_text(json.dumps(prepared, indent=2) + "\n")
         temporary.replace(prepared_path)
     print(json.dumps(prepared, indent=2), flush=True)
-    validation = paths(destination / "evaluation", "crosscheck")
+    validation = destination / "evaluation"
     result = {**prepared, "runs": []}
     output = root / "reports" / "ami-label-pilot" / f"{pilot_id[:16]}.json"
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -303,31 +330,10 @@ def run(root, device):
                 name = f"ami-pilot-{arm}-{seed}"
                 variant = {**config, "seed": seed}
                 folder = destination / arm
-                checkpoint = completed_run(folder, name, variant, device)
-                if checkpoint is None:
-                    checkpoint = train(folder, name, variant, device)
-                saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
                 archive = root / "exports" / "ami-label-pilot" / pilot_id[:16] / name
-                archive.mkdir(parents=True, exist_ok=True)
-                for filename in ("best.pt", "finished.json", "metrics.json"):
-                    temporary = archive / f".{filename}.tmp"
-                    shutil.copyfile(checkpoint.parent / filename, temporary)
-                    temporary.replace(archive / filename)
-                model = build(variant).to(device).eval()
-                model.load_state_dict(saved["state"])
-                scores, truth = [], []
-                with torch.inference_mode():
-                    for rows in records(validation):
-                        audio = np.stack([_input(row, model.samples, DECISION_MS) for row in rows])
-                        pcm = torch.from_numpy(audio.astype(np.float32) / 32768).to(device)
-                        elapsed = torch.full((len(rows), 1), float(DECISION_MS), device=device)
-                        scores.extend(model(pcm, elapsed).cpu().flatten().tolist())
-                        truth.extend(int(row["label"] == "shift") for row in rows)
                 result["runs"].append({
                     "arm": arm, "seed": seed, "architecture": variant,
-                    "checkpoint_sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
-                    "validation": saved["metrics"],
-                    "original_supported_crosscheck": _stats(scores, truth, saved["metrics"]["threshold"]),
+                    **train_and_score(folder, name, variant, validation, archive, device),
                 })
                 temporary = output.with_suffix(".tmp")
                 temporary.write_text(json.dumps(result, indent=2) + "\n")

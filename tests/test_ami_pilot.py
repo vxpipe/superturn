@@ -1,7 +1,11 @@
 from dataclasses import replace
 
 import numpy as np
+import pyarrow as pa
+import pyarrow.parquet as pq
+import pytest
 
+from superturn import ami_mixture
 from superturn.ami_pilot import acoustic_status, annotated_pauses, group_words, match_training
 from superturn.labels import Label, Speech
 
@@ -47,3 +51,26 @@ def test_ami_match_preserves_speaker_and_label_counts():
     )
     assert [(row.speaker, row.label) for row in selected_current] == [("a", "hold"), ("b", "shift")]
     assert [(row.speaker, row.label) for row in selected_annotation] == [("a", "hold"), ("b", "shift")]
+
+
+def test_auxiliary_holds_match_languages_and_cap_the_pause(tmp_path, monkeypatch):
+    length = ami_mixture.CONTEXT + ami_mixture.GAP + 1
+    audio = np.ones(length, dtype="<i2").tobytes()
+    rows = []
+    for source, silence_start in (("common_voice", 32000), ("emilia_yodas", None)):
+        for language in ("ja", "ko"):
+            rows.append({"source": source, "language": language, "speaker": f"voice-{language}",
+                         "audio": f"{source}/{language}.wav", "pause_start": 20000,
+                         "pause_samples": 8000, "label": "hold", "silence_start": silence_start,
+                         "pcm": audio})
+    path = tmp_path / "auxiliary.parquet"
+    pq.write_table(pa.Table.from_pylist(rows), path)
+    monkeypatch.setattr(ami_mixture, "condition", lambda pcm, mode, seed: pcm)
+    auxiliary, quotas = ami_mixture._auxiliary([path], 2)
+    assert quotas == {"ja": 1, "ko": 1}
+    assert {row["source"] for row in auxiliary["read"]} == {"common_voice"}
+    assert {row["source"] for row in auxiliary["natural"]} == {"emilia_yodas"}
+    assert all(row["pause_samples"] == ami_mixture.GAP and row["pcm"][-2:] == bytes(2)
+               for rows in auxiliary.values() for row in rows)
+    with pytest.raises(ValueError, match="not enough language-matched"):
+        ami_mixture._auxiliary([path], 3)

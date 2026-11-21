@@ -113,14 +113,20 @@ Last updated 2026-11-21.
   telephone cross-check, mean AUC was 0.658 with current labels and
   0.657 with annotation-led labels. The previous mixed-data checkpoints
   ranged from 0.279 to 0.482 on the same cases.
+- Compared matched extra holds from AMI, Common Voice, and Emilia/VoxPopuli
+  across two seeds. Extended all six runs from 20 to 60 epochs on identical
+  training rows. Five retained their selected epoch. The sixth selected
+  epoch 34 and increased false completes from 9.86% to 15.49% on the
+  supported cross-check. All six extended runs missed the 5% target on that
+  cross-check. The full queue remains paused.
 
 ### Next step
 
-Use the isolated AMI validation cohorts to compare training mixtures
-while holding the epoch criterion and telephone rendering fixed. The
-matched pilot found useful AMI signal from both label methods, and the
-label rewrite produced no consistent gain at matched counts. Preserve
-the original test shards and record the mixture decision before
+Use existing conversational recordings to build a larger reference-supported
+telephone validation set at 300 ms. Split epoch selection and threshold
+calibration by speaker and check the false-complete rate on held-out voices.
+Test speaker-capped conversational training mixtures against that validation.
+Preserve the original test shards and record the mixture decision before
 resuming the staged experiment matrix. Measure selected artifacts on the frozen test set,
 including the AMI reference diagnostic and telephone speech level and
 SNR sweeps, and fill the
