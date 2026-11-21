@@ -32,6 +32,7 @@ def test_dialogue_act_proxy_distinguishes_a_hold_inside_an_act_from_a_new_act():
     later = (14500, 18000)
     tracks = {"caller": ({"first": first, "later": later}, {"first": [Act("a", "Inform", (first, later))]})}
     assert classify(row, tracks, set()) == ("interior-or-fragment-hold", 0)
+    assert classify(dict(row, label="shift"), tracks, set()) == ("other-shift", 0)
     tracks["caller"][1]["first"] = [Act("a", "Inform", (first,), terminal_known=False)]
     assert classify(row, tracks, set()) == ("uncovered", None)
     tracks["caller"][1]["first"] = [Act("a", "Inform", (first,))]

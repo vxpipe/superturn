@@ -100,12 +100,16 @@ def classify(row, tracks, pairs):
     if done and not act.terminal_known and act.kind not in INCOMPLETE:
         return "uncovered", None
     complete = done and act.kind not in INCOMPLETE | {"Backchannel"}
+    incomplete = not done or act.kind in INCOMPLETE
+    proxy = 1 if complete else 0 if incomplete else None
     if row["label"] == "hold":
-        if not done or act.kind in INCOMPLETE:
-            return "interior-or-fragment-hold", 0
+        if incomplete:
+            return "interior-or-fragment-hold", proxy
         if complete:
-            return "terminal-act-hold", 1
-        return "other-hold", None
+            return "terminal-act-hold", proxy
+        return "other-hold", proxy
+    if not complete:
+        return "other-shift", proxy
     following = [(start, voice, word) for voice, (times, _) in tracks.items()
                  for word, (start, _) in times.items() if start >= edge + GAP]
     onset = min((start for start, _, _ in following), default=None)
@@ -114,9 +118,9 @@ def classify(row, tracks, pairs):
     if len(first) == 1 and first[0][0] != speaker and not row["annotated_backchannel"]:
         (voice, word), = first
         response = any((act.identifier, next_act.identifier) in pairs for next_act in tracks[voice][1][word])
-    if complete and (response or act.kind.startswith("Elicit")):
-        return "response-or-elicit-shift", 1
-    return "other-shift", 1 if complete else None
+    if response or act.kind.startswith("Elicit"):
+        return "response-or-elicit-shift", proxy
+    return "other-shift", proxy
 
 
 def endpoints(row, intervals):
