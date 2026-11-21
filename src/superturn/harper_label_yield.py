@@ -51,7 +51,7 @@ def events(track, left, right):
     return found, outcomes
 
 
-def one_to_one(first, second, counts):
+def one_to_one(first, second, counts, *, endpoint_deltas=None):
     def near(source, other):
         return [[j for j, (role, end, onset, _) in enumerate(other)
                  if role == ar and abs(end - ae) <= BOUNDARY_TOLERANCE
@@ -63,6 +63,8 @@ def one_to_one(first, second, counts):
         if len(hits) == 1 and right[hits[0]] == [i]:
             a, b = first[i], second[hits[0]]
             label = a[3]
+            if endpoint_deltas is not None:
+                endpoint_deltas.append((b[1] - a[1]) * 1000 / RATE)
             counts[f"comparable_first_{label}"] += 1
             counts[f"comparable_second_{b[3]}"] += 1
             edge = max(a[1], b[1])

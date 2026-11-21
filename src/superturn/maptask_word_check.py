@@ -20,15 +20,15 @@ from .sources import data_root
 ACKNOWLEDGMENTS = {"okay", "ok", "right", "yeah", "yes", "uhhuh", "mhm", "mmhmm"}
 
 
-def words_for(model, signal):
+def words_for(model, signal, *, language="en"):
     words, uncertain, counts = [], [], Counter()
     for index, pcm in enumerate(signal):
-        result = model.transcribe(normalize(pcm), language="en", word_timestamps=True,
+        result = model.transcribe(normalize(pcm), language=language, word_timestamps=True,
                                   condition_on_previous_text=False, temperature=0)
         for segment in result["segments"]:
             for word in segment.get("words", ()):
                 start, end = (round(word[key] * RATE) for key in ("start", "end"))
-                token = re.sub(r"[^a-z]", "", word["word"].lower())
+                token = re.sub(r"[^a-z]" if language == "en" else r"[\W\d_]", "", word["word"].lower())
                 if not token or not 0 <= start < end <= len(pcm):
                     counts["invalid"] += 1
                     continue
