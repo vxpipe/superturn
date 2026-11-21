@@ -74,8 +74,12 @@ but not redistribution.
 4. Acquire: `bin/vast-run -n download 'bin/download'`. Rerun after an
    interruption; it resumes. Ends with the licence check.
 5. Prepare, experiment, export and benchmark: the commands the milestone adds
-   for each stage, each started with `bin/vast-run` so it survives
-   disconnects and logs to `$REMOTE_DATA/logs/`.
+   for each stage, each started with `bin/vast-run` as a window of the tmux
+   session `vxpipe`, so it survives disconnects, logging to
+   `$REMOTE_DATA/logs/` and recording its exit status in `$REMOTE_DATA/jobs/`.
+   Start `bin/vast-watch` locally in the background with the first job: it
+   checks every 5 minutes and sends job, estimate, stall, idle and hourly
+   progress notifications through `pushnotify`.
 6. `bin/vast-progress` shows each long step's progress, measured pace and
    estimated time left (from `$REMOTE_DATA/progress/<step>.json`); `bin/vast-ssh` to inspect; `bin/vast-fetch` copies results here at any
    time.

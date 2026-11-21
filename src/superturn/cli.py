@@ -1,8 +1,9 @@
-"""Command line: `superturn plan|download|progress|check-licences|inspect-archive|refresh-url-lists`."""
+"""Command line: `superturn plan|download|progress|status|watch-events|check-licences|inspect-archive|refresh-url-lists`."""
 
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 import sys
 
 from .progress import Progress, read_all as read_progress, table as progress_table
@@ -69,6 +70,34 @@ def cmd_download(args) -> int:
     return 0
 
 
+def cmd_status(args) -> int:
+    import json
+    import os
+
+    from .sources import data_root
+    from .watch import collect_status
+
+    status = collect_status(data_root(), os.environ.get("TMUX_SESSION", "vxpipe"))
+    print(json.dumps(status))
+    return 0
+
+
+def cmd_watch_events(args) -> int:
+    """Read a status (stdin) and the saved state; print messages, save state."""
+    import json
+
+    from .watch import events
+
+    path = Path(args.state)
+    prev = json.loads(path.read_text()) if path.exists() else {}
+    msgs, state = events(prev, json.load(sys.stdin), summary_every=args.summary_minutes * 60)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(state))
+    for msg in msgs:
+        print(msg)
+    return 0
+
+
 def cmd_progress(args) -> int:
     print(progress_table(read_progress()))
     return 0
@@ -126,6 +155,14 @@ def main(argv: list[str] | None = None) -> int:
         p.set_defaults(func=func)
         if name == "download":
             p.add_argument("--workers", type=int, default=8)
+
+    p = sub.add_parser("status", help="campaign status as JSON: jobs, tmux windows, progress (on the machine)")
+    p.set_defaults(func=cmd_status)
+
+    p = sub.add_parser("watch-events", help="turn a status on stdin into notifications (bin/vast-watch)")
+    p.add_argument("--state", required=True, help="file holding what was already notified")
+    p.add_argument("--summary-minutes", type=float, default=60)
+    p.set_defaults(func=cmd_watch_events)
 
     p = sub.add_parser("progress", help="show each long step's progress and estimated time left")
     p.set_defaults(func=cmd_progress)

@@ -22,8 +22,9 @@ rules, and how to drive and check the campaign machine).
   `<bucket>/superturn/`, synced only between the campaign machine and R2
   (`bin/sync` refuses to run locally; the user's connection is slow);
   progress and time-left reporting for long steps (`superturn.progress`,
-  `bin/vast-progress`), used by the download so far. `uv run pytest`: 23
-  passed.
+  `bin/vast-progress`), used by the download so far; every campaign job
+  runs in the tmux session `vxpipe` and `bin/vast-watch` sends progress with
+  `pushnotify`. `uv run pytest`: 27 passed.
 - `.env` is complete (2026-11-21): `HF_TOKEN` reaches all five Hugging Face
   sources (file listing only), `SUPERTURN_SSH_KEY` set, R2 lines set
   including `NO_CHECK_BUCKET=true`; the bucket is reachable and empty
@@ -34,7 +35,10 @@ rules, and how to drive and check the campaign machine).
 - The campaign scripts from `bin/vast-up` onwards against a live machine.
 - A write to R2 (`bin/sync push`); only a read-only listing was done.
 - The download and its progress meter on real data.
-All three are first exercised by the smoke test on the rented machine.
+- Jobs in the tmux session `vxpipe` (`bin/job-run`, `bin/vast-run`) and the
+  notifications (`bin/vast-watch`, `pushnotify`); the event logic is
+  unit-tested only. Tmux is deliberately not tested locally (see AGENTS.md).
+All of these are first exercised by the smoke test on the rented machine.
 
 ### Waiting on the user
 

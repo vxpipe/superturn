@@ -55,14 +55,30 @@ full runbook.
   `uvx --python 3.12 vastai show instances` before renting another.
 - Check on a running campaign:
   - `bin/vast-progress`: every long step's progress, measured pace and
-    estimated time left, plus running jobs and disk use. Start here.
+    estimated time left, plus the jobs in `vxpipe` and disk use. Start here.
   - `bin/vast-ssh [command]`: a shell or one command on the machine, e.g.
     `bin/vast-ssh tail -f /workspace/data/logs/<job>.log`.
   - `bin/vast-fetch`: copy results here (reports, logs, metrics, model files,
     labels; no audio) to `data/campaigns/<instance>/`.
-- Run work there with `bin/vast-run -n NAME 'command'` (tmux, survives
-  disconnects, logs to `/workspace/data/logs/NAME.log`), after
-  `bin/vast-push` for code changes.
+- All work on the campaign machine runs in the tmux session `vxpipe`, so
+  nothing is lost when a connection drops. Start every job with
+  `bin/vast-run -n NAME 'command'` (after `bin/vast-push` for code changes):
+  it becomes window NAME of `vxpipe`, logs to
+  `/workspace/data/logs/NAME.log` and records its exit status. Never run
+  long work in a plain ssh session. Inspect with
+  `bin/vast-ssh tmux attach -t vxpipe`.
+- While anything runs on the campaign machine, keep the user informed with
+  `pushnotify` (Pushover; credentials in the local environment): run
+  `bin/vast-watch` locally in the background from the first job until
+  `bin/vast-down`. It sends each event once: job started, finished or
+  failed; each step's time estimate once its pace is measured; a step that
+  stopped updating; an hourly summary; the machine idle but still rented;
+  the machine unreachable. Send anything else the user should know (a
+  decision needed, a result) with `pushnotify "superturn: ..."`. Messages
+  carry progress only, never secrets or machine addresses.
+- Never run tmux commands that create or remove sessions or windows on the
+  local computer: agents run inside the user's own tmux, where `$TMUX` makes
+  tmux reach the user's server. Test tmux behaviour on the campaign machine.
 - Lifecycle: `bin/vast-offers` → `bin/vast-up OFFER_ID` (rents, pushes,
   bootstraps, pulls stored data) → work → `bin/vast-down --yes` (fetches
   results, pushes to storage, then destroys the machine). Renting and

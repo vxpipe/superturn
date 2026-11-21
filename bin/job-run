@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Runs ON the campaign machine (called by bin/vast-run). Starts a job as its
+# own window in the tmux session $TMUX_SESSION (vxpipe), so it survives
+# disconnects and every job is in one place: `tmux attach -t vxpipe`.
+#   bin/job-run start NAME < command   # command text on stdin
+# The job's command is saved to $REMOTE_DATA/jobs/NAME.sh, its output to
+# $REMOTE_DATA/logs/NAME.log, and its exit status to $REMOTE_DATA/jobs/NAME.exit
+# (read by `superturn status` and bin/vast-watch).
+set -euo pipefail
+cd "$(dirname "$0")/.."
+source configs/campaign.env
+export SUPERTURN_DATA="$REMOTE_DATA"
+jobs="$REMOTE_DATA/jobs"; logs="$REMOTE_DATA/logs"
+mkdir -p "$jobs" "$logs"
+mode="${1:?usage: bin/job-run start NAME < command}"; name="${2:?job name}"
+[[ "$name" =~ ^[A-Za-z0-9._-]+$ ]] || { echo "error: job name must be plain: $name" >&2; exit 2; }
+case "$mode" in
+  start)
+    if tmux list-windows -t "$TMUX_SESSION" -F '#W' 2>/dev/null | grep -qx "$name"; then
+      echo "error: job '$name' is already running in tmux session $TMUX_SESSION" >&2; exit 2
+    fi
+    cat > "$jobs/$name.sh"
+    rm -f "$jobs/$name.exit"
+    date -u +%s > "$jobs/$name.started"
+    run="bash $PWD/bin/job-run exec $name"
+    if tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
+      tmux new-window -d -t "$TMUX_SESSION" -n "$name" "$run"
+    else
+      tmux new-session -d -s "$TMUX_SESSION" -n "$name" "$run"
+    fi
+    echo "started '$name' in tmux session $TMUX_SESSION; log $logs/$name.log"
+    ;;
+  exec)
+    set +e
+    ( set -o pipefail; bash "$jobs/$name.sh" 2>&1 | tee -a "$logs/$name.log" )
+    status=$?
+    echo "exit=$status" >> "$logs/$name.log"
+    echo "$status" > "$jobs/$name.exit"
+    ;;
+  *) echo "usage: bin/job-run start NAME < command" >&2; exit 2 ;;
+esac

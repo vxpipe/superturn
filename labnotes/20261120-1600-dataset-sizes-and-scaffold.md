@@ -126,6 +126,15 @@ parameter turn model needs. Every source now fetches only the bytes it uses:
 - RTX 5090 offers on vast.ai (2026-11-21): 29 offers, $0.49-1.67/h, nine
   meeting the campaign filters at $0.53-0.75/h.
 
+- Jobs and notifications (user, 2026-11-21): every campaign job runs as a
+  window of the tmux session `vxpipe` (`bin/job-run`, started by
+  `bin/vast-run`; command in `jobs/NAME.sh`, exit status in `jobs/NAME.exit`).
+  `bin/vast-watch` polls `superturn status` every 5 minutes and sends events
+  through `pushnotify`; `superturn.watch.events` decides what to send, once
+  each (unit-tested). A local tmux test went to the user's own tmux server
+  (`$TMUX` overrides `TMUX_TMPDIR`) and its `kill-server` killed the user's
+  session; tmux is now tested only on the campaign machine.
+
 ## Not yet verified
 
 - The campaign scripts (`bin/vast-up` onwards) have not run against a real
@@ -134,5 +143,5 @@ parameter turn model needs. Every source now fetches only the bytes it uses:
 
 ## Evidence
 
-- `uv run pytest`: 23 passed (2026-11-21).
+- `uv run pytest`: 27 passed (2026-11-21).
 - `bin/vast-offers` returns offers with the committed query.
