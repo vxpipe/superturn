@@ -1,6 +1,7 @@
 """Stage two hash-pinned original same-room dyads and test their native clocks."""
 
 import argparse
+from collections import Counter
 import hashlib
 import json
 from math import gcd
@@ -179,10 +180,19 @@ def source_track(folder, row, detect, prefix_seconds):
 
 
 def directional(matches, focal, partner):
-    return [point for point in matches if point["relative_copy_db"] <= DIRECTIONAL_COPY_LIMIT_DB
-            and any(start <= point["start"] and point["start"] + PHRASE_SAMPLES <= end for start, end in focal)
-            and not any(start < point["copy_max"] + PHRASE_SAMPLES and end > point["copy_min"]
-                        for start, end in partner)]
+    owned, rejected = [], Counter()
+    for point in matches:
+        reasons = {
+            "copy_near_receiver_direct_level": point["relative_copy_db"] > DIRECTIONAL_COPY_LIMIT_DB,
+            "no_full_focal_lexical_span": not any(
+                start <= point["start"] and point["start"] + PHRASE_SAMPLES <= end for start, end in focal),
+            "partner_lexical_overlap": any(
+                start < point["copy_max"] + PHRASE_SAMPLES and end > point["copy_min"] for start, end in partner),
+        }
+        rejected.update(reason for reason, failed in reasons.items() if failed)
+        if not any(reasons.values()):
+            owned.append(point)
+    return owned, rejected
 
 
 def disjoint_directions(forward, reverse):
@@ -224,9 +234,10 @@ def test_clock(tracks, audio, pair):
         shifted = tuple(np.roll(values, 3 * SEARCH, axis=0) for values in receiver)
         wrong_time = (null_matches(own, shifted, selected, direct, received) if len(receiver[0]) > 6 * SEARCH
                       else {"matches": 0, "searched": 0})
-        owned = directional(matches, own_words, receiver_words)
+        owned, ownership_rejections = directional(matches, own_words, receiver_words)
         results.append({"candidates": len(selected), "matches": matches, "rejections": rejected,
                         "wrong_pair": wrong_pair, "wrong_time": wrong_time,
+                        "directional_rejections_nonexclusive": ownership_rejections,
                         "directional_before_deduplication": len(owned)})
         anchors.append(owned)
     anchors = disjoint_directions(*anchors)
