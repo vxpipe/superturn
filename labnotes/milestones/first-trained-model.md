@@ -65,7 +65,8 @@ Last updated 2026-11-21.
   The timing check supported 862 AMI training labels before the existing
   speaker cap left 532 candidates. Requiring the next annotated onset
   at least 200 ms after the proposed pause boundary left 522 training
-  pauses from 132 speakers, with 260 holds and 262 shifts. Another 42
+  pauses from 132 speakers, with a median of four and maximum of 12
+  pauses per voice, 260 holds and 262 shifts. Another 42
   got shorter maximum query times. The original 90% target was not met.
 - Started the full staged experiment matrix on the RTX 5090. Verified
   the conditional quantization recovery path on both architectures with

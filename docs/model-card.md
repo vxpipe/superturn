@@ -66,7 +66,8 @@ speaker IDs in the metadata used here. [Dataset options](data-options.md)
 
 The automated label review did not meet the original 90% target on the
 fixed AMI sample. Training uses 522 AMI pauses from 132 speakers after
-annotation checks and speaker capping. The next annotated speech must
+annotation checks and speaker capping. The median speaker contributes
+four pauses and the most represented speaker contributes 12. The next annotated speech must
 start at least 200 ms after the proposed pause boundary, and training
 queries stop at that onset. Validation and test use the original
 automatically generated labels. Published metrics therefore include
