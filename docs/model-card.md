@@ -66,7 +66,14 @@ speaker IDs in the metadata used here. [Dataset options](data-options.md)
 
 The automated label review did not meet the original 90% target on the
 fixed AMI sample. Training uses 522 AMI pauses from 132 speakers after
-annotation checks, speaker capping and a minimum 200 ms of verified silence.
-Training queries stay inside each verified pause. Validation and test keep their
-original split membership and automatically generated labels. Published
-metrics therefore include evaluation labels without manual confirmation.
+annotation checks and speaker capping. The next annotated speech must
+start at least 200 ms after the proposed pause boundary, and training
+queries stop at that onset. Validation and test use the original
+automatically generated labels. Published metrics therefore include
+evaluation labels without manual confirmation.
+An additional AMI benchmark reports false completes and recall at 300 ms
+on 55 English test pauses from 10 speakers. The annotations support the
+speaker order and put the next speech onset at or after the 300 ms query.
+The measured pause begins at the Silero boundary and the time match
+allows for differences between that boundary and annotated speech end.
+The benchmark uses the same validation-selected threshold as the full test.

@@ -362,6 +362,7 @@ def register(sub):
         "export": "export and check float and int8 ONNX",
         "benchmark": "report quality and single-core CPU latency",
         "benchmark-volume": "measure level and SNR sensitivity on held-out conversations",
+        "benchmark-ami-reference": "score validation-selected models on supported English AMI test pauses",
         "smoke": "exercise the pipeline on a downloaded sample",
         "experiments": "run the first campaign experiment matrix",
         "listening": "sample labelled audio and score human judgments",
@@ -395,6 +396,8 @@ def register(sub):
         if name == "benchmark":
             parser.add_argument("--split", choices=("validation", "test"), default="test")
             parser.add_argument("--samples", type=int, default=250)
+        if name == "benchmark-ami-reference":
+            parser.add_argument("--prepare", action="store_true", help="freeze the reference scope before seeing model scores")
 
 
 def command(args):
@@ -411,6 +414,13 @@ def command(args):
         if threshold is None:
             threshold = json.loads(args.model.with_name("export.json").read_text())["threshold"]
         benchmark_volume(root, args.model, threshold)
+    elif name == "benchmark-ami-reference":
+        from .ami_benchmark import benchmark_selected, prepare
+
+        if args.prepare:
+            print(prepare(root))
+        else:
+            benchmark_selected(root)
     elif name == "audit-labels":
         from .label_audit import audit, label_hashes
 

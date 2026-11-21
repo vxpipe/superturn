@@ -98,6 +98,11 @@ but not redistribution.
 6. `bin/vast-progress` shows each long step's progress, measured pace and
    estimated time left (from `$REMOTE_DATA/progress/<step>.json`); `bin/vast-ssh` to inspect; `bin/vast-fetch` copies results here at any
    time.
+   To include the AMI reference diagnostic, freeze its scope with
+   `superturn benchmark-ami-reference --prepare` before any selected model
+   scores test data. Run `superturn benchmark-ami-reference` on the training
+   server once the validation selection is available. It uses the existing
+   selected models and thresholds, with no change to the main benchmark.
 7. `bin/vast-down --yes` fetches results (and pushes raw downloads, labels
    and shards if a storage remote is set), then destroys the machine only if that succeeded.
 

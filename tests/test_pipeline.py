@@ -64,7 +64,8 @@ def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture)
     from dataclasses import replace
 
     monkeypatch.setenv("SUPERTURN_DATA", str(tmp_path))
-    make_shards(tmp_path, [replace(row, source="ami") for row in _generated_rows(tmp_path)])
+    rows = [replace(row, source="ami") for row in _generated_rows(tmp_path)]
+    make_shards(tmp_path, rows)
     config = {"architecture": architecture, "parameters": 150000, "window": 1,
               "epochs": 1, "augmentation": architecture == "a", "augmentation_workers": 2}
     checkpoint = train(tmp_path, "fixture", config, "cpu")
@@ -79,12 +80,38 @@ def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture)
     assert report["acceptance"]["artifact"]["passed"]
     assert "conversation_telephone_300ms" in report["acceptance"]
     if architecture == "a":
+        import json
+
+        from superturn import ami_benchmark
+        from superturn.labels import write_rows
         from superturn.volume import benchmark_volume
 
         sensitivity = benchmark_volume(tmp_path, result, 0.5, per_label_language=1)
         assert sensitivity["examples"] == 2
         assert len(sensitivity["qualifying_lowest_tested_db"]) == 3
         assert all(level is None for level in sensitivity["qualifying_lowest_tested_db"].values())
+        write_rows(tmp_path / "labels" / "ami.jsonl", rows)
+        references = tmp_path / "raw" / "ami_annotations"
+        references.mkdir(parents=True)
+        (references / "fixture.zip").write_bytes(b"mocked annotations")
+
+        def supported(root, offered, *, pause_limits):
+            assert all(row.split == "test" for row in offered)
+            pause_limits.update((row, 4800) for row in offered)
+            return dict.fromkeys(offered, "supported")
+
+        monkeypatch.setattr(ami_benchmark, "audit_sample", supported)
+        ami_benchmark.prepare(tmp_path)
+        selected = tmp_path / "reports" / "experiments"
+        selected.mkdir()
+        (selected / "selection.json").write_text(json.dumps({
+            "split": "validation", "candidates": [{"name": "fixture", "threshold": .5}],
+        }))
+        ami_benchmark.benchmark_selected(tmp_path)
+        reference = json.loads((tmp_path / "reports" / "fixture" / "ami-reference-test.json").read_text())
+        assert reference["threshold"] == .5 and reference["examples"] == 2
+        assert len(reference["groups"]) == 3
+        assert all(row["holds"] == 1 and row["shifts"] == 1 for row in reference["groups"])
 
 
 @pytest.mark.parametrize("architecture", ["a", "b"])

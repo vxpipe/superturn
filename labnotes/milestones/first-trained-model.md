@@ -61,26 +61,31 @@ Last updated 2026-11-21.
 - The user approved full training with verified AMI training cases, original
   validation and frozen test splits, and a disclosed review limitation.
   The timing check supported 862 AMI training labels before the existing
-  speaker cap left 532 candidates. Requiring at least 200 ms of verified
-  silence left 522 training pauses from 132 speakers, with 260 holds and
-  262 shifts. Another 42 got shorter maximum query times. The original
-  90% review target was not met.
+  speaker cap left 532 candidates. Requiring the next annotated onset
+  at least 200 ms after the proposed pause boundary left 522 training
+  pauses from 132 speakers, with 260 holds and 262 shifts. Another 42
+  got shorter maximum query times. The original 90% target was not met.
 - Started the full staged experiment matrix on the RTX 5090. Verified
   the conditional quantization recovery path on both architectures with
   generated examples, including a forced retry after an int8 AUC drop.
   Restarted before the first checkpoint under `experiments-verified` to
   apply the per-case silence limits and the reviewed benchmark changes.
+- Froze a supplementary AMI test scope of 55 annotation-supported pauses
+  from 10 speakers before model scoring. The annotated next onset is at
+  or after the 300 ms query. Its results will accompany the full benchmark.
 
 ### Waiting on
 
 - Experiment checkpoints and final benchmarks.
   A 256-step validation-only pilot measured training pace before the matrix.
+  The first full run reached epoch 1 with 46.07% recall at 4.997% false
+  completes on validation. No complete matrix run is counted yet.
 
 ### Next step
 
 Monitor the staged experiment matrix in `vxpipe`. Measure the selected
-artifacts on the frozen test set, including
-the telephone speech level and SNR sweeps, and fill the
+artifacts on the frozen test set, including the AMI reference diagnostic
+and telephone speech level and SNR sweeps, and fill the
 [model card](../../docs/model-card.md) with the results. Fetch the verified
 artifact locally with `bin/vast-fetch`. Publish the approved ONNX and model
 card to `HashNuke/superturn` when that Hugging Face repository exists, and
