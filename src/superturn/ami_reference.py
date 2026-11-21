@@ -10,13 +10,13 @@ from .labels import Speech, _archive_member, ami_speakers, read_rows, turns
 from .progress import Progress
 
 
-def _manual_spans(archive, meeting, speakers, offset, length):
+def _manual_spans(archive, meeting, speakers, offset, length, *, tags=("w",)):
     for speaker, agent in speakers.values():
         member = _archive_member(archive, f"words/{meeting}.{agent}.words.xml")
         if member is None:
             continue
         for word in ET.fromstring(archive.read(member)):
-            if word.tag.rsplit("}", 1)[-1] != "w" or not {"starttime", "endtime"} <= word.attrib.keys():
+            if word.tag.rsplit("}", 1)[-1] not in tags or not {"starttime", "endtime"} <= word.attrib.keys():
                 continue
             start = max(0, round(float(word.attrib["starttime"]) * 16000) - offset)
             end = min(length, round(float(word.attrib["endtime"]) * 16000) - offset)

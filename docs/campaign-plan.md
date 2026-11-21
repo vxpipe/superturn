@@ -121,6 +121,12 @@ but not redistribution.
 
 A failed run must not stop the queue; it is logged and the next run starts.
 
+The isolated AMI label pilot can run against the original campaign data
+with `bin/vast-run -n ami-label-pilot 'uv run --no-sync python -m superturn.ami_pilot && bin/sync push exports reports'`.
+It stores the matched data beneath `shards/ami-pilot/`, the versioned
+validation report beneath `reports/ami-label-pilot/`, and the four
+checkpoint copies beneath `exports/ami-label-pilot/`.
+
 ## Later campaigns
 
 A later campaign runs `bin/sync pull` after bootstrap and starts from the

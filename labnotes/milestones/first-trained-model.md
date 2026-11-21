@@ -108,14 +108,20 @@ Last updated 2026-11-21.
   seven checkpoint hashes and matching AMI reports were verified.
   The existing AMI slices have 2,144 annotation-led training candidates
   and 196 validation candidates before acoustic checks.
+- Completed four isolated AMI-only pilot runs. Both label methods used
+  163 matched examples from 84 speakers. On the 103-case supported
+  telephone cross-check, mean AUC was 0.658 with current labels and
+  0.657 with annotation-led labels. The previous mixed-data checkpoints
+  ranged from 0.279 to 0.482 on the same cases.
 
 ### Next step
 
-Run a paired AMI-only pilot on the existing slices, comparing the current
-verified examples against annotation-led labels with acoustic checks.
-Use a fixed, speaker-disjoint validation comparison and preserve the
-original test shards. Record what changes before resuming the staged
-experiment matrix. Measure selected artifacts on the frozen test set,
+Use the isolated AMI validation cohorts to compare training mixtures
+while holding the epoch criterion and telephone rendering fixed. The
+matched pilot found useful AMI signal from both label methods, and the
+label rewrite produced no consistent gain at matched counts. Preserve
+the original test shards and record the mixture decision before
+resuming the staged experiment matrix. Measure selected artifacts on the frozen test set,
 including the AMI reference diagnostic and telephone speech level and
 SNR sweeps, and fill the
 [model card](../../docs/model-card.md) with the results. Fetch the verified
