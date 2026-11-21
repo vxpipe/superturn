@@ -26,11 +26,11 @@ includes the handover.
   sees a pause.
 - Audio in, probability out. Transcripts are not a model input; an application
   may combine the score with transcript rules on its own side.
-- Train and fine-tune Superturn's own turn detector. Third-party turn
-  detectors may be benchmarked. Do not use their checkpoints to initialize,
-  fine-tune or ship Superturn. Pretrained audio components from models built
-  for other tasks, such as TTS, and other permissively licensed datasets
-  are allowed.
+- Train and fine-tune Superturn's own turn detector. Existing architectures
+  and pretrained audio components from other tasks, such as TTS, are
+  allowed. Third-party turn detectors may be benchmarked. Do not use their
+  checkpoints to initialize, fine-tune or ship Superturn. Use permissively
+  licensed datasets.
 - Labelling uses Silero VAD for pause boundaries on per-speaker tracks and
   pyannote for diarization of mixed single-track audio.
 
