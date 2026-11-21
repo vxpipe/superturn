@@ -87,8 +87,9 @@ Last updated 2026-11-21.
   was fetched and its SHA-256 checked. Both 500k GRU seeds completed.
   Their AMI telephone validation recalls were 0.73% and 4.38% at
   4.79% false completes.
-  Common Voice supplies 98.3% of pooled validation shifts, so the
-  Stage 1 assessment will also compare AMI telephone scores.
+  Common Voice supplies 98.3% of pooled validation shifts. The reviewed
+  ranking update uses AMI telephone validation for choosing configurations
+  and the int8 operating threshold. It will take effect at a run boundary.
   A validation-only export preflight for the first checkpoint produced
   a 302,367-byte int8 file with unchanged pooled AUC to four decimals.
   A 512-step training probe found identical weights and validation metrics
@@ -401,9 +402,11 @@ stage 1 results, and any change is recorded here with its reason.
 
 Local review on 2026-11-21 retained the initial targets. Candidate labels
 exclude overlapping takeovers and score only elapsed pauses the caller could
-actually reach. Validation selects architecture, data mix, loss weight and
-threshold. Test shards remain reserved for the final reports. Treat
-Whisper-aligned read-speech cuts and spontaneous segment ends as separate
+actually reach. Configuration ranking uses held-out AMI telephone recall
+at up to 5% false completes, then AMI AUC and pooled clean scores. Stage 1
+averages both seeds. The final int8 threshold is fitted on those same
+validation pauses. Test shards remain reserved for the final reports.
+Treat Whisper-aligned read-speech cuts and spontaneous segment ends as separate
 labelling methods when interpreting the campaign. Indic DiarBench measures
 transfer from English conversation training to Indian languages. FLEURS
 metadata supports test-only inclusion and does not identify individual voices.

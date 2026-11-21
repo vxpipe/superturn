@@ -192,9 +192,15 @@ def _run_sync(root):
                        cwd=REPO_ROOT, check=True)
 
 
+def _ranking_key(item):
+    metrics = item[2]
+    telephone = metrics.get("ami_telephone", metrics)
+    return (telephone["recall"] or 0, telephone["auc"] or 0,
+            metrics["recall"] or 0, metrics["auc"] or 0, -metrics["loss"])
+
+
 def _rank(results, count=1):
-    good = sorted(results, key=lambda item: (item[2]["recall"] or 0, item[2]["auc"] or 0, -item[2]["loss"]),
-                  reverse=True)
+    good = sorted(results, key=_ranking_key, reverse=True)
     if not good:
         raise ValueError("all runs in stage failed")
     return good[:count]
@@ -202,11 +208,13 @@ def _rank(results, count=1):
 
 def experiments(root, base, device):
     import torch
+    from .ami_benchmark import AMI_THRESHOLD_ORIGIN, AmiTelephoneValidation
     from .evaluate import benchmark, export, quantization_auc
     from .progress import Progress
     from .train import completed_run, train
     from .volume import benchmark_volume
 
+    telephone_validation = None
     if (root / ".campaign-machine").is_file():
         from .listening import require_gate
         from .shards import require_split_coverage
@@ -222,12 +230,19 @@ def experiments(root, base, device):
                   "Validation and test use original splits.", flush=True)
         else:
             require_gate(root)
+        telephone_validation = AmiTelephoneValidation(root)
     # Stages select from validation. Only final, selected exports read test shards.
     meter = Progress("experiments", 37, "runs")
     failures = []
     final_models = []
     destination = root / "reports" / "experiments"
     destination.mkdir(parents=True, exist_ok=True)
+
+    def record_telephone_validation(report, name, format_name):
+        path = root / "reports" / f"{name}-{format_name}-ami-validation" / "metrics.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(report, indent=2) + "\n")
+        return next(row for row in report["thresholds"] if row["origin"] == AMI_THRESHOLD_ORIGIN)
 
     def attempt(name, config):
         reused = False
@@ -240,6 +255,9 @@ def experiments(root, base, device):
             else:
                 output = train(root, name, merged, device)
             result = torch.load(output, map_location="cpu", weights_only=True)["metrics"]
+            if telephone_validation is not None:
+                phone = record_telephone_validation(telephone_validation.float_checkpoint(output), name, "float")
+                result["ami_telephone"] = phone["all_ami"]
             _run_sync(root)
             return name, merged, result
         except Exception as error:
@@ -267,10 +285,24 @@ def experiments(root, base, device):
             name, config, _ = _rank(seeds)[0]
             metrics = {metric: sum(item[2][metric] or 0 for item in seeds) / 2
                        for metric in ("recall", "auc", "loss")}
+            if telephone_validation is not None:
+                metrics["ami_telephone"] = {
+                    metric: sum(item[2]["ami_telephone"][metric] or 0 for item in seeds) / 2
+                    for metric in ("recall", "auc")
+                }
             means.append((name, config, metrics))
+        stage1_order = _rank(means, len(means))
+        top_two = stage1_order[:2]
+        scope = telephone_validation.scope if telephone_validation is not None else {"split": "validation"}
+        stage1_report = {**scope, "groups": [
+            {"checkpoint": name, "architecture": config["architecture"],
+             "parameters": config["parameters"], "mean_validation": metrics}
+            for name, config, metrics in stage1_order
+        ], "advanced": [name for name, _, _ in top_two]}
+        (destination / "stage1-ranking.json").write_text(json.dumps(stage1_report, indent=2) + "\n")
         second = stage([
             (f"s2-{index}-{window}s", {**config, "window": window})
-            for index, (_, config, _) in enumerate(_rank(means, 2)) for window in (1, 2, 4, 8)
+            for index, (_, config, _) in enumerate(top_two) for window in (1, 2, 4, 8)
         ])
         _, winner, _ = _rank(second)[0]
         mixes = {
@@ -317,18 +349,26 @@ def experiments(root, base, device):
                 validation = json.loads((root / "reports" / f"{name}-int8-validation" / "metrics.json").read_text())
                 metadata["float_threshold"] = metadata["threshold"]
                 metadata["threshold"] = validation["threshold"]
-                model.with_name("export.json").write_text(json.dumps(metadata, indent=2) + "\n")
                 overall = next(row["300"] for row in validation["groups"]
                                if row["source"] == "all" and row["language"] == "all")
-                candidates.append({"name": name, "threshold": metadata["threshold"], **overall})
+                candidate = {"name": name, **overall}
+                if telephone_validation is not None:
+                    report = telephone_validation.int8_export(model, validation["threshold"])
+                    phone = record_telephone_validation(report, name, "int8")
+                    metadata["threshold"] = phone["threshold"]
+                    metadata["threshold_scope"] = telephone_validation.scope
+                    candidate = {"name": name, **phone["all_ami"], "pooled_clean": overall}
+                model.with_name("export.json").write_text(json.dumps(metadata, indent=2) + "\n")
+                candidates.append({**candidate, "threshold": metadata["threshold"]})
             except Exception as error:
                 print(f"{name} export failed: {error}", flush=True)
                 failures.append((name, str(error)))
         if len(candidates) < 3:
             raise ValueError(f"only {len(candidates)} exports passed validation")
-        candidates.sort(key=lambda item: (item["recall"], item["auc"]), reverse=True)
-        (destination / "selection.json").write_text(
-            json.dumps({"split": "validation", "candidates": candidates}, indent=2) + "\n")
+        candidates.sort(key=lambda item: (
+            item["recall"], item["auc"], item.get("pooled_clean", item)["recall"],
+        ), reverse=True)
+        (destination / "selection.json").write_text(json.dumps({**scope, "candidates": candidates}, indent=2) + "\n")
         for candidate in candidates:
             name, threshold = candidate["name"], candidate["threshold"]
             model = root / "runs" / name / "int8.onnx"

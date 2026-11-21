@@ -97,6 +97,11 @@ but not redistribution.
    completed Stage 1 checkpoints on held-out AMI telephone audio. The report
    includes each saved threshold and an AMI validation fit for diagnosing
    the effect of threshold calibration.
+   The experiment queue ranks configurations by recall on AMI telephone
+   validation at up to 5% false completes, then by AUC on the same rows.
+   Pooled clean validation scores break ties. The final ONNX threshold is
+   fitted to AMI telephone validation. The pooled float-to-int8 AUC
+   tolerance remains the export check.
    Each job runs in the tmux session `vxpipe`, logs under
    `$REMOTE_DATA/logs/`, and records its exit status under
    `$REMOTE_DATA/jobs/`. Keep the watcher running for estimate, stall,

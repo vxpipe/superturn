@@ -25,6 +25,8 @@ window of 16 kHz mono PCM through the decision instant.
 
 The release will record the selected context length, parameter count,
 ONNX file size, probability threshold and single-core CPU latency.
+Final thresholds are fitted on English AMI telephone validation pauses.
+The benchmark applies that threshold across languages and audio conditions.
 
 ## Measured operating range
 

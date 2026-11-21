@@ -55,7 +55,7 @@ def test_generated_shards_are_fixed_and_frozen(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("architecture", ["a", "b"])
 def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture):
-    pytest.importorskip("torch")
+    torch = pytest.importorskip("torch")
     pytest.importorskip("onnxruntime")
     pytest.importorskip("onnx")
     from superturn.evaluate import benchmark, export, quantization_auc
@@ -121,11 +121,20 @@ def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture)
             return dict.fromkeys(offered, "supported")
 
         monkeypatch.setattr(ami_benchmark, "audit_sample", supported_validation)
-        comparison = json.loads(ami_benchmark.compare_validation(tmp_path).read_text())
+        prior_threads = torch.get_num_threads()
+        torch.set_num_threads(2)
+        try:
+            comparison = json.loads(ami_benchmark.compare_validation(tmp_path).read_text())
+            assert torch.get_num_threads() == 2
+        finally:
+            torch.set_num_threads(prior_threads)
         assert comparison["split"] == "validation"
         assert [row["name"] for row in comparison["checkpoints"]] == ["s1-fixture"]
         assert all(row["annotation_supported"]["holds"] == 1 and row["annotation_supported"]["shifts"] == 1
                    for row in comparison["checkpoints"][0]["thresholds"])
+        phone = ami_benchmark.AmiTelephoneValidation(tmp_path).int8_export(result, .5)
+        assert phone["condition"] == "telephone"
+        assert phone["thresholds"][1]["all_ami"]["shifts"] == 1
 
 
 @pytest.mark.parametrize("architecture", ["a", "b"])
@@ -225,7 +234,8 @@ def test_pitch_on_known_reference_tone():
         assert voicing.item() > 0.65
 
 
-def test_experiment_queue_continues_after_failed_run(tmp_path, monkeypatch):
+@pytest.mark.parametrize("conversation_ranking", (False, True))
+def test_experiment_queue_continues_after_failed_run(tmp_path, monkeypatch, conversation_ranking):
     import importlib
     import json
 
@@ -238,6 +248,37 @@ def test_experiment_queue_continues_after_failed_run(tmp_path, monkeypatch):
     trainer = importlib.import_module("superturn.train")
     monkeypatch.setenv("SUPERTURN_DATA", str(tmp_path))
     runs, benchmarks = {}, []
+    if conversation_ranking:
+        from superturn import ami_benchmark, listening, pipeline, shards, volume
+
+        (tmp_path / ".campaign-machine").touch()
+        (tmp_path / "shards").mkdir()
+        (tmp_path / "shards" / "manifest.json").write_text(json.dumps({"speaker_report": []}))
+        monkeypatch.setattr(shards, "require_split_coverage", lambda report, sources: None)
+        monkeypatch.setattr(listening, "require_gate", lambda root: None)
+        monkeypatch.setattr(pipeline, "_run_sync", lambda root: None)
+        monkeypatch.setattr(volume, "benchmark_volume", lambda root, path, threshold: None)
+
+        class TelephoneValidation:
+            scope = {"split": "validation", "source": "ami", "condition": "telephone"}
+
+            def __init__(self, root):
+                pass
+
+            def report(self, recall):
+                return {"thresholds": [{"origin": ami_benchmark.AMI_THRESHOLD_ORIGIN,
+                                        "threshold": .64, "all_ami": {"recall": recall, "auc": .9}}]}
+
+            def float_checkpoint(self, checkpoint):
+                name = checkpoint.parent.name
+                recall = .9 if name.startswith("s4-") else .85 if name.startswith("s1-b-500000-") else .7
+                return self.report(recall)
+
+            def int8_export(self, artifact, pooled_threshold):
+                assert pooled_threshold == .61
+                return self.report(.92 if artifact.parent.name == "s4-4" else .85)
+
+        monkeypatch.setattr(ami_benchmark, "AmiTelephoneValidation", TelephoneValidation)
 
     def train(root, name, config, device):
         runs[name] = config
@@ -267,13 +308,21 @@ def test_experiment_queue_continues_after_failed_run(tmp_path, monkeypatch):
     monkeypatch.setattr(evaluate, "quantization_auc", quantization_auc)
     monkeypatch.setattr(evaluate, "benchmark", lambda root, path, threshold: benchmarks.append(threshold))
     assert experiments(tmp_path, {"epochs": 1}, "cpu") == 1
-    assert len(runs) == 35 and benchmarks == [.61] * 3
+    expected_threshold = .64 if conversation_ranking else .61
+    assert len(runs) == 35 and benchmarks == [expected_threshold] * 3
     assert runs["s4-1-qat"]["warm_start"] == "s4-1"
     assert runs["s4-1-qat"]["quantization_aware"]
     report = json.loads((tmp_path / "reports" / "experiments" / "queue.json").read_text())
     assert len(report["models"]) == 3
-    assert report["models"][0] == "s4-2"
+    assert report["models"][0] == ("s4-4" if conversation_ranking else "s4-2")
     assert report["failures"] == [["s1-a-150000-17", "fixture training failure"]]
+    if conversation_ranking:
+        assert (runs["s2-0-1s"]["architecture"], runs["s2-0-1s"]["parameters"]) == ("b", 500000)
+        stage1 = json.loads((tmp_path / "reports" / "experiments" / "stage1-ranking.json").read_text())
+        assert stage1["advanced"][0] == "s1-b-500000-17"
+        selection = json.loads((tmp_path / "reports" / "experiments" / "selection.json").read_text())
+        assert selection["source"] == "ami" and selection["condition"] == "telephone"
+        assert selection["candidates"][0]["threshold"] == expected_threshold
 
 
 def test_input_window_includes_real_elapsed_pause():
