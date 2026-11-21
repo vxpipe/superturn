@@ -20,7 +20,7 @@ from .splits import assign, speaker_groups
 
 SOURCE = "nsc-part4-native-pilot"
 KIND = "SameRooms"
-HEADERS = 128
+HEADERS = 384
 MEMBER = re.compile(r"SE([0-9]+)-SP([0-9]+)\.(flac|jsonl)")
 
 
@@ -61,7 +61,7 @@ def scan(fragments, roster, reciprocated):
     meter.finish()
     complete = {session: dict(people) for session, people in found.items()
                 if set(people) == roster[session] and all(set(paths) == {"flac", "jsonl"} for paths in people.values())}
-    return reader, complete
+    return reader, complete, len(found)
 
 
 def run(root):
@@ -80,7 +80,7 @@ def run(root):
     part4, reciprocated, *_ = part_rosters(roster_directory / "SpeakerMetaData")
     groups = speaker_groups((session, part4[session]) for session in reciprocated)
     fragments, listing_bytes = inventory()
-    reader, pairs = scan(fragments, part4, reciprocated)
+    reader, pairs, mentioned = scan(fragments, part4, reciprocated)
     sizes = {session: sum(member["bytes"] for paths in people.values() for member in paths.values())
              for session, people in pairs.items()}
     rank = sorted((session for session in pairs if assign(SOURCE, groups[session], "train-conversation") == "train"),
@@ -106,7 +106,8 @@ def run(root):
         "roster_census_sha256": census_sha, "repository": REPO, "revision": REVISION,
         "archive_fragments": fragments, "headers_budget": HEADERS,
         "inspected_metadata_bytes": listing_bytes + reader.bytes, "header_walk_bytes": inventory_bytes,
-        "complete_reciprocal_pairs": len(pairs), "selected": selected, "byte_cap": transport_cap,
+        "complete_reciprocal_pairs": len(pairs), "roster_session_headers_seen": mentioned,
+        "selected": selected, "byte_cap": transport_cap,
         "raw_bytes_before_audio": raw_used, "global_budget_bytes": budget_bytes(),
         "payload_allowed": bool(selected) and raw_used + transport_cap <= budget_bytes(),
     }
