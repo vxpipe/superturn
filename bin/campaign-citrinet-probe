@@ -21,5 +21,5 @@ fi
 if [[ "${1:-}" == --setup ]]; then
   exit 0
 fi
-"$environment/bin/python" -m superturn.citrinet_probe
+"$environment/bin/python" -m superturn.citrinet_probe "$@"
 bin/sync verify runs reports

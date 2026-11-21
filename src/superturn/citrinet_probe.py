@@ -1,5 +1,6 @@
 """Compare pretrained and random Citrinet end-of-turn classifiers on conversation data."""
 
+import argparse
 from importlib.metadata import version
 import json
 
@@ -46,17 +47,19 @@ def check_model(root, config):
     return count
 
 
-def run(root):
+def run(root, *, sweep_job="capacity-window-sweep"):
     from .train import completed_run, train
 
     if not (root / ".campaign-machine").is_file():
         raise ValueError("Citrinet fine-tuning uses the existing campaign machine")
-    if (root / "jobs" / "capacity-window-sweep.exit").read_text().strip() != "0":
+    if (root / "jobs" / f"{sweep_job}.exit").read_text().strip() != "0":
         raise ValueError("the GRU window sweep must complete successfully before the transfer pilot")
     reports = root / "reports"
     sweep = json.loads((reports / "capacity-window-validation.json").read_text())
-    if {item["seconds"] for item in sweep["ranked"]} != {1, 1.5, 2, 2.5, 3}:
-        raise ValueError("transfer pilot requires all five GRU windows")
+    skip = [2.5] if sweep_job == "capacity-window-shortlist" else []
+    if ({item["seconds"] for item in sweep["ranked"]} != {1, 1.5, 2, 2.5, 3} - set(skip)
+            or sweep.get("skipped_windows", []) != skip):
+        raise ValueError("transfer pilot requires all scheduled GRU windows")
     diagnostics = json.loads((reports / "capacity-window-eot-domain-probe.json").read_text())
     if diagnostics["dataset_sha256"] != DATASET_SHA256 or diagnostics["decision_ms"] != 300:
         raise ValueError("transfer pilot requires the pinned 300 ms external diagnostic")
@@ -121,5 +124,9 @@ def run(root):
 
 
 if __name__ == "__main__":
-    if result := run(data_root()):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sweep-job", choices=("capacity-window-sweep", "capacity-window-shortlist"),
+                        default="capacity-window-sweep")
+    args = parser.parse_args()
+    if result := run(data_root(), sweep_job=args.sweep_job):
         print(result)
