@@ -105,7 +105,7 @@ def run(root, *, sweep_job="capacity-window-sweep"):
             validation_dir = reports / f"{name}-float-ami-validation"
             validation_dir.mkdir(parents=True, exist_ok=True)
             _write_json(validation_dir / "metrics.json", telephone)
-            diagnostic = compare_domain(root, checkpoint_name=name)
+            diagnostic = compare_domain(root, checkpoint_name=name, replay_references=True)
             point = next(row for row in telephone["thresholds"] if row["origin"] == AMI_THRESHOLD_ORIGIN)
             result["arms"][arm] = {"name": name, "ami_telephone": point,
                                    "checkpoint_sha256": telephone["checkpoint_sha256"],

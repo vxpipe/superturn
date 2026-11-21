@@ -21,6 +21,7 @@ from .sources import data_root
 DECISION_MS = 300
 GAP = DECISION_MS * RATE // 1000
 DATASET_SHA256 = "52bf7ff71e83d0214d744693839f8a6b14e78e0f26db20dfdb7f589453a50103"
+REFERENCES = ("smart-turn-v3.2", "livekit-v1.1-mini")
 
 
 def decision_audio(pcm, edge, audio_condition):
@@ -99,7 +100,7 @@ def summarize(scores, truth, thresholds, *, roc_limits=False):
     return metrics
 
 
-def run(root, *, stage_one=False, checkpoint_name=None, window_names=()):
+def run(root, *, stage_one=False, checkpoint_name=None, window_names=(), replay_references=False):
     import pyarrow.parquet as pq
     import torch
 
@@ -107,6 +108,8 @@ def run(root, *, stage_one=False, checkpoint_name=None, window_names=()):
         raise ValueError("LiveKit benchmark uses the existing training server")
     if sum(map(bool, (stage_one, checkpoint_name, window_names))) > 1:
         raise ValueError("choose one benchmark checkpoint scope")
+    if replay_references and not checkpoint_name:
+        raise ValueError("replaying reference scores requires a checkpoint name")
     torch.set_num_threads(1)
     data = root / "raw" / "livekit_eot_diagnostic" / "data/en/validation-00000-of-00002.parquet"
     with data.open("rb") as handle:
@@ -116,11 +119,14 @@ def run(root, *, stage_one=False, checkpoint_name=None, window_names=()):
     source = pq.ParquetFile(data)
     if source.metadata.num_rows != 400 or {"cohort", "silence_spans"} - set(source.schema_arrow.names):
         raise ValueError("expected the 400-turn English general benchmark shard")
-    reuse_reference = stage_one or bool(window_names)
+    reuse_reference = stage_one or bool(window_names) or replay_references
     if reuse_reference:
         if window_names:
             names = window_names
             reference_report = root / "reports" / f"{names[0]}-eot-domain-probe.json"
+        elif replay_references:
+            names = [checkpoint_name]
+            reference_report = root / "reports" / "capacity-window-eot-domain-probe.json"
         else:
             names = [f"s1-{arch}-{size}-{seed}" for arch in ("a", "b")
                      for size in (150000, 500000, 1000000) for seed in (17, 29)]
@@ -152,7 +158,8 @@ def run(root, *, stage_one=False, checkpoint_name=None, window_names=()):
     if reuse_reference:
         result["threshold_source"] = "original AMI telephone validation"
         result["reference_report_sha256"] = hashlib.sha256(reference_bytes).hexdigest()
-        key = "stage_one_provenance" if stage_one else "window_sweep_provenance"
+        key = ("stage_one_provenance" if stage_one else
+               "checkpoint_provenance" if replay_references else "window_sweep_provenance")
         result[key] = provenance
     if checkpoint_name:
         result["threshold_source"] = "original AMI telephone validation"
@@ -204,8 +211,12 @@ def run(root, *, stage_one=False, checkpoint_name=None, window_names=()):
                 prior = reference["conditions"][audio_condition]
                 if any(prior[label] != count for label, count in counts.items()):
                     raise ValueError("held-out case counts differ from the reference evaluation")
-                group = "stage_one" if stage_one else "capacity_windows"
-                result["conditions"][audio_condition] = {**prior, group: own}
+                if replay_references:
+                    result["conditions"][audio_condition] = {**counts, **own,
+                                                             **{name: prior[name] for name in REFERENCES}}
+                else:
+                    group = "stage_one" if stage_one else "capacity_windows"
+                    result["conditions"][audio_condition] = {**prior, group: own}
             else:
                 result["conditions"][audio_condition] = {
                     **counts,
