@@ -190,6 +190,10 @@ def _compatible_signature(recorded, expected):
     if not path.is_file() or expected.get("config", {}).get("auxiliary_size"):
         return False
     equivalent = json.loads(path.read_text())
+    if expected.get("config", {}).get("architecture") == "citrinet":
+        equivalent = equivalent.get("citrinet", {})
+        if not equivalent:
+            return False
     previous = (equivalent.get("fixed_epochs_previous", [])
                 if expected.get("config", {}).get("fixed_epochs", False) else equivalent["previous"])
     if isinstance(previous, str):
@@ -252,11 +256,15 @@ def train(root, name, config, device):
         verified_ami = load_selection(root)
     counts = Counter()
     train_batches = 0
-    for batch in records(train_files, config.get("batch_size", 16),
-                         columns=["source", "language", "audio", "label", "pause_start"]):
-        selection = [row for row in batch if eligible(row, config, verified_ami)]
-        counts.update(row["language"] for row in selection)
-        train_batches += bool(selection)
+    eligible_files = set()
+    columns = ["source", "language", "audio", "label", "pause_start"]
+    for path in train_files:
+        for batch in records([path], config.get("batch_size", 16), columns=columns):
+            selection = [row for row in batch if eligible(row, config, verified_ami)]
+            if selection:
+                counts.update(row["language"] for row in selection)
+                train_batches += 1
+                eligible_files.add(path)
     if not train_batches:
         raise ValueError("no training examples match the run configuration")
 
@@ -277,7 +285,9 @@ def train(root, name, config, device):
             model.train()
             rng = np.random.default_rng(seed_for(seed, epoch))
             loss_total, batches = 0.0, 0
-            for batch in records(rng.permutation(train_files), config.get("batch_size", 16)):
+            # Permute the original list to preserve order and RNG state after filtering.
+            shuffled = (path for path in rng.permutation(train_files) if path in eligible_files)
+            for batch in records(shuffled, config.get("batch_size", 16)):
                 selected = [row for row in batch if eligible(row, config, verified_ami)]
                 if not selected:
                     continue
