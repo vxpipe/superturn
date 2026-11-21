@@ -100,7 +100,8 @@ def stage(root, preflight, preflight_sha):
 def decode_prefix(path, seconds, rate):
     frames = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "a:0",
                              "-read_intervals", f"%+{seconds}", "-show_frames", "-show_streams",
-                             "-show_entries", "frame=pts,nb_samples:stream=time_base,sample_rate",
+                             "-show_entries",
+                             "frame=pts,pkt_pts,pkt_dts,best_effort_timestamp,nb_samples:stream=time_base,sample_rate",
                              "-of", "json", str(path)], check=True, capture_output=True)
     probe = json.loads(frames.stdout)
     stream, = probe["streams"]
@@ -108,7 +109,9 @@ def decode_prefix(path, seconds, rate):
         raise ValueError("native FLAC timestamps have an unexpected sample time base")
     observed = 0
     for frame in probe["frames"]:
-        if frame["pts"] != observed or frame["nb_samples"] <= 0:
+        timestamp = next((frame[field] for field in ("pts", "pkt_pts", "pkt_dts", "best_effort_timestamp")
+                          if field in frame), None)
+        if timestamp != observed or frame["nb_samples"] <= 0:
             raise ValueError("native FLAC frame timestamps break continuity from sample zero")
         observed += frame["nb_samples"]
     if observed < seconds * rate:
