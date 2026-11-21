@@ -7,6 +7,9 @@ from dataclasses import asdict
 import hashlib
 import json
 import struct
+from pathlib import Path
+from shutil import copyfile
+from tempfile import TemporaryDirectory
 from zipfile import ZipFile
 
 from .acquire import _request, parse_wav_header, wav_bytes
@@ -232,7 +235,25 @@ def stage(root, plan, archive_path, receipt):
     return report
 
 
-def run(root, *, plan_only=False):
+def verify_rebuild(root, plan, archive_path, receipt):
+    staged = root / "raw" / SOURCE / "MANIFEST.json"
+    labels = root / "labels/ami-hard-pauses.json"
+    with TemporaryDirectory(prefix="ami-hard-rebuild-", dir=root) as path:
+        scratch = Path(path)
+        for name in ("raw", "manifests", "labels", "reports"):
+            (scratch / name).mkdir()
+        copyfile(staged, scratch / "manifests" / f"{SOURCE}.json")
+        copyfile(labels, scratch / "labels" / labels.name)
+        rebuilt = stage(scratch, plan, archive_path, receipt)
+        if (file_digest(scratch / "raw" / SOURCE / "MANIFEST.json") != file_digest(staged)
+                or rebuilt["label_manifest_sha256"] != file_digest(labels)):
+            raise ValueError("fresh reconstruction changed the staged audio or labels")
+    rebuilt["fresh_download_verified"] = True
+    _write_json(root / "reports/ami-hard-pauses-rebuild-verification.json", rebuilt)
+    return rebuilt
+
+
+def run(root, *, plan_only=False, verify_only=False):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("AMI source reconstruction requires the campaign machine")
     archive_path, = (root / "raw/ami_annotations").glob("*.zip")
@@ -245,11 +266,15 @@ def run(root, *, plan_only=False):
         _write_json(receipt, candidate)
     if plan_only:
         return {key: item for key, item in candidate.items() if key != "tiles"}
+    if verify_only:
+        return verify_rebuild(root, candidate, archive_path, receipt)
     return stage(root, candidate, archive_path, receipt)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--plan-only", action="store_true")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--plan-only", action="store_true")
+    action.add_argument("--verify-rebuild", action="store_true")
     args = parser.parse_args()
-    print(json.dumps(run(data_root(), plan_only=args.plan_only), indent=2))
+    print(json.dumps(run(data_root(), plan_only=args.plan_only, verify_only=args.verify_rebuild), indent=2))

@@ -254,6 +254,9 @@ the audio hashes. The regenerated label manifest under
 `labels/ami-hard-pauses.json` pins pause IDs and labels. A rebuild
 must also reproduce `reports/ami-targeted-training-dataset.json`.
 That training receipt binds each new item to the original item it
-replaces, retaining the speaker and label counts. Keep the old receipt with the old run
-when deliberately choosing a different cohort. This pilot draws from
-existing AMI training identities and leaves all held-out roles fixed.
+replaces, retaining the speaker and label counts. Keep the old receipt
+with the old run when deliberately choosing a different cohort. This
+pilot draws from existing AMI training identities and leaves all held-out
+roles fixed. Run `python -m superturn.ami_hard_pauses --verify-rebuild`
+for a fresh download into temporary staging and comparison with the
+pinned audio and label hashes.
