@@ -298,8 +298,38 @@ def summarize_archived(root):
              "noise_at_original_cutoff": {lang: paired_noise_counts(row["scores"], row["labels"], row["features"], lang)
                                           for lang, row in rows.items()},
              "english_guard": summary_guard(rows["en"]["scores"], rows["en"]["labels"])}
+    table["independent_973k_probability_mean"] = ensemble_gain(rows)
     _write_json(root / "reports/own-student-failure-deltas.json", table)
     print(json.dumps(table["all_development_languages"], indent=2))
+
+
+def ensemble_gain(rows):
+    rng = np.random.default_rng(91829)
+    points, intervals = {}, {}
+    for language, row in sorted(rows.items()):
+        truth, groups = np.asarray(row["labels"], dtype=bool), np.asarray(row["turn_ordinals"])
+        scores = [np.asarray(row["scores"][label]) for label in ("973k", *(f"973k-{seed}" for seed in SEEDS))]
+        buckets = [np.flatnonzero(groups == group) for group in np.unique(groups)]
+        draws = []
+        for i in range(301):
+            sample = np.arange(len(truth)) if i == 0 else np.concatenate([
+                buckets[j] for j in rng.integers(len(buckets), size=len(buckets))
+            ])
+            y = truth[sample]
+            if not 0 < y.sum() < len(y):
+                draws.append([np.nan, np.nan])
+                continue
+            recalls = np.asarray([recall_area(model[sample], y)[:3] for model in scores])
+            delta = recalls[0] - recalls[1:].mean(0)
+            draws.append([float(delta.mean()), float(delta[1])])
+        points[language], intervals[language] = draws[0], draws[1:]
+    result = {"effect": "recall for the probability mean minus mean recall across separately thresholded seeds",
+              "metric_order": ["mean recall across 2.5%, 5%, and 7.5%", "matched 5% recall"]}
+    for name, values, paired in (("english", points["en"], np.asarray(intervals["en"])),
+                                 ("macro", np.mean(list(points.values()), axis=0).tolist(),
+                                  np.mean(list(intervals.values()), axis=0))):
+        result[name] = {"delta": values, "paired_turn_delta_95": np.nanquantile(paired, [.025, .975], axis=0).T.tolist()}
+    return result
 
 
 if __name__ == "__main__":
