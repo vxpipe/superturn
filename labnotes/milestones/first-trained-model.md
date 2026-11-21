@@ -85,6 +85,10 @@ Last updated 2026-11-21.
   completes. At a fitted 4.79% false-complete operating point on AMI
   telephone validation, recall was 2.92% and 5.84%. The first checkpoint
   was fetched and its SHA-256 checked. The 500k GRU is training.
+  Common Voice supplies 98.3% of pooled validation shifts, so the
+  Stage 1 assessment will also compare AMI telephone scores.
+  A validation-only export preflight for the first checkpoint produced
+  a 302,367-byte int8 file with unchanged pooled AUC to four decimals.
 
 ### Next step
 
