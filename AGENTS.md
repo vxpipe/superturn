@@ -24,8 +24,10 @@ includes the handover.
 - Turn detection only. Voice activity detection and barge-in belong to the
   calling application, which runs Silero VAD and invokes Superturn when it
   sees a pause.
-- Audio in, probability out. Transcripts are not a model input; an application
-  may combine the score with transcript rules on its own side.
+- Superturn takes audio and silence time and returns a probability.
+  A separate text completeness model takes the live partial STT transcript
+  and has its own int8 ONNX artifact of at most 1 MB. VXPipe combines the
+  two scores. A language ships when both models pass its release checks.
 - The shipping model takes up to 3 s of caller audio and `silence_ms`.
   Teacher-only analysis may use longer causal history.
 - Train and fine-tune Superturn's own turn detector. Existing architectures
