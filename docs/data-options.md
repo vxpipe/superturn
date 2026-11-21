@@ -139,6 +139,13 @@ For the standalone LiveKit EoT Benchmark diagnostic, select
 0.11 GB to the existing campaign selection and stays outside the frozen
 suite. [Dataset card](https://huggingface.co/datasets/livekit/eot-bench-data)
 
+The opt-in `livekit_multilingual_diagnostic` selection adds the 13
+non-English general shards at the same revision, 1,389,421,846 bytes.
+Use the provider's natural task-oriented pause labels for a fixed 300 ms
+diagnostic by language. The shards stay outside fitting and the frozen
+suite. This release has no global speaker IDs. CC BY 4.0 is recorded on
+the pinned dataset card. [Dataset card](https://huggingface.co/datasets/livekit/eot-bench-data/blob/ae834af9e9bddf73d1f550c190aaeb99bf31f523/README.md)
+
 HarperValleyBank is a separate, opt-in English conversation pilot under
 CC BY 4.0. `python -m superturn.harper_valley_plan` pins a speaker-disjoint
 file list, and `python -m superturn.harper_valley_acquire` stages that list

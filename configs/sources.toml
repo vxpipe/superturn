@@ -69,6 +69,26 @@ opt_in = true
 selection_command = "python -m superturn.harper_valley_acquire"
 order = 3
 
+[sources.livekit_multilingual_diagnostic]
+kind = "hf_files"
+repo = "livekit/eot-bench-data"
+revision = "ae834af9e9bddf73d1f550c190aaeb99bf31f523"
+licence = "CC BY 4.0"
+attribution = "LiveKit End-of-Turn Benchmark data, LiveKit (CC BY 4.0)"
+role = "test"
+files = [
+  "data/ar/validation-00000-of-00001.parquet", "data/de/validation-00000-of-00001.parquet",
+  "data/es/validation-00000-of-00001.parquet", "data/fr/validation-00000-of-00001.parquet",
+  "data/hi/validation-00000-of-00001.parquet", "data/id/validation-00000-of-00001.parquet",
+  "data/it/validation-00000-of-00001.parquet", "data/ja/validation-00000-of-00001.parquet",
+  "data/ko/validation-00000-of-00001.parquet", "data/nl/validation-00000-of-00001.parquet",
+  "data/pt/validation-00000-of-00001.parquet", "data/tr/validation-00000-of-00001.parquet",
+  "data/zh/validation-00000-of-00001.parquet",
+]
+max_total_bytes = 1389421846
+opt_in = true
+order = 3
+
 [sources.indic_diarbench]
 kind = "hf_rowgroups"
 repo = "sarvamai/indic-diarbench"
