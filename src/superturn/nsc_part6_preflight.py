@@ -107,57 +107,64 @@ def pax_fields(raw):
     return result
 
 
+def tar_headers(reader, limit):
+    position = 0
+    extended, shared = {}, {}
+    for _ in range(limit):
+        header = reader.read(position, BLOCK)
+        if not any(header):
+            break
+        member = tarfile.TarInfo.frombuf(header, "utf-8", "strict")
+        content = position + BLOCK
+        size = member.size
+        if size < 0:
+            raise ValueError("negative tar member length")
+        if member.type in (tarfile.XHDTYPE, tarfile.XGLTYPE, tarfile.GNUTYPE_LONGNAME):
+            if not 0 < size <= 4096:
+                raise ValueError("unsupported tar metadata length")
+            metadata = reader.read(content, size)
+            if member.type == tarfile.GNUTYPE_LONGNAME:
+                extended["path"] = metadata.rstrip(b"\0").decode("utf-8")
+            elif member.type == tarfile.XGLTYPE:
+                shared.update(pax_fields(metadata))
+            else:
+                extended.update(pax_fields(metadata))
+            name = None
+        elif member.type in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE):
+            fields = {**shared, **extended}
+            name = fields.get("path", member.name).rsplit("/", 1)[-1]
+            size = int(fields.get("size", size))
+            extended.clear()
+            if member.isdir() and size != 0:
+                raise ValueError("unexpected nonempty directory member")
+        else:
+            raise ValueError("unsupported tar member type")
+        position = content + ((size + BLOCK - 1) // BLOCK) * BLOCK
+        if size < 0 or position > reader.ends[-1]:
+            raise ValueError("invalid tar member extent")
+        yield name, member.isfile(), content, size
+
+
 def scan(design, fragments):
     reader = RangeReader(fragments)
     meter = Progress(f"nsc-part6-headers-{design}", HEADERS, "headers")
     groups = defaultdict(lambda: defaultdict(dict))
-    position, parsed = 0, 0
-    extended, shared = {}, {}
+    parsed = 0
     pairs = []
     types = Counter()
     try:
-        for _ in range(HEADERS):
-            header = reader.read(position, BLOCK)
-            if not any(header):
-                break
-            member = tarfile.TarInfo.frombuf(header, "utf-8", "strict")
+        for name, is_file, content, size in tar_headers(reader, HEADERS):
             parsed += 1
             meter.advance(1)
-            content = position + BLOCK
-            size = member.size
-            if size < 0:
-                raise ValueError("negative tar member length")
-            if member.type in (tarfile.XHDTYPE, tarfile.XGLTYPE, tarfile.GNUTYPE_LONGNAME):
-                if not 0 < size <= 4096:
-                    raise ValueError("unsupported tar metadata length")
-                metadata = reader.read(content, size)
-                if member.type == tarfile.GNUTYPE_LONGNAME:
-                    extended["path"] = metadata.rstrip(b"\0").decode("utf-8")
-                elif member.type == tarfile.XGLTYPE:
-                    shared.update(pax_fields(metadata))
-                else:
-                    extended.update(pax_fields(metadata))
-            elif member.type in (tarfile.REGTYPE, tarfile.AREGTYPE, tarfile.DIRTYPE):
-                fields = {**shared, **extended}
-                name = fields.get("path", member.name).rsplit("/", 1)[-1]
-                size = int(fields.get("size", size))
-                extended.clear()
-                if member.isdir() and size != 0:
-                    raise ValueError("unexpected nonempty directory member")
-                if match := MEMBER.fullmatch(name):
-                    if not member.isfile() or size <= 0:
-                        raise ValueError("invalid paired archive member")
-                    session, task, speaker, fmt = match.groups()
-                    members = groups[session, task][speaker]
-                    if fmt in members:
-                        raise ValueError("duplicate speaker member")
-                    members[fmt] = {"byte_offset": content, "bytes": size}
-                    types[fmt] += 1
-            else:
-                raise ValueError("unsupported tar member type")
-            position = content + ((size + BLOCK - 1) // BLOCK) * BLOCK
-            if size < 0 or position > reader.ends[-1]:
-                raise ValueError("invalid tar member extent")
+            if name is not None and (match := MEMBER.fullmatch(name)):
+                if not is_file or size <= 0:
+                    raise ValueError("invalid paired archive member")
+                session, task, speaker, fmt = match.groups()
+                members = groups[session, task][speaker]
+                if fmt in members:
+                    raise ValueError("duplicate speaker member")
+                members[fmt] = {"byte_offset": content, "bytes": size}
+                types[fmt] += 1
             pairs = [{"session": session, "task": task, "speakers": voices}
                      for (session, task), voices in sorted(groups.items())
                      if len(voices) == 2 and all(set(parts) == {"flac", "jsonl"} for parts in voices.values())]
