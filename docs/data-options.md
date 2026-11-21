@@ -49,6 +49,7 @@ are weaker than one-to-one calls.
 | ICSI Meeting Corpus | CC BY 4.0 for signals and transcription | English | ~70 h, close-talk microphones. Edinburgh serves individual headset files. Embedded Shorten prevents direct PCM ranges. |
 | NOTSOFAR-1 recorded meetings | [CC BY 4.0](https://huggingface.co/datasets/microsoft/NOTSOFAR#data-license) | English | Close-talk audio and timed transcripts. The publisher reports speaker overlap between training and Dev 1. Any new development split needs verified identities. |
 | otoSpeech task-oriented releases | [CC BY 4.0](https://huggingface.co/datasets/otoearth/otoSpeech-full-duplex-task-oriented-v2#licensing-information) | English | Separate speaker channels and stable pseudonymous IDs. The current Hugging Face credential has no access. |
+| IMDA NSC Parts 4–6 turn provenance | [Singapore Open Data Licence v1.0](https://data.gov.sg/open-data-licence), with IMDA attribution | Singapore English and code-switched speech | Metadata census only. The [Scicom clean dialogue sidecars](https://huggingface.co/datasets/Scicom-intl/semantic-vad-eot/tree/506f620ab39e981ffd777813038eef7c2ba23325/meta/dialogue) retain source terms. Join Parts 4–5 against [Recursal's mirrored rosters](https://huggingface.co/datasets/recursal/reprocessed_singapore_national_speech_corpus/tree/5e8294c3fb5f2634fd1d7004f7c0264969fe6687/SpeakerMetaData) before counting independent speakers. |
 
 No other large, permissively licensed, multilingual per-speaker conversation
 source was found on 2026-11-20. Consequences:

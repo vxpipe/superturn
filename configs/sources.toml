@@ -122,6 +122,39 @@ selection_command = "python -m superturn.nsc_part3_preflight --partner-index"
 max_total_bytes = 1_200_000
 order = 3
 
+[sources.nsc-turn-provenance]
+kind = "hf_files"
+repo = "Scicom-intl/semantic-vad-eot"
+revision = "506f620ab39e981ffd777813038eef7c2ba23325"
+licence = "Singapore Open Data Licence v1.0"
+attribution = "Contains information from the IMDA National Speech Corpus Parts 4–6, processed by Scicom (MSC) Bhd, accessed on 21 November 2026, made available under the Singapore Open Data Licence version 1.0 (https://data.gov.sg/open-data-licence)."
+role = "metadata"
+opt_in = true
+files = [
+  "meta/dialogue/imda_part4.parquet", "meta/dialogue/imda_part4.json",
+  "meta/dialogue/imda_part5.parquet", "meta/dialogue/imda_part5.json",
+  "meta/dialogue/imda_part6.parquet", "meta/dialogue/imda_part6.json",
+]
+max_total_bytes = 24335604
+order = 3
+
+[sources.nsc-speaker-rosters]
+kind = "hf_files"
+repo = "recursal/reprocessed_singapore_national_speech_corpus"
+revision = "5e8294c3fb5f2634fd1d7004f7c0264969fe6687"
+licence = "Singapore Open Data Licence v1.0"
+attribution = "Contains information from the IMDA National Speech Corpus Parts 4–5, accessed on 21 November 2026 from the Recursal mirror, made available under the Singapore Open Data Licence version 1.0 (https://data.gov.sg/open-data-licence)."
+role = "metadata"
+opt_in = true
+files = [
+  "SpeakerMetaData/Part 4.csv",
+  "SpeakerMetaData/Part 5 (Debate).csv",
+  "SpeakerMetaData/Part 5 (Finance).csv",
+  "SpeakerMetaData/Part 5 (Main).csv",
+]
+max_total_bytes = 602674
+order = 3
+
 [sources.icsi-transcript-census]
 kind = "http"
 url = "https://groups.inf.ed.ac.uk/ami/ICSICorpusAnnotations/ICSI_original_transcripts.zip"
