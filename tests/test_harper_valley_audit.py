@@ -71,9 +71,11 @@ def test_audit_places_nonzero_channel_offsets_on_one_timeline(tmp_path):
     def detect(pcm):
         return [(4800, 12800)] if len(pcm) == 3 * RATE else [(9600, 28800)]
 
-    assert audit_call(tmp_path, "example", detect) == {
+    pauses = []
+    assert audit_call(tmp_path, "example", detect, pauses=pauses) == {
         "audited_calls": 1, "candidate_shift": 1, "supported_shift": 1, "fixed_window_supported_shift": 1,
     }
+    assert pauses == [(12800, "shift")]
 
 
 def test_agent_clock_recovers_only_when_both_segment_halves_agree(tmp_path):

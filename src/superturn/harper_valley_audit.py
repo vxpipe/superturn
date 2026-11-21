@@ -51,7 +51,7 @@ def transcript_words(segments, role, channel_length, origin, *, omissions=None, 
             omissions.append(Speech(role, start + origin, end + origin))
 
 
-def label_support(vad, word_stream, common_start, common_end, *, omissions=()):
+def label_support(vad, word_stream, common_start, common_end, *, omissions=(), fixed_pauses=None):
     """Compare aligned two-party VAD and word-timing labels inside shared audio."""
     def crop(spans):
         for span in spans:
@@ -81,6 +81,8 @@ def label_support(vad, word_stream, common_start, common_end, *, omissions=()):
             outcome = "supported" if vote == label else "disagreed"
             if vote == label and word_end <= edge and word_onset >= edge + GAP:
                 outcomes[f"fixed_window_supported_{label}"] += 1
+                if fixed_pauses is not None:
+                    fixed_pauses.append((edge, label))
         else:
             outcome = "ambiguous" if matches else "unmatched"
         outcomes[f"{outcome}_{label}"] += 1
@@ -94,21 +96,22 @@ def word_overlap(words, intervals):
                for word in words) / len(words)
 
 
-def use_conversation_clock(segments, channel_length, vad):
-    """Confirm a metadata-defined clock on both alternating segment halves."""
+def conversation_clock_evidence(segments, channel_length, vad):
+    """Measure overlap for both published clocks on alternating segment halves."""
+    outcomes = []
     for half in (segments[::2], segments[1::2]):
         original = list(transcript_words(half, "agent", channel_length, 0))
         alternate = list(transcript_words(half, "agent", channel_length, 0, clock="start_ms"))
-        if min(len(original), len(alternate)) < 4:
-            return False
         baseline = word_overlap(original, vad)
         recovered = word_overlap(alternate, vad)
-        if recovered < 0.8 or recovered - baseline < 0.2:
-            return False
-    return True
+        outcomes.append({"offset_words": len(original), "start_words": len(alternate),
+                         "offset_overlap": baseline, "start_overlap": recovered,
+                         "passes": min(len(original), len(alternate)) >= 4
+                         and recovered >= 0.8 and recovered - baseline >= 0.2})
+    return outcomes
 
 
-def audit_call(directory, identifier, detect, *, recover_clock=False):
+def audit_call(directory, identifier, detect, *, recover_clock=False, pauses=None, evidence=None):
     transcript = directory / "data" / "transcript" / f"{identifier}.json"
     segments = {role: [] for role in ROLES}
     for row in json.loads(transcript.read_text()):
@@ -123,13 +126,19 @@ def audit_call(directory, identifier, detect, *, recover_clock=False):
     support = {role: list(detect(audio[role])) for role in ROLES}
     counts = Counter()
     agent_clock = "offset_ms"
-    if recover_clock and origins["agent"] <= -RATE and use_conversation_clock(
-            segments["agent"], len(audio["agent"]), support["agent"]):
-        # For this subset, the published agent PCM begins near conversation
-        # zero. Caller PCM retains its independently verified recording origin.
-        origins["agent"] = 0
-        agent_clock = "start_ms"
-        counts["agent_clock_recovered"] = 1
+    agent_evidence = []
+    documented_origins = origins.copy()
+    if recover_clock and origins["agent"] <= -RATE:
+        agent_evidence = conversation_clock_evidence(segments["agent"], len(audio["agent"]), support["agent"])
+        if all(subset["passes"] for subset in agent_evidence):
+            # For this subset, the published agent PCM begins near conversation
+            # zero. Caller PCM retains its independently verified recording origin.
+            origins["agent"] = 0
+            agent_clock = "start_ms"
+            counts["agent_clock_recovered"] = 1
+    if evidence is not None:
+        evidence.update({"documented_origins": documented_origins, "selected_origins": origins,
+                         "agent_clock": agent_clock, "agent_segment_subsets": agent_evidence})
     baseline = min(origins.values())
     origins = {role: origin - baseline for role, origin in origins.items()}
     common_start = max(origins.values())
@@ -153,7 +162,12 @@ def audit_call(directory, identifier, detect, *, recover_clock=False):
                                                for start, end in support[role]]) for role in ROLES}
     if min(overlap.values()) < 0.8:
         return counts + Counter(low_audio_word_overlap=1)
-    return counts + Counter(audited_calls=1) + label_support(vad, words, common_start, common_end, omissions=omissions)
+    fixed = [] if pauses is not None else None
+    counts += label_support(vad, words, common_start, common_end, omissions=omissions, fixed_pauses=fixed)
+    if pauses is not None:
+        pauses.extend((edge - origins["caller"], label) for edge, label in fixed)
+    counts["audited_calls"] += 1
+    return counts
 
 
 def run(root, *, recover_clock=False):
