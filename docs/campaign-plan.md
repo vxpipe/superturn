@@ -136,6 +136,17 @@ bin/vast-run -n ami-mixture 'uv run --no-sync python -m superturn.ami_mixture d5
 The versioned reports and checkpoints live beneath `reports/ami-mixture/`
 and `exports/ami-mixture/`.
 
+Run the AMI telephone calibration pilot on the existing AMI slices.
+
+```sh
+bin/vast-run -n ami-calibration 'uv run --no-sync python -m superturn.ami_calibration && bin/sync push exports reports && bin/sync verify exports reports'
+```
+
+The pilot uses connected AMI meeting groups for training, epoch selection,
+and threshold calibration. It evaluates with the original reference-screened
+AMI validation recordings. Its reports and exports use the `ami-calibration/`
+subdirectory. The original campaign shards are outside the pilot directory.
+
 ## Later campaigns
 
 A later campaign runs `bin/sync pull` after bootstrap and starts from the

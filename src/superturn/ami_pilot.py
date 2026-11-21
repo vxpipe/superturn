@@ -219,6 +219,13 @@ def _summary(rows):
             "labels": dict(Counter(row.label for row in rows))}
 
 
+def supported_crosscheck(root, rows):
+    limits = {}
+    votes = audit_sample(root, rows, pause_limits=limits)
+    return [replace(row, pause_samples=GAP) for row, status in votes.items()
+            if status == "supported" and limits[row] >= GAP]
+
+
 def prepare(root, destination):
     original = [row for row in read_rows(root / "labels" / "ami.jsonl") if row.split in {"train", "validation"}]
     limits = load_selection(root)
@@ -229,11 +236,7 @@ def prepare(root, destination):
     annotation, eligible_current, screened, screened_current = _annotation_labels(root, original, current)
     matched = match_training(eligible_current, [row for row in annotation if row.split == "train"])
     validation = [row for row in annotation if row.split == "validation"]
-    validation_limits = {}
-    validation_votes = audit_sample(root, [row for row in original if row.split == "validation"],
-                                    pause_limits=validation_limits)
-    crosscheck = [replace(row, pause_samples=GAP) for row, status in validation_votes.items()
-                  if status == "supported" and validation_limits[row] >= GAP]
+    crosscheck = supported_crosscheck(root, [row for row in original if row.split == "validation"])
     for rows in [*matched, validation, crosscheck]:
         if {row.label for row in rows} != {"hold", "shift"}:
             raise ValueError("AMI label pilot needs holds and shifts in every cohort")
@@ -266,10 +269,21 @@ def prepare(root, destination):
 
 
 def train_and_score(folder, name, config, validation, archive, device):
+    saved, scores = fit_and_score(folder, name, config, validation, ("crosscheck",), archive, device)
+    from .train import _stats
+
+    return {
+        "checkpoint_sha256": saved["checkpoint_sha256"],
+        "validation": saved["validation"],
+        "original_supported_crosscheck": _stats(*scores["crosscheck"], saved["validation"]["threshold"]),
+    }
+
+
+def fit_and_score(folder, name, config, evaluation, splits, archive, device):
     import torch
 
     from .model import build
-    from .train import _input, _stats, completed_run, paths, records, train
+    from .train import _input, completed_run, paths, records, train
 
     checkpoint = completed_run(folder, name, config, device)
     if checkpoint is None:
@@ -282,19 +296,21 @@ def train_and_score(folder, name, config, validation, archive, device):
         temporary.replace(archive / filename)
     model = build(config).to(device).eval()
     model.load_state_dict(saved["state"])
-    scores, truth = [], []
+    results = {}
     with torch.inference_mode():
-        for rows in records(paths(validation, "crosscheck")):
-            audio = np.stack([_input(row, model.samples, DECISION_MS) for row in rows])
-            pcm = torch.from_numpy(audio.astype(np.float32) / 32768).to(device)
-            elapsed = torch.full((len(rows), 1), float(DECISION_MS), device=device)
-            scores.extend(model(pcm, elapsed).cpu().flatten().tolist())
-            truth.extend(int(row["label"] == "shift") for row in rows)
+        for split in splits:
+            scores, truth = [], []
+            for rows in records(paths(evaluation, split)):
+                audio = np.stack([_input(row, model.samples, DECISION_MS) for row in rows])
+                pcm = torch.from_numpy(audio.astype(np.float32) / 32768).to(device)
+                elapsed = torch.full((len(rows), 1), float(DECISION_MS), device=device)
+                scores.extend(model(pcm, elapsed).cpu().flatten().tolist())
+                truth.extend(int(row["label"] == "shift") for row in rows)
+            results[split] = scores, truth
     return {
         "checkpoint_sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
         "validation": saved["metrics"],
-        "original_supported_crosscheck": _stats(scores, truth, saved["metrics"]["threshold"]),
-    }
+    }, results
 
 
 def run(root, device):

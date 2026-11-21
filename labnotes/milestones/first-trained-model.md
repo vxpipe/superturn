@@ -119,16 +119,21 @@ Last updated 2026-11-21.
   epoch 34 and increased false completes from 9.86% to 15.49% on the
   supported cross-check. All six extended runs missed the 5% target on that
   cross-check. The full queue remains paused.
+- The AMI calibration pilot reserved separate sets of 21 speakers for
+  checkpoint selection and threshold fitting. Three of four models met
+  5% false completes on the 103-case supported validation cross-check.
+  Their best complete recall was 9.38%. Conformer seed 29 had the
+  highest cross-check AUC at 0.739. The frozen test was unused.
 
 ### Next step
 
-Use existing conversational recordings to build a larger reference-supported
-telephone validation set at 300 ms. The two pilot views cover only 12
-distinct voices. Reserve additional voices from the original training pool
-and exclude their recordings from the next pilot's training. Split epoch
-selection and threshold calibration by speaker and check the false-complete
-rate on held-out voices. Test speaker-capped conversational training mixtures
-against that validation.
+Use the new speaker-disjoint AMI development cohorts to test changes that
+improve ranking and recall at 300 ms on held-out voices, with calibration
+and model selection on separate recordings. The scratch pilots have
+weak recall at the operating target even with independent calibration.
+Start with non-AMI pretraining followed by AMI fine-tuning, compared
+with scratch training on the same cohorts. Follow with an AMI
+learning curve and augmentation if transfer yield is small.
 Preserve the original test shards and record the mixture decision before
 resuming the staged experiment matrix. Measure selected artifacts on the frozen test set,
 including the AMI reference diagnostic and telephone speech level and
@@ -146,6 +151,7 @@ destroy it unless the user asks to keep it.
 ### Evidence
 
 - [RTX 5090 training run](../20261121-0142-rtx-5090-training.md)
+- [AMI telephone calibration](../20261121-0645-ami-calibration-pilot.md)
 - [Local turn pipeline](../20261121-0112-local-turn-pipeline.md)
 - [Dataset sizes and scaffold](../20261120-1600-dataset-sizes-and-scaffold.md)
 - [Campaign runbook](../../docs/campaign-plan.md)

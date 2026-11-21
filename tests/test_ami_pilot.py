@@ -6,6 +6,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from superturn import ami_mixture
+from superturn.ami_calibration import development_splits
 from superturn.ami_pilot import acoustic_status, annotated_pauses, group_words, match_training
 from superturn.labels import Label, Speech
 
@@ -74,3 +75,14 @@ def test_auxiliary_holds_match_languages_and_cap_the_pause(tmp_path, monkeypatch
                for rows in auxiliary.values() for row in rows)
     with pytest.raises(ValueError, match="not enough language-matched"):
         ami_mixture._auxiliary([path], 3)
+
+
+def test_calibration_keeps_connected_recordings_together():
+    groups = {f"m{meeting}": f"g{meeting // 2}" for meeting in range(18)}
+    groups["extra"] = "g0"
+    assignments = development_splits(list(groups), groups)
+    assert assignments == development_splits(list(reversed(groups)), groups)
+    assert assignments["m0"] == assignments["m1"] == assignments["extra"] == "train"
+    assert set(assignments.values()) == {"train", "validation", "calibration"}
+    for meeting in range(0, 18, 2):
+        assert assignments[f"m{meeting}"] == assignments[f"m{meeting + 1}"]
