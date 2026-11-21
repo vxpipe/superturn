@@ -2,20 +2,45 @@
 # Copy campaign results from the machine to this computer, under
 # data/campaigns/<instance>/: reports, logs, download manifests, run metrics,
 # checkpoints, ONNX exports and pause labels (no audio). Use --results-only
-# to skip the potentially large pause labels. Safe to rerun.
+# to skip the potentially large pause labels. Use --stage-one for only the
+# completed architecture/size checkpoints and validation reports. Safe to rerun.
 source "$(dirname "$0")/_lib.sh"
 dirs=(reports logs manifests runs exports)
 case "${1:-}" in
   "") dirs+=(labels) ;;
-  --results-only) ;;
-  *) die "usage: bin/vast-fetch [--results-only]" ;;
+  --results-only|--stage-one) ;;
+  *) die "usage: bin/vast-fetch [--results-only|--stage-one]" ;;
 esac
-[[ $# -le 1 ]] || die "usage: bin/vast-fetch [--results-only]"
+[[ $# -le 1 ]] || die "usage: bin/vast-fetch [--results-only|--stage-one]"
 id="$(instance_id)"
 dest="$ROOT/data/campaigns/$id"
 mkdir -p "$dest"
 ssh_target
 mapfile -t opts < <(ssh_opts)
+if [[ "${1:-}" == "--stage-one" ]]; then
+  filters=(
+    --include '/runs/'
+    --include '/runs/s1-*/'
+    --include '/runs/s1-*/best.pt'
+    --include '/runs/s1-*/finished.json'
+    --include '/runs/s1-*/metrics.json'
+    --include '/reports/'
+    --include '/reports/s1-*-float-ami-validation/'
+    --include '/reports/s1-*-float-ami-validation/metrics.json'
+    --include '/reports/experiments/'
+    --include '/reports/experiments/stage1-ranking.json'
+    --include '/reports/experiments/stage1-queue.json'
+    --include '/reports/stage1-eot-domain-probe.json'
+    --exclude '*'
+  )
+  planned=$(LC_ALL=C rsync -az --dry-run --stats -e "ssh ${opts[*]}" "${filters[@]}" \
+    "$SSH_HOST:$REMOTE_DATA/" "$dest/" | awk '/^Total transferred file size: / {gsub(/,/, "", $5); print $5}')
+  [[ "$planned" =~ ^[0-9]+$ && "$planned" -le 200000000 ]] ||
+    die "Stage 1 result transfer exceeds 200 MB or its size could not be measured"
+  echo "Stage 1 result transfer: $planned bytes before compression"
+  rsync -az -e "ssh ${opts[*]}" "${filters[@]}" "$SSH_HOST:$REMOTE_DATA/" "$dest/"
+  exit 0
+fi
 remote "cd $REMOTE_REPO && export SUPERTURN_DATA=$REMOTE_DATA && bin/collect-manifests"
 for d in "${dirs[@]}"; do
   rsync -az -e "ssh ${opts[*]}" --exclude '*.tar' --exclude '*.flac' --exclude '*.wav' --exclude '*.mp3' --exclude '*.opus' \
