@@ -142,12 +142,12 @@ def inventory(root, folder):
     return report
 
 
-def render(row, pcm, deadline):
+def render(row, pcm, deadline, samples=SAMPLES):
     """Cut the future before the G.711 filter and return the shared PCM."""
     end = CONTEXT + deadline * RATE // 1000
     window = clip(row, pcm)
     window[end:] = 0
-    return condition(window, "telephone", 0)[end - SAMPLES:end]
+    return condition(window, "telephone", 0)[end - samples:end]
 
 
 def normalize(pcm):
@@ -159,7 +159,7 @@ def file_digest(path):
         return hashlib.file_digest(handle, "sha256").hexdigest()
 
 
-def score(root, folder, *, preview=False):
+def score(root, folder, *, preview=False, teacher_seconds=3):
     import _whisper_features
 
     encoded = (folder / "pool.json").read_bytes()
@@ -180,8 +180,17 @@ def score(root, folder, *, preview=False):
         raise ValueError("Smart Turn differs from the matched-window evaluation")
     provenance = {"pool_sha256": pool_hash, "teacher_sha256": teacher_hash,
                   "feature_sha256": file_digest(Path(_whisper_features.__file__)),
-                  "runner_sha256": file_digest(Path(__file__)), "preview": preview}
-    destination = folder / ("preview" if preview else "scored")
+                  "runner_sha256": file_digest(Path(__file__)), "preview": preview,
+                  "teacher_context_seconds": teacher_seconds}
+    reference = None
+    if teacher_seconds != 3 and not preview:
+        previous = root / "reports" / "dense-teacher-targets.json"
+        reference = json.loads(previous.read_text())
+        if reference["pool_sha256"] != pool_hash:
+            raise ValueError("reference targets used a different pause selection")
+        provenance["reference_3s_report_sha256"] = file_digest(previous)
+    history = "" if teacher_seconds == 3 else f"-{teacher_seconds}s"
+    destination = folder / (("preview" if preview else "scored") + history)
     destination.mkdir(exist_ok=True)
     run_file = destination / "inputs.json"
     if run_file.is_file() and json.loads(run_file.read_text()) != provenance:
@@ -198,15 +207,15 @@ def score(root, folder, *, preview=False):
         result = {key: row[key] for key in
                   ("role", "source", "language", "speaker", "connected_group", "recording")}
         for deadline in DEADLINES:
-            clip_pcm = render(label, pcm, deadline)
+            clip_pcm = render(label, pcm, deadline, samples=teacher_seconds * RATE)
             target = predict(normalize(clip_pcm))
             if not 0 <= target <= 1:
                 raise ValueError("teacher returned an invalid probability")
-            result[f"pcm_{deadline}"] = clip_pcm.astype("<i2", copy=False).tobytes()
+            result[f"pcm_{deadline}"] = clip_pcm[-SAMPLES:].astype("<i2", copy=False).tobytes()
             result[f"target_{deadline}"] = target
         return result
 
-    meter = Progress("dense-teacher-preview" if preview else "dense-teacher-targets",
+    meter = Progress(("dense-teacher-preview" if preview else "dense-teacher-targets") + history,
                      len(rows), "pauses")
     scores = defaultdict(list)
     digests = {}
@@ -217,6 +226,13 @@ def score(root, folder, *, preview=False):
                 path = destination / f"{start // SHARD_ROWS:04d}.parquet"
                 if not path.is_file():
                     table = pa.Table.from_pylist(list(workers.map(infer, block)))
+                    if reference is not None:
+                        original = folder / "scored" / path.name
+                        if file_digest(original) != reference["shard_sha256"][path.name]:
+                            raise ValueError("the original three-second audio cache changed")
+                        columns = [f"pcm_{deadline}" for deadline in DEADLINES]
+                        if not table.select(columns).equals(pq.read_table(original, columns=columns)):
+                            raise ValueError("teacher history changed the student PCM")
                     tmp = path.with_suffix(".tmp")
                     pq.write_table(table, tmp, compression="zstd")
                     tmp.replace(path)
@@ -234,7 +250,7 @@ def score(root, folder, *, preview=False):
                 "over_half": int(np.sum(np.asarray(values) >= 0.5)),
             } for (source, role, deadline), values in sorted(scores.items())}}
         suffix = "preview" if preview else "targets"
-        _write_json(root / "reports" / f"dense-teacher-{suffix}.json", report)
+        _write_json(root / "reports" / f"dense-teacher-{suffix}{history}.json", report)
     except BaseException:
         meter.finish("failed")
         raise
@@ -246,6 +262,7 @@ def score(root, folder, *, preview=False):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("step", choices=("inventory", "preview", "score"), nargs="?", default="inventory")
+    parser.add_argument("--teacher-seconds", type=int, choices=(3, 8), default=3)
     args = parser.parse_args()
     root = data_root()
     if not (root / ".campaign-machine").is_file():
@@ -254,7 +271,7 @@ def main():
     if args.step == "inventory":
         report = inventory(root, folder)
     else:
-        report = score(root, folder, preview=args.step == "preview")
+        report = score(root, folder, preview=args.step == "preview", teacher_seconds=args.teacher_seconds)
     print(json.dumps(report, indent=2))
 
 

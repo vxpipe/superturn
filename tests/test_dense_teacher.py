@@ -34,6 +34,10 @@ def test_deadline_render_cannot_hear_audio_after_the_decision():
         altered = original.copy()
         altered[end:] = -altered[end:]
         current = render(row, original, deadline)
+        longer = render(row, original, deadline, samples=128000)
         assert current.shape == (48000,)
+        assert longer.shape == (128000,)
         np.testing.assert_array_equal(current, render(row, altered, deadline))
+        np.testing.assert_array_equal(longer, render(row, altered, deadline, samples=128000))
+        np.testing.assert_array_equal(current, longer[-48000:])
         np.testing.assert_array_equal(current, normalize(current) * 32768)
