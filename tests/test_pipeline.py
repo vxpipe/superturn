@@ -94,7 +94,26 @@ def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture)
                        for attr in node.attribute)
                for node in graph.node)
     if architecture == "a":
+        import importlib
         import json
+
+        evaluate = importlib.import_module("superturn.evaluate")
+        with monkeypatch.context() as patch:
+            patch.setattr(evaluate, "_measure_latency", lambda *args: pytest.fail("quality gate did not defer latency"))
+            deferred = benchmark(tmp_path, result, 1.0, samples=3, name="quality-first", quality_first=True)
+            validation = benchmark(tmp_path, result, 1.0, split="validation", name="validation-only", quality_first=True)
+        assert deferred["latency_ms"] is None
+        assert validation["latency_ms"] is None
+        assert deferred["acceptance"]["cpu_p99"] == {"passed": None, "milliseconds": None}
+        assert not deferred["acceptance"]["conversation_telephone_300ms"]["passed"]
+        assert "CPU latency deferred" in (tmp_path / "reports/quality-first/report.md").read_text()
+        with monkeypatch.context() as patch:
+            patch.setattr(evaluate, "_acceptance",
+                          lambda path, report: {"conversation_telephone_300ms": {"passed": True},
+                                                "cpu_p99": {"passed": None, "milliseconds": None}})
+            patch.setattr(evaluate, "_measure_latency", lambda *args: {"p50": 1.0, "p99": 1.5})
+            qualified = benchmark(tmp_path, result, .5, name="qualified", quality_first=True)
+        assert qualified["acceptance"]["cpu_p99"] == {"passed": True, "milliseconds": 1.5}
 
         from superturn import ami_benchmark
         from superturn.labels import write_rows
@@ -319,7 +338,8 @@ def test_experiment_queue_continues_after_failed_run(tmp_path, monkeypatch, conv
     monkeypatch.setattr(trainer, "train", train)
     monkeypatch.setattr(evaluate, "export", export)
     monkeypatch.setattr(evaluate, "quantization_auc", quantization_auc)
-    monkeypatch.setattr(evaluate, "benchmark", lambda root, path, threshold: benchmarks.append(threshold))
+    monkeypatch.setattr(evaluate, "benchmark",
+                        lambda root, path, threshold, *, quality_first: benchmarks.append((threshold, quality_first)))
     assert experiments(tmp_path, {"epochs": 1}, "cpu", stage_one_only=True) == 1
     assert len(runs) == 12 and all(name.startswith("s1-") for name in runs)
     assert benchmarks == []
@@ -332,7 +352,7 @@ def test_experiment_queue_continues_after_failed_run(tmp_path, monkeypatch, conv
     runs.clear()
     assert experiments(tmp_path, {"epochs": 1}, "cpu") == 1
     expected_threshold = .64 if conversation_ranking else .61
-    assert len(runs) == 35 and benchmarks == [expected_threshold] * 3
+    assert len(runs) == 35 and benchmarks == [(expected_threshold, True)] * 3
     assert runs["s4-1-qat"]["warm_start"] == "s4-1"
     assert runs["s4-1-qat"]["quantization_aware"]
     report = json.loads((tmp_path / "reports" / "experiments" / "queue.json").read_text())

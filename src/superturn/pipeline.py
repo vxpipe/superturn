@@ -377,7 +377,7 @@ def experiments(root, base, device, *, stage_one_only=False):
             name, threshold = candidate["name"], candidate["threshold"]
             model = root / "runs" / name / "int8.onnx"
             try:
-                benchmark(root, model, threshold)
+                benchmark(root, model, threshold, quality_first=True)
                 if (root / ".campaign-machine").is_file():
                     benchmark_volume(root, model, threshold)
                 _run_sync(root)
@@ -517,5 +517,5 @@ def command(args):
             threshold = args.threshold
             if threshold is None:
                 threshold = json.loads(args.model.with_name("export.json").read_text())["threshold"]
-            benchmark(root, args.model, threshold, split=args.split, samples=args.samples)
+            benchmark(root, args.model, threshold, split=args.split, samples=args.samples, quality_first=True)
     return 0

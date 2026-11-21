@@ -101,7 +101,10 @@ but not redistribution.
    validation at up to 5% false completes, then by AUC on the same rows.
    Pooled clean validation scores break ties. The final ONNX threshold is
    fitted to AMI telephone validation. The pooled float-to-int8 AUC
-   tolerance remains the export check.
+   tolerance remains the export check. The benchmark computes turn quality
+   before CPU latency. It measures latency only when the held-out telephone
+   conversations reach at least 80% recall with no more than 5% false
+   completes at 300 ms. Deferred latency is recorded as an open gate.
    Each job runs in the tmux session `vxpipe`, logs under
    `$REMOTE_DATA/logs/`, and records its exit status under
    `$REMOTE_DATA/jobs/`. The watcher logs estimates, stalls and step

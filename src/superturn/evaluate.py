@@ -221,8 +221,7 @@ def _acceptance(model_path, report):
         "artifact": {"passed": artifact_bytes <= 1_000_000 and parameters is not None
                      and 100_000 <= parameters <= 1_000_000,
                      "bytes": artifact_bytes, "parameters": parameters},
-        "cpu_p99": {"passed": report["latency_ms"]["p99"] < 2,
-                    "milliseconds": report["latency_ms"]["p99"]},
+        "cpu_p99": _cpu_acceptance(report["latency_ms"]),
         "conversation_telephone_300ms": {
             "passed": false_complete is not None and recall is not None and false_complete <= 0.05 and recall >= 0.8,
             **threshold_metrics,
@@ -236,7 +235,42 @@ def _acceptance(model_path, report):
     }
 
 
-def benchmark(root, model_path, threshold, *, split="test", samples=250, name=None):
+def _cpu_acceptance(latency):
+    if latency is None:
+        return {"passed": None, "milliseconds": None}
+    return {"passed": latency["p99"] < 2, "milliseconds": latency["p99"]}
+
+
+def _measure_latency(session, clips, samples, condition, name):
+    if not clips:
+        raise ValueError(f"no {condition} audio for the CPU latency benchmark")
+    for index in range(20):
+        _predict(session, *clips[index % len(clips)])
+    times = []
+    meter = Progress(f"latency-{name}", samples, "calls")
+    affinity = os.sched_getaffinity(0) if hasattr(os, "sched_getaffinity") else None
+    try:
+        if affinity:
+            os.sched_setaffinity(0, {min(affinity)})
+        for index in range(samples):
+            audio, gap = clips[index % len(clips)]
+            start = time.perf_counter_ns()
+            _predict(session, audio, gap)
+            times.append((time.perf_counter_ns() - start) / 1e6)
+            meter.advance(1)
+    except BaseException:
+        meter.finish("failed")
+        raise
+    else:
+        meter.finish()
+    finally:
+        if affinity:
+            os.sched_setaffinity(0, affinity)
+    return {**{f"p{p}": float(np.percentile(times, p)) for p in (50, 99)},
+            "samples": samples, "condition": condition, "input_clips": len(clips)}
+
+
+def benchmark(root, model_path, threshold, *, split="test", samples=250, name=None, quality_first=False):
     import pyarrow.parquet as pq
 
     if samples < 1:
@@ -250,7 +284,8 @@ def benchmark(root, model_path, threshold, *, split="test", samples=250, name=No
                 for files in work.values() for path in files)
     if not total:
         raise ValueError(f"no {split} benchmark examples")
-    meter = Progress(f"benchmark-{name or model_path.parent.name}", total + samples, "items")
+    run_name = name or model_path.parent.name
+    meter = Progress(f"benchmark-{run_name}", total, "items")
     groups = defaultdict(list)
     latency_inputs = []
     latency_condition = "telephone" if split == "test" else "clean"
@@ -281,50 +316,35 @@ def benchmark(root, model_path, threshold, *, split="test", samples=250, name=No
                     for key in keys:
                         groups[key].append(example)
 
-        if not latency_inputs:
-            raise ValueError(f"no {latency_condition} audio for the CPU latency benchmark")
-        for index in range(20):
-            audio, gap = latency_inputs[index % len(latency_inputs)]
-            _predict(session, audio, gap)
-        times = []
-        previous_affinity = os.sched_getaffinity(0) if hasattr(os, "sched_getaffinity") else None
-        if previous_affinity:
-            os.sched_setaffinity(0, {min(previous_affinity)})
-        try:
-            for index in range(samples):
-                audio, gap = latency_inputs[index % len(latency_inputs)]
-                start = time.perf_counter_ns()
-                _predict(session, audio, gap)
-                times.append((time.perf_counter_ns() - start) / 1e6)
-                meter.advance(1)
-        finally:
-            if previous_affinity:
-                os.sched_setaffinity(0, previous_affinity)
-
         if threshold is None:
             if split != "validation":
                 raise ValueError("threshold selection requires validation data")
             usable = [row for row in groups["all", "all", "clean"] if row[0] >= 300]
             threshold = _threshold([row[2][DECISIONS.index(300)] for row in usable],
                                    [row[1] for row in usable])
-        destination = root / "reports" / (name or model_path.parent.name)
+        destination = root / "reports" / run_name
         destination.mkdir(parents=True, exist_ok=True)
         report = {"threshold": threshold, "split": split,
-                  "latency_ms": {**{f"p{p}": float(np.percentile(times, p)) for p in (50, 99)},
-                                 "samples": samples, "condition": latency_condition,
-                                 "input_clips": len(latency_inputs)},
+                  "latency_ms": None,
                   "groups": [{"source": s, "language": lang, "condition": c, **_summarize(rows, threshold)}
                              for (s, lang, c), rows in sorted(groups.items())]}
         if split == "test":
             report["acceptance"] = _acceptance(model_path, report)
+        checks = report.get("acceptance", {})
+        if not quality_first or checks.get("conversation_telephone_300ms", {}).get("passed"):
+            report["latency_ms"] = _measure_latency(session, latency_inputs, samples, latency_condition, run_name)
+        if "cpu_p99" in checks:
+            checks["cpu_p99"] = _cpu_acceptance(report["latency_ms"])
         (destination / "metrics.json").write_text(json.dumps(report, indent=2) + "\n")
 
         def percentage(value):
             return "—" if value is None else f"{value:.1%}"
 
+        latency = report["latency_ms"]
+        timing = (f"CPU p50 {latency['p50']:.2f} ms, p99 {latency['p99']:.2f} ms." if latency else
+                  "CPU latency deferred pending the telephone conversation quality target.")
         lines = ["# Superturn benchmark", "",
-                 f"Split `{split}` at threshold {threshold:.4f}. CPU p50 {report['latency_ms']['p50']:.2f} ms, "
-                 f"p99 {report['latency_ms']['p99']:.2f} ms.", "",
+                 f"Split `{split}` at threshold {threshold:.4f}. {timing}", "",
                  "| Source | Language | Condition | Pause (ms) | Holds | Shifts | False complete | Recall | AUC |",
                  "|---|---|---|---:|---:|---:|---:|---:|---:|"]
         for row in report["groups"]:
