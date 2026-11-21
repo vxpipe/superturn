@@ -145,7 +145,7 @@ def evaluate(scores, truth, callers, agents):
     detail = []
     for index, voice in enumerate(voices):
         selected = caller == index
-        row = {"caller": voice, "fold": int(assignments[index])}
+        row = {"caller": int(voice), "fold": int(assignments[index])}
         for label, name in ((0, "false_cutoff"), (1, "true_shift")):
             marked = decision[selected & (truth == label)]
             row[name] = {"total": len(marked), "hits": marked.sum(axis=0).tolist(),
