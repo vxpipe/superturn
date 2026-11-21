@@ -3,7 +3,7 @@
 # data/campaigns/<instance>/: reports, logs, download manifests, run metrics,
 # checkpoints, ONNX exports and pause labels (no audio). Use --results-only
 # to skip the potentially large pause labels. Use --stage-one for only the
-# completed architecture/size checkpoints and validation reports. Safe to rerun.
+# architecture/size checkpoints and validation reports. Safe to rerun.
 source "$(dirname "$0")/_lib.sh"
 dirs=(reports logs manifests runs exports)
 case "${1:-}" in
@@ -20,19 +20,24 @@ mapfile -t opts < <(ssh_opts)
 if [[ "${1:-}" == "--stage-one" ]]; then
   filters=(
     --include '/runs/'
-    --include '/runs/s1-*/'
-    --include '/runs/s1-*/best.pt'
-    --include '/runs/s1-*/finished.json'
-    --include '/runs/s1-*/metrics.json'
     --include '/reports/'
-    --include '/reports/s1-*-float-ami-validation/'
-    --include '/reports/s1-*-float-ami-validation/metrics.json'
     --include '/reports/experiments/'
     --include '/reports/experiments/stage1-ranking.json'
     --include '/reports/experiments/stage1-queue.json'
     --include '/reports/stage1-eot-domain-probe.json'
-    --exclude '*'
   )
+  for architecture in a b; do
+    for size in 150000 500000 1000000; do
+      for seed in 17 29; do
+        run="s1-$architecture-$size-$seed"
+        filters+=(--include "/runs/$run/" --include "/runs/$run/best.pt" \
+                  --include "/runs/$run/finished.json" --include "/runs/$run/metrics.json" \
+                  --include "/reports/$run-float-ami-validation/" \
+                  --include "/reports/$run-float-ami-validation/metrics.json")
+      done
+    done
+  done
+  filters+=(--exclude '*')
   planned=$(LC_ALL=C rsync -az --dry-run --stats -e "ssh ${opts[*]}" "${filters[@]}" \
     "$SSH_HOST:$REMOTE_DATA/" "$dest/" | awk '/^Total transferred file size: / {gsub(/,/, "", $5); print $5}')
   [[ "$planned" =~ ^[0-9]+$ && "$planned" -le 200000000 ]] ||
