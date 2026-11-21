@@ -51,7 +51,11 @@ Raw downloads, labels, shards and test copies are kept in persistent storage
 under one project directory, `<bucket>/superturn/<dir>` (`raw`, `labels`,
 `shards`, `tests`, `runs`, `reports`, `logs`, `manifests`); `bin/sync` only
 copies, never deletes. `bin/vast-down` pushes them with `bin/sync push` before it
-destroys the machine; a later campaign runs `bin/sync pull` after bootstrap.
+destroys the machine; `bin/vast-up` runs `bin/sync pull` right after bootstrap, so a later campaign
+starts from them. Syncing is only ever between the campaign machine and the
+bucket: `bin/sync` refuses to run on any machine `bin/vast-bootstrap` has not
+marked, so nothing large crosses the local connection. Only results come
+here, with `bin/vast-fetch`.
 This guards against a source being changed, gated or withdrawn and saves the
 download and labelling hours. Expected size: about 18 GB raw plus 15–40 GB
 derived. The bucket must stay private: some sources' terms (Emilia) allow use

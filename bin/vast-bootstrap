@@ -10,6 +10,8 @@ apt-get install -y -qq ffmpeg tmux rsync curl ca-certificates unzip >/dev/null
 command -v rclone >/dev/null || curl -fsSL https://rclone.org/install.sh | bash >/dev/null
 bin/setup
 mkdir -p "$REMOTE_DATA/logs"
+# Marks this as the campaign machine; bin/sync refuses to run anywhere else.
+touch "$REMOTE_DATA/.campaign-machine"
 grep -q SUPERTURN_DATA ~/.bashrc 2>/dev/null || echo "export SUPERTURN_DATA=$REMOTE_DATA" >> ~/.bashrc
 df -h "$REMOTE_DATA" | tail -1
 nproc; nvidia-smi -L || true

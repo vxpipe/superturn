@@ -8,6 +8,9 @@
 # superturn/ in that bucket, so it never mixes with other projects' files:
 # store:<bucket>/superturn/<dir>. Only rclone copy is used, never sync, so
 # nothing in the bucket is ever deleted by this script.
+# Runs only on the campaign machine (marked by bin/vast-bootstrap): storage is
+# synced between vast.ai and the bucket, never with a local computer. Results
+# come here with bin/vast-fetch instead.
 # Raw downloads keep their per-file markers, so bin/download skips them after
 # a pull.
 set -euo pipefail
@@ -15,6 +18,8 @@ cd "$(dirname "$0")/.."
 [[ -f .env ]] && { set -a; source .env; set +a; }
 : "${SUPERTURN_DATA:?set SUPERTURN_DATA}"
 : "${SUPERTURN_REMOTE:?set SUPERTURN_REMOTE in .env}"
+[[ -f "$SUPERTURN_DATA/.campaign-machine" ]] ||
+  { echo "error: bin/sync runs only on the campaign machine (bin/vast-bootstrap marks it); use bin/vast-fetch for results here" >&2; exit 2; }
 
 BUCKET_DIR=superturn
 [[ "$SUPERTURN_REMOTE" =~ ^[A-Za-z0-9_-]+:[A-Za-z0-9._-]+/?$ ]] ||

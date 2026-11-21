@@ -17,4 +17,8 @@ done
 sleep 20   # let sshd come up
 "$ROOT/bin/vast-push"
 remote "bash $REMOTE_REPO/bin/vast-bootstrap"
+if [[ -n "${SUPERTURN_REMOTE:-}" ]]; then
+  echo "pulling stored data from $SUPERTURN_REMOTE/superturn/ (empty on the first campaign)"
+  remote "cd $REMOTE_REPO && export SUPERTURN_DATA=$REMOTE_DATA && bin/sync pull" || die "pull from storage failed; instance $id kept"
+fi
 echo "instance $id ready. Next: bin/vast-run 'bin/download --sample' (smoke test)"
