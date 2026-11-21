@@ -117,7 +117,7 @@ def score_locked(root, expected_sha):
         agree(previous, labels, groups, language)
         agree(width_rows[language], labels, groups, language)
         truth = np.asarray(labels)
-        language_metrics[language] = {name: recall_area(np.asarray(values), truth)[:3]
+        language_metrics[language] = {name: recall_area(np.asarray(values), truth)
                                       for name, values in row["scores"].items()}
         failure[language] = failure_comparison(
             {TEACHER: previous["scores"][TEACHER], "chosen": row["scores"][chosen],
@@ -136,18 +136,18 @@ def score_locked(root, expected_sha):
     chosen_gain = macro[chosen] - float(outcomes.mean())
     schedule = paired_seed_turns(rows, selected, early)
     fixed_schedule = paired_seed_turns(rows, final, early)
-    english = language_metrics["en"]
+    english = {name: float(values[:3].mean()) for name, values in language_metrics["en"].items()}
     truth = np.asarray(rows["en"]["labels"])
     archived_english = np.mean([recall_area(np.asarray(width_rows["en"]["scores"][model_name(1_000_000, seed)]),
-                                           truth)[0] for seed in SEEDS])
-    english_epoch10 = float(np.mean([english[name][0] for name in early]))
-    english_selected = float(np.mean([english[name][0] for name in selected]))
-    english_final = float(np.mean([english[name][0] for name in final]))
+                                           truth)[:3].mean() for seed in SEEDS])
+    english_epoch10 = float(np.mean([english[name] for name in early]))
+    english_selected = float(np.mean([english[name] for name in selected]))
+    english_final = float(np.mean([english[name] for name in final]))
 
     def selector_passes(stats, gain, name):
         return bool(stats["spearman"] is not None and stats["spearman"] >= .83
                     and stats["one_sided_exact_p"] < .05 and gain >= .01
-                    and english[name][0] - archived_english >= -.01)
+                    and english[name] - archived_english >= -.01)
 
     gates = {
         "epoch10_selector_replication": selector_passes(early_evidence, early_gain, early_chosen),
@@ -165,10 +165,13 @@ def score_locked(root, expected_sha):
               "epoch10_fidelity": early_evidence, "epoch10_chosen": early_chosen,
               "epoch10_chosen_gain_vs_seed_mean": early_gain, "fixed_schedule": fixed_schedule,
               "selected_epoch_by_seed": {seed: fit["selected"]["epoch"] for seed, fit in lock["fits"].items()},
-              "english_3_budget_recall": {"chosen": english[chosen][0], "archived_seed_mean": archived_english,
+              "english_3_budget_recall": {"chosen": english[chosen], "archived_seed_mean": archived_english,
                                           "epoch10_seed_mean": english_epoch10, "epoch20_seed_mean": english_final,
-                                          "epoch10_chosen": english[early_chosen][0], "selected_seed_mean": english_selected},
-              "gates": gates, "matched_5_macro": macro, "language_metrics": language_metrics,
+                                          "epoch10_chosen": english[early_chosen], "selected_seed_mean": english_selected},
+              "gates": gates, "primary_passes": gates["extended_schedule_selector"] and gates["fidelity_selected_longer_schedule"],
+              "matched_5_macro": macro,
+              "language_metrics": {language: {name: values.tolist() for name, values in metrics.items()}
+                                   for language, metrics in language_metrics.items()},
               "failure_strata": failure, "paired_scores": artifact(root, path)}
     _write_json(root / "reports" / f"{TRIAL}.json", result)
     print(json.dumps({key: result[key] for key in ("gates", "epoch10_fidelity", "selected_fidelity",
