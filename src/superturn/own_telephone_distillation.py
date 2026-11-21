@@ -24,6 +24,7 @@ from .own_telephone_targets import HISTORY_BINS, render
 from .shards import seed_for
 from .sources import data_root
 from .turn1_mini_probe import english_rows, harper_rows
+from .vxpipe_policy_probe import operating_points
 from .wav2vec_harper_probe import extract, pause_rows, rates
 
 ARMS = ("replay", "caller", "emilia", "shuffle", "emilia-rank")
@@ -197,16 +198,60 @@ def fit_fidelity(root):
     print(json.dumps(report, indent=2))
 
 
+def held_crossings(root):
+    if not (root / ".campaign-machine").is_file():
+        raise ValueError("the held ranking replay uses staged Vast audio")
+    report, digest = read_receipt(root, "own-telephone-distillation")
+    clips, labels, _ = zip(*pause_rows(harper_rows(root, native_prefix=True)), strict=True)
+    audio, truth = np.stack(clips), np.asarray(labels, dtype=bool)
+    result = {}
+    entered_seeds = np.zeros(len(truth), dtype=int)
+    for seed in SEEDS:
+        decisions, thresholds = {}, {}
+        for arm in ("replay", "caller"):
+            key = f"{arm}-{seed}"
+            fit = report["fits"][key]
+            state = torch.load(read_verified(root, fit["checkpoint"]), map_location="cpu", weights_only=True)
+            model = build(state["config"]).to(DEVICE).eval()
+            model.load_state_dict(state["state"])
+            scores = student_scores(model, audio)
+            _, _, cutoffs, true_hits, false_hits = operating_points(scores, truth)
+            position = np.flatnonzero(false_hits <= .05 * (~truth).sum())[-1]
+            recall = true_hits[position] / truth.sum()
+            if recall != report["metrics"]["harper"][key]["recalls_at_2_5_5_7_5pct"][1]:
+                raise ValueError("the held matched operating point changed")
+            thresholds[arm] = float(cutoffs[position]) if np.isfinite(cutoffs[position]) else None
+            decisions[arm] = scores >= cutoffs[position]
+        replay, caller = decisions["replay"], decisions["caller"]
+        entered = caller & ~replay & ~truth
+        entered_seeds += entered
+        result[seed] = {"thresholds": thresholds,
+                        "hold_crossed_up": int(entered.sum()),
+                        "hold_crossed_down": int((replay & ~caller & ~truth).sum()),
+                        "holds_above_both": int((replay & caller & ~truth).sum()),
+                        "shift_crossed_up": int((caller & ~replay & truth).sum()),
+                        "shift_crossed_down": int((replay & ~caller & truth).sum())}
+    output = {"scope": "held Harper retrospective decisions at each model's matched-5% cutoff",
+              "training_report_sha256": digest, "holds": int((~truth).sum()), "shifts": int(truth.sum()),
+              "crossings": result, "holds_entering_by_seed_count": {
+                  str(count): int(np.sum((~truth) & (entered_seeds == count))) for count in range(1, len(SEEDS) + 1)}}
+    _write_json(root / "reports/own-telephone-held-crossings.json", output)
+    print(json.dumps(output, indent=2))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--held-fidelity", action="store_true")
     mode.add_argument("--fit-fidelity", action="store_true")
+    mode.add_argument("--held-crossings", action="store_true")
     args = parser.parse_args()
     torch.set_num_threads(2)
     if args.held_fidelity:
         held_fidelity(data_root())
     elif args.fit_fidelity:
         fit_fidelity(data_root())
+    elif args.held_crossings:
+        held_crossings(data_root())
     else:
         print(json.dumps(run(data_root())["summary"], indent=2))
