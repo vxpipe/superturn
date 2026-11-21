@@ -111,7 +111,7 @@ def render(pcm, edge):
     return recent, full, normalize(pcm[stop:stop + STEP])
 
 
-def english_rows(root):
+def english_spans(root):
     path = root / "raw/livekit_eot_diagnostic/data/en/validation-00000-of-00002.parquet"
     if file_digest(path) != DATASET_SHA256:
         raise ValueError("English comparison shard changed")
@@ -128,7 +128,12 @@ def english_rows(root):
                 continue
             if span["label"] not in {"eot", "hold"}:
                 raise ValueError("unexpected benchmark label")
-            yield pcm, edge, int(span["label"] == "eot"), group
+            yield pcm, edge, end, int(span["label"] == "eot"), group
+
+
+def english_rows(root):
+    for pcm, edge, _, truth, group in english_spans(root):
+        yield pcm, edge, truth, group
 
 
 def harper_rows(root, *, native_prefix=False):

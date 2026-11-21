@@ -46,6 +46,34 @@ def select(source_report):
     return chosen
 
 
+def pair_members(index, design, session, task, pair):
+    for track, (speaker, members) in enumerate(sorted(pair["speakers"].items()), start=1):
+        for fmt, entry in sorted(members.items()):
+            yield {"pair": index, "track": track, "design": design, "file": f"pair-{index}-track-{track}.{fmt}",
+                   "speaker": speaker, "session": session, "task": task, "bytes": entry["bytes"],
+                   "archive_position": entry["byte_offset"]}
+
+
+def verify_stage(root):
+    report = root / "reports/nsc-part6-preflight.json"
+    if file_digest(report) != HEADER_REPORT:
+        raise ValueError("archive header report differs from the verified receipt")
+    desired = [row for index, (_, design, session, task, pair) in enumerate(select(json.loads(report.read_text())), 1)
+               for row in pair_members(index, design, session, task, pair)]
+    directory = root / "raw" / SOURCE
+    data = json.loads((directory / "MANIFEST.json").read_text())
+    expected_provenance = {"preflight_sha256": HEADER_REPORT, "revision": REVISION, "source": SOURCE,
+                           "repo": REPO, "license": LICENCE}
+    if any(data.get(key) != value for key, value in expected_provenance.items()) or len(data["files"]) != len(desired):
+        raise ValueError("staged recording manifest differs from the verified pair selection")
+    for actual, expected in zip(data["files"], desired, strict=True):
+        path = directory / expected["file"]
+        if (any(actual.get(key) != value for key, value in expected.items())
+                or path.stat().st_size != expected["bytes"] or file_digest(path) != actual["sha256"]):
+            raise ValueError("staged recording differs from its selected member or digest")
+    return data
+
+
 def stage(root):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("the recording pilot is restricted to the campaign machine")
@@ -58,12 +86,9 @@ def stage(root):
     directory = root / "raw" / SOURCE
     manifest = directory / "MANIFEST.json"
     if manifest.is_file():
-        data = json.loads(manifest.read_text())
-        if (data["preflight_sha256"] != HEADER_REPORT or data["revision"] != REVISION
-                or len(data["files"]) != 8 or sum(row["bytes"] for row in data["files"]) != PAYLOAD_BYTES
-                or any(file_digest(directory / row["file"]) != row["sha256"] for row in data["files"])):
-            raise ValueError("staged recording manifest failed verification")
-        return data
+        return verify_stage(root)
+    if directory.exists() and any(directory.iterdir()):
+        raise ValueError("recording acquisition was interrupted before verification")
     existing = sum(path.stat().st_size for path in (root / "raw").rglob("*") if path.is_file())
     if existing + TRANSFER_LIMIT > budget_bytes():
         raise ValueError("the two-pair pilot exceeds the approved acquisition budget")
@@ -80,26 +105,24 @@ def stage(root):
             if [list(row) for row in fragments] != review["designs"][design]["fragments"]:
                 raise ValueError("fragment inventory differs from the reviewed manifest")
             reader = RangeReader(fragments, byte_limit=size + 8193, request_limit=24)
-            for track, (speaker, members) in enumerate(sorted(pair["speakers"].items()), start=1):
-                for fmt, entry in sorted(members.items()):
-                    position, count = entry["byte_offset"], entry["bytes"]
-                    if position < BLOCK or position % BLOCK or count <= 0:
-                        raise ValueError("invalid staged member range")
-                    header = tarfile.TarInfo.frombuf(reader.read(position - BLOCK, BLOCK), "utf-8", "strict")
-                    name = f"SE{session}-Pt{task}-SP{speaker}.{fmt}"
-                    if (header.name.rsplit("/", 1)[-1], header.size, header.type) != (name, count, tarfile.REGTYPE):
-                        raise ValueError("archive member does not reproduce the paired header")
-                    content = reader.read(position, count)
-                    if fmt == "flac" and not content.startswith(b"fLaC"):
-                        raise ValueError("the advertised track does not contain a native FLAC stream")
-                    path = directory / f"pair-{index}-track-{track}.{fmt}"
-                    temporary = path.with_suffix(".tmp")
-                    temporary.write_bytes(content)
-                    temporary.replace(path)
-                    files.append({"pair": index, "track": track, "design": design, "file": path.name,
-                                  "speaker": speaker, "session": session, "task": task, "bytes": count,
-                                  "archive_position": position, "sha256": file_digest(path)})
-                    meter.advance(count)
+            for row in pair_members(index, design, session, task, pair):
+                position, count = row["archive_position"], row["bytes"]
+                if position < BLOCK or position % BLOCK or count <= 0:
+                    raise ValueError("invalid staged member range")
+                fmt = row["file"].rsplit(".", 1)[-1]
+                header = tarfile.TarInfo.frombuf(reader.read(position - BLOCK, BLOCK), "utf-8", "strict")
+                name = f"SE{session}-Pt{task}-SP{row['speaker']}.{fmt}"
+                if (header.name.rsplit("/", 1)[-1], header.size, header.type) != (name, count, tarfile.REGTYPE):
+                    raise ValueError("archive member does not reproduce the paired header")
+                content = reader.read(position, count)
+                if fmt == "flac" and not content.startswith(b"fLaC"):
+                    raise ValueError("the advertised track does not contain a native FLAC stream")
+                path = directory / row["file"]
+                temporary = path.with_suffix(".tmp")
+                temporary.write_bytes(content)
+                temporary.replace(path)
+                files.append({**row, "sha256": file_digest(path)})
+                meter.advance(count)
             pulled += reader.bytes
         if pulled > TRANSFER_LIMIT:
             raise ValueError("archive response bodies exceeded the recording-pilot cap")
