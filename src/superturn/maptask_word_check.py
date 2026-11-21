@@ -21,7 +21,7 @@ ACKNOWLEDGMENTS = {"okay", "ok", "right", "yeah", "yes", "uhhuh", "mhm", "mmhmm"
 
 
 def words_for(model, signal):
-    words, counts = [], Counter()
+    words, uncertain, counts = [], [], Counter()
     for index, pcm in enumerate(signal):
         result = model.transcribe(normalize(pcm), language="en", word_timestamps=True,
                                   condition_on_previous_text=False, temperature=0)
@@ -29,29 +29,38 @@ def words_for(model, signal):
             for word in segment.get("words", ()):
                 start, end = (round(word[key] * RATE) for key in ("start", "end"))
                 token = re.sub(r"[^a-z]", "", word["word"].lower())
-                if not token or word["probability"] < 0.3 or not 0 <= start < end <= len(pcm):
-                    counts["invalid_or_low_confidence"] += 1
+                if not token or not 0 <= start < end <= len(pcm):
+                    counts["invalid"] += 1
                     continue
                 own, other = (_peak(track, start, end) for track in (pcm, signal[1 - index]))
                 if own < max(128, 1.414 * other):
                     counts["weak_or_nondominant"] += 1
                     continue
-                words.append((Speech(str(index), start, end), token))
+                span = Speech(str(index), start, end)
+                if word["probability"] < 0.3:
+                    counts["uncertain_confidence"] += 1
+                    uncertain.append(span)
+                else:
+                    words.append((span, token))
     retained = []
     for word, token in words:
-        duplicate = any(other.speaker != word.speaker and token == text
-                        and max(word.start, other.start) < min(word.end, other.end)
-                        for other, text in words)
-        if duplicate:
-            slot = int(word.speaker)
-            if _peak(signal[slot], word.start, word.end) <= _peak(signal[1 - slot], word.start, word.end):
-                counts["duplicate_spill"] += 1
-                continue
-        retained.append((word, token))
-    return retained, counts
+        peers = [(max(word.start, other.start), min(word.end, other.end))
+                 for other, text in words if other.speaker != word.speaker and token == text
+                 and max(word.start, other.start) < min(word.end, other.end)]
+        slot = int(word.speaker)
+        levels = [(_peak(signal[slot], start, end), _peak(signal[1 - slot], start, end))
+                  for start, end in peers]
+        if all(own >= 1.414 * max(1.0, other) for own, other in levels):
+            retained.append((word, token))
+        elif any(other >= 1.414 * max(1.0, own) for own, other in levels):
+            counts["duplicate_spill"] += 1
+        else:
+            counts["uncertain_duplicate"] += 1
+            uncertain.append(word)
+    return retained, uncertain, counts
 
 
-def check(candidates, words):
+def check(candidates, words, uncertain=()):
     spans = group_words(s for s, _ in words)
     by_class = {"hold": Counter(), "shift": Counter()}
     errors, matched_word_edges, cases = [], set(), []
@@ -80,7 +89,10 @@ def check(candidates, words):
                 matched_word_edges.add((caller.speaker, end, next_span.start))
                 tokens = [token for word, token in words if word.speaker == next_span.speaker
                           and next_span.start <= word.start < next_span.end]
-                if next_span.speaker != first.speaker:
+                if any(span.end > caller.end and span.start < max(caller.end + GAP, next_span.start)
+                       for span in uncertain):
+                    outcome = "uncertain_intervening_word"
+                elif next_span.speaker != first.speaker:
                     outcome = "next_channel_conflict"
                 elif end > caller.end or any(span.end > caller.end and span.start < caller.end + GAP for span in spans):
                     outcome = "window_silence_unconfirmed"
@@ -126,24 +138,30 @@ def run(root):
             acoustic = analyze(signal, detect, candidates=candidates)
             if acoustic["preliminary_dominant_pauses"] != manifest["files"][name]["preliminary_dominant_pauses"]:
                 raise ValueError("screened Silero candidates do not reproduce")
-            words, dropped = words_for(model, signal)
-            summary, deviations = check(candidates, words)
+            words, uncertain, dropped = words_for(model, signal)
+            summary, deviations = check(candidates, words, uncertain)
             results[name] = {**summary, "retained_words": len(words), "dropped_words": dropped}
             errors.extend(deviations)
             meter.advance(1)
-        totals = Counter()
+        totals, class_counts = Counter(), {"hold": Counter(), "shift": Counter()}
         for row in results.values():
-            for group in row["by_class"].values():
+            for label, group in row["by_class"].items():
                 totals.update(group)
-        comparable = sum(totals[key] for key in ("supported", "label_conflict", "next_channel_conflict"))
+                class_counts[label].update(group)
+        compared_outcomes = ("supported", "label_conflict", "next_channel_conflict")
+        comparable_by_class = {label: sum(counts[key] for key in compared_outcomes)
+                               for label, counts in class_counts.items()}
+        comparable = sum(comparable_by_class.values())
         agreement = totals["supported"] / comparable if comparable else None
         median = float(np.median(errors)) if errors else None
         iqr = float(np.quantile(errors, .75) - np.quantile(errors, .25)) if errors else None
         report = {"method": "independent word timing and channel screening, not semantic labels",
                   "acoustic_report_sha256": file_digest(previous), "whisper_sha256": file_digest(checkpoint),
                   "word_end_delta_ms": {"count": len(errors), "median": median, "iqr": iqr},
-                  "matched_label_agreement": agreement, "comparable_cases": comparable, "outcomes": totals,
-                  "engineering_pass": bool(agreement is not None and agreement >= .7 and comparable >= 10
+                  "matched_label_agreement": agreement, "comparable_cases": comparable,
+                  "comparable_by_class": comparable_by_class, "outcomes": totals,
+                  "engineering_pass": bool(agreement is not None and agreement >= .7
+                                           and min(comparable_by_class.values()) >= 5
                                            and abs(median) <= 80 and iqr <= 160
                                            and totals["next_channel_conflict"] <= 1),
                   "files": results}

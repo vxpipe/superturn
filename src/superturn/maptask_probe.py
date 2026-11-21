@@ -9,7 +9,6 @@ import struct
 import wave
 
 import numpy as np
-from scipy.signal import resample_poly
 
 from .acquire import _request, parse_wav_header, wav_bytes
 from .ami_calibration import _write_json
@@ -38,6 +37,8 @@ def read_range(url, start, count):
 
 
 def stage(folder, name):
+    from scipy.signal import resample_poly
+
     path = folder / name
     if not path.is_file():
         url = BASE + name
