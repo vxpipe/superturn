@@ -21,7 +21,7 @@
 # role: train-conversation | train-read | train-spontaneous | test | noise | reverb | metadata
 # `sample_*` keys select the small subset used by the on-machine smoke test.
 
-budget_gb = 20
+budget_gb = 25
 
 [sources.ami]
 kind = "wav_slices"

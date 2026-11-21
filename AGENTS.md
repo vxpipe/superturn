@@ -105,7 +105,7 @@ full runbook.
   `superturn` subcommand, committed to the repo: setup, downloads, campaign
   machine provisioning, labelling, training, export, benchmarks, syncing. Do
   not rely on ad hoc commands typed on a machine.
-- Downloads are capped at 20 GB in total (`budget_gb` in
+- Downloads are capped at 25 GB in total (`budget_gb` in
   `configs/sources.toml`). Fetch only the parts of a dataset that are used
   (time slices, parquet row groups, partial archive streams), never whole
   archives for a slice of them. Grow a source only when an experiment shows
