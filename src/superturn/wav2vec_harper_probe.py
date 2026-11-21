@@ -29,6 +29,7 @@ from .turn1_mini_probe import english_rows, harper_rows, upsample_prefix
 SEEDS = (17, 29, 43)
 PENALTIES = (.01, .05, .25)
 BUNDLE = "wav2vec2_fairseq_base_ls960.pth"
+CHECKPOINT_SHA256 = "1275f890a623b31b9915295dc01d5049c93dc6de8813406c16dfab9b6bd36056"
 AMI = "bed0ba3de027429f"
 
 
@@ -150,7 +151,7 @@ def fit(features, truth, training, evaluation, penalty, seed):
         return logits((other - center) / scale).numpy(), layer.softmax(0).tolist()
 
 
-def fit_arm(features, truth, splits, caller_folds):
+def fit_arm(features, truth, splits, caller_folds, meter):
     train = splits["train"]
     search = {}
     for penalty in PENALTIES:
@@ -158,12 +159,16 @@ def fit_arm(features, truth, splits, caller_folds):
         for fold in range(5):
             held = caller_folds == fold
             score[held], _ = fit(features, truth, train[~held], train[held], penalty, 17)
+            meter.advance(1)
         if not np.isfinite(score).all():
             raise ValueError("incomplete held-caller head selection")
         search[penalty] = (recall_area(score, truth[train])[-1], score)
     penalty = max(PENALTIES, key=lambda value: search[value][0])
     evaluation = np.concatenate([indices for name, indices in splits.items() if name != "train"])
-    repeats = [fit(features, truth, train, evaluation, penalty, seed) for seed in (17, 29, 43, 53, 71)]
+    repeats = []
+    for seed in (17, 29, 43, 53, 71):
+        repeats.append(fit(features, truth, train, evaluation, penalty, seed))
+        meter.advance(1)
     weight = np.mean([weights for _, weights in repeats], axis=0)
     score = np.full(len(truth), np.nan)
     score[train] = expit(search[penalty][1])
@@ -205,10 +210,14 @@ def run(root):
         raise ValueError("unexpected encoder bundle")
     folder = root / "cache/wav2vec2-harper"
     folder.mkdir(parents=True, exist_ok=True)
-    pretrained = bundle.get_model(dl_kwargs={"model_dir": str(folder), "map_location": "cpu", "weights_only": True})
     checkpoint = folder / BUNDLE
-    if checkpoint.stat().st_size != 377565405:
-        raise ValueError("unexpected publisher checkpoint size")
+    if not checkpoint.is_file():
+        url = "https://download.pytorch.org/torchaudio/models/" + BUNDLE
+        torch.hub.download_url_to_file(url, checkpoint, hash_prefix=CHECKPOINT_SHA256)
+    if checkpoint.stat().st_size != 377565405 or file_digest(checkpoint) != CHECKPOINT_SHA256:
+        raise ValueError("unexpected publisher checkpoint")
+    pretrained = torchaudio.models.wav2vec2_model(**bundle._params)
+    pretrained.load_state_dict(torch.load(checkpoint, map_location="cpu", weights_only=True))
     voice, caller = np.unique(groups["train"], return_inverse=True)
     load, assignment = np.zeros(5, dtype=int), np.zeros(len(voice), dtype=int)
     weights = np.bincount(caller)
@@ -231,7 +240,14 @@ def run(root):
             model = model.to("cuda").eval()
             predict = lambda audio: speech_features(model, audio)
         features = extract(name, predict, clips)
-        scores[name], heads[name] = fit_arm(features, truth, splits, folds)
+        meter = Progress(f"wav2vec-head-{name}", 5 * len(PENALTIES) + 5, "fits")
+        try:
+            scores[name], heads[name] = fit_arm(features, truth, splits, folds, meter)
+        except BaseException:
+            meter.finish("failed")
+            raise
+        else:
+            meter.finish()
         heads[name]["pooled_features_sha256"] = hashlib.sha256(features.tobytes()).hexdigest()
         del features, model
     scores["random-mean"] = np.mean([scores[f"random-{seed}"] for seed in SEEDS], axis=0)
