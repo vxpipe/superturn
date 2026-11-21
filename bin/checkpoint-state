@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Capture a point-in-time control-state checkpoint on the campaign machine.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+[[ -f .env ]] && { set -a; source .env; set +a; }
+: "${SUPERTURN_DATA:?set SUPERTURN_DATA}"
+: "${SUPERTURN_REMOTE:?set SUPERTURN_REMOTE in .env}"
+[[ -f "$SUPERTURN_DATA/.campaign-machine" ]] || { echo "checkpoint-state runs only on Vast" >&2; exit 2; }
+[[ "$SUPERTURN_REMOTE" =~ ^[A-Za-z0-9_-]+:[A-Za-z0-9._-]+/?$ ]] || exit 2
+project_revision="${1:?usage: checkpoint-state PROJECT_SHA NOTES_SHA}"
+notes_revision="${2:?usage: checkpoint-state PROJECT_SHA NOTES_SHA}"
+[[ "$project_revision" =~ ^[0-9a-f]{40}$ && "$notes_revision" =~ ^[0-9a-f]{40}$ ]] || exit 2
+snapshot_id="$(date -u +%Y%m%dT%H%M%SZ)-${project_revision:0:8}"
+snapshot="$SUPERTURN_DATA/resume/$snapshot_id"
+mkdir -p "$(dirname "$snapshot")"
+mkdir "$snapshot"
+
+uv run --no-sync python - "$SUPERTURN_DATA" "$snapshot" "$project_revision" "$notes_revision" <<'PY'
+from collections import Counter
+from datetime import datetime, timezone
+import hashlib
+import io
+import json
+from pathlib import Path
+import re
+import sys
+import tarfile
+
+root, output = map(Path, sys.argv[1:3])
+state_dirs = ("reports", "jobs", "progress", "logs", "manifests")
+credentials = re.compile(rb"hf_[A-Za-z0-9]{24,}|AKIA[A-Z0-9]{16}|BEGIN [ A-Z]*PRIVATE KEY|X-Amz-Signature=")
+records = []
+omitted = Counter()
+archive = output / "state.tar.gz"
+with tarfile.open(archive, "w:gz") as tar:
+    for directory in state_dirs:
+        for path in sorted((root / directory).rglob("*")):
+            if not path.is_file() or path.is_symlink() or path.name.startswith(".") or path.suffix == ".tmp":
+                continue
+            try:
+                content = path.read_bytes()
+            except FileNotFoundError:
+                omitted["vanished_during_snapshot"] += 1
+                continue
+            if credentials.search(content):
+                omitted["potential_credentials"] += 1
+                continue
+            name = path.relative_to(root).as_posix()
+            member = tarfile.TarInfo(name)
+            member.size = len(content)
+            tar.addfile(member, io.BytesIO(content))
+            records.append({"path": name, "size": len(content), "sha256": hashlib.sha256(content).hexdigest()})
+with archive.open("rb") as stream:
+    digest = hashlib.file_digest(stream, "sha256").hexdigest()
+index = {"recorded_utc": datetime.now(timezone.utc).isoformat(),
+         "project_revision": sys.argv[3], "notes_revision": sys.argv[4],
+         "sha256": digest,
+         "files": records, "omitted": dict(omitted)}
+(output / "index.json").write_text(json.dumps(index, indent=2) + "\n")
+print(f"Archived {len(records)} state files; omitted {sum(omitted.values())}")
+PY
+
+target="${SUPERTURN_REMOTE%/}/superturn/resume/$snapshot_id"
+rclone copy --immutable "$snapshot" "$target"
+rclone check --download --one-way "$snapshot" "$target"
+printf 'Resume checkpoint verified %s\n' "$snapshot_id"
