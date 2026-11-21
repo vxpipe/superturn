@@ -111,8 +111,8 @@ def pooled(frames, stride, width, *, temporal=False):
     return torch.cat(parts, dim=-1)
 
 
-def speech_features(model, audio, *, temporal=False):
-    audio = F.layer_norm(audio, (SAMPLES,), eps=1e-7)
+def speech_features(model, audio, *, temporal=False, normalization_eps=1e-7):
+    audio = F.layer_norm(audio, (SAMPLES,), eps=normalization_eps)
     features, lengths = model.feature_extractor(audio, None)
     projection = model.encoder.feature_projection(features)
     layers = model.encoder.extract_features(features, lengths)
@@ -319,7 +319,7 @@ def temporal_report(root, features, truth, splits, folds, english_groups, report
     return report
 
 
-def run(root, *, temporal=False):
+def pinned_inputs(root):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("this diagnostic uses only staged Vast audio")
     cohorts = {"train": list(training_rows(root)),
@@ -337,6 +337,22 @@ def run(root, *, temporal=False):
         groups[name] = identifiers
         clips.extend(audio)
     truth, clips = np.asarray(truth), np.stack(clips).astype(np.float32)
+    return clips, truth, splits, groups
+
+
+def caller_folds(groups):
+    voice, caller = np.unique(groups, return_inverse=True)
+    load, assignment = np.zeros(5, dtype=int), np.zeros(len(voice), dtype=int)
+    weights = np.bincount(caller)
+    for index in np.argsort(-weights, kind="stable"):
+        fold = np.argmin(load)
+        assignment[index] = fold
+        load[fold] += weights[index]
+    return assignment[caller]
+
+
+def run(root, *, temporal=False):
+    clips, truth, splits, groups = pinned_inputs(root)
     bundle = torchaudio.pipelines.WAV2VEC2_BASE
     if torchaudio.__version__.split("+")[0] != "2.8.0" or bundle._path != BUNDLE or bundle.sample_rate != RATE:
         raise ValueError("unexpected encoder bundle")
@@ -352,14 +368,7 @@ def run(root, *, temporal=False):
         raise ValueError("unexpected publisher checkpoint")
     pretrained = torchaudio.models.wav2vec2_model(**bundle._params)
     pretrained.load_state_dict(torch.load(checkpoint, map_location="cpu", weights_only=True))
-    voice, caller = np.unique(groups["train"], return_inverse=True)
-    load, assignment = np.zeros(5, dtype=int), np.zeros(len(voice), dtype=int)
-    weights = np.bincount(caller)
-    for index in np.argsort(-weights, kind="stable"):
-        fold = np.argmin(load)
-        assignment[index] = fold
-        load[fold] += weights[index]
-    folds = assignment[caller]
+    folds = caller_folds(groups["train"])
     report = {"model_file": BUNDLE, "model_sha256": file_digest(checkpoint), "decision_ms": 300,
               "pcm_sha256": hashlib.sha256(clips.tobytes()).hexdigest(), "harper_train_sha256": MEMBERSHIP,
               "heads": {}, "cohorts": {}}

@@ -82,12 +82,13 @@ def predictions(features, heads):
 class OwnSpeechHead:
     """Adapt the project's head to the batched diagnostic scoring interface."""
 
-    def __init__(self, model, heads):
+    def __init__(self, model, heads, *, normalization_eps=1e-7):
         self.model = model
         self.heads = heads
+        self.normalization_eps = normalization_eps
 
     def __call__(self, audio, elapsed):
-        features = speech_features(self.model, audio).cpu().numpy()
+        features = speech_features(self.model, audio, normalization_eps=self.normalization_eps).cpu().numpy()
         return torch.as_tensor(predictions(features, self.heads), device=audio.device)
 
 
