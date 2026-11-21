@@ -51,7 +51,8 @@ def transcript_words(segments, role, channel_length, origin, *, omissions=None, 
             omissions.append(Speech(role, start + origin, end + origin))
 
 
-def label_support(vad, word_stream, common_start, common_end, *, omissions=(), fixed_pauses=None):
+def label_support(vad, word_stream, common_start, common_end, *, omissions=(), fixed_pauses=None,
+                  anchor_role="caller"):
     """Compare aligned two-party VAD and word-timing labels inside shared audio."""
     def crop(spans):
         for span in spans:
@@ -62,10 +63,10 @@ def label_support(vad, word_stream, common_start, common_end, *, omissions=(), f
     heard = list(crop(vad))
     words = list(crop(word_stream))
     reference = [(caller.end, following.start, label) for caller, following, label, _ in
-                 annotated_pauses(group_words(words), {}, minimum_gap=GAP) if caller.speaker == "caller"]
+                 annotated_pauses(group_words(words), {}, minimum_gap=GAP) if caller.speaker == anchor_role]
     outcomes = Counter()
     for caller, gap, label in turns(heard, decision_ms=300):
-        if caller.speaker != "caller":
+        if caller.speaker != anchor_role:
             continue
         outcomes[f"candidate_{label}"] += 1
         edge = caller.end
@@ -111,7 +112,8 @@ def conversation_clock_evidence(segments, channel_length, vad):
     return outcomes
 
 
-def audit_call(directory, identifier, detect, *, recover_clock=False, pauses=None, evidence=None):
+def audit_call(directory, identifier, detect, *, recover_clock=False, pauses=None, evidence=None,
+               observe=None):
     transcript = directory / "data" / "transcript" / f"{identifier}.json"
     segments = {role: [] for role in ROLES}
     for row in json.loads(transcript.read_text()):
@@ -162,6 +164,8 @@ def audit_call(directory, identifier, detect, *, recover_clock=False, pauses=Non
                                                for start, end in support[role]]) for role in ROLES}
     if min(overlap.values()) < 0.8:
         return counts + Counter(low_audio_word_overlap=1)
+    if observe is not None:
+        observe(audio, origins, vad, words, omissions, common_start, common_end)
     fixed = [] if pauses is not None else None
     counts += label_support(vad, words, common_start, common_end, omissions=omissions, fixed_pauses=fixed)
     if pauses is not None:
