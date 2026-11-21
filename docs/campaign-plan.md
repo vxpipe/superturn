@@ -147,6 +147,16 @@ and threshold calibration. It evaluates with the original reference-screened
 AMI validation recordings. Its reports and exports use the `ami-calibration/`
 subdirectory. The original campaign shards are outside the pilot directory.
 
+Use the completed calibration pilot's report ID for the transfer probe.
+
+```sh
+bin/vast-run -n ami-transfer 'uv run --no-sync python -m superturn.ami_transfer bed0ba3de027429f && bin/sync push exports reports && bin/sync verify exports reports'
+```
+
+The pretraining samples come from existing non-AMI train and validation
+shards. The transfer probe uses the calibration pilot's unchanged AMI
+cohorts. The reports and checkpoints are under `ami-transfer/`.
+
 ## Later campaigns
 
 A later campaign runs `bin/sync pull` after bootstrap and starts from the

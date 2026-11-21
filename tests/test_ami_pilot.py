@@ -7,6 +7,7 @@ import pytest
 
 from superturn import ami_mixture
 from superturn.ami_calibration import development_splits
+from superturn.ami_transfer import partial_auc
 from superturn.ami_pilot import acoustic_status, annotated_pauses, group_words, match_training
 from superturn.labels import Label, Speech
 
@@ -86,3 +87,10 @@ def test_calibration_keeps_connected_recordings_together():
     assert set(assignments.values()) == {"train", "validation", "calibration"}
     for meeting in range(0, 18, 2):
         assert assignments[f"m{meeting}"] == assignments[f"m{meeting + 1}"]
+
+
+def test_partial_auc_handles_tied_scores_at_the_right_edge():
+    truth = [1, 1, 0, 0]
+    assert partial_auc([0.9, 0.8, 0.2, 0.1], truth) == 1
+    assert partial_auc([0.1, 0.2, 0.8, 0.9], truth) == 0
+    assert partial_auc([0.5] * 4, truth) == pytest.approx(0.05)

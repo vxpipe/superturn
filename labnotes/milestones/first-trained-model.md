@@ -124,6 +124,11 @@ Last updated 2026-11-21.
   5% false completes on the 103-case supported validation cross-check.
   Their best complete recall was 9.38%. Conformer seed 29 had the
   highest cross-check AUC at 0.739. The frozen test was unused.
+- The five-seed GRU transfer probe used non-AMI pretraining and speaker-disjoint
+  AMI fine-tuning. At the matched learning rate, mean cross-check AUC was
+  0.624 after transfer and 0.631 from scratch. Both averaged 3.38% false
+  completes and transfer lowered mean recall from 8.13% to 6.25%.
+  The full queue remains paused while the next AMI pilot tests other changes.
 
 ### Next step
 
@@ -131,9 +136,9 @@ Use the new speaker-disjoint AMI development cohorts to test changes that
 improve ranking and recall at 300 ms on held-out voices, with calibration
 and model selection on separate recordings. The scratch pilots have
 weak recall at the operating target even with independent calibration.
-Start with non-AMI pretraining followed by AMI fine-tuning, compared
-with scratch training on the same cohorts. Follow with an AMI
-learning curve and augmentation if transfer yield is small.
+Run the AMI learning curve and augmentation on the same development
+cohorts. Sample whole training speakers within connected meeting groups
+because one group supplies more than half of the training clips.
 Preserve the original test shards and record the mixture decision before
 resuming the staged experiment matrix. Measure selected artifacts on the frozen test set,
 including the AMI reference diagnostic and telephone speech level and
@@ -152,6 +157,7 @@ destroy it unless the user asks to keep it.
 
 - [RTX 5090 training run](../20261121-0142-rtx-5090-training.md)
 - [AMI telephone calibration](../20261121-0645-ami-calibration-pilot.md)
+- [AMI transfer probe](../20261121-0653-ami-transfer-probe.md)
 - [Local turn pipeline](../20261121-0112-local-turn-pipeline.md)
 - [Dataset sizes and scaffold](../20261120-1600-dataset-sizes-and-scaffold.md)
 - [Campaign runbook](../../docs/campaign-plan.md)
