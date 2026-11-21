@@ -128,14 +128,16 @@ def final_lexical_tone(words, edge):
     return f"tone-{next(iter(tones))}" if len(tones) == 1 else "ambiguous"
 
 
-def scan(source, language, models, noise, meter, *, original_scores=None):
+def scan(source, language, models, noise, meter, *, original_scores=None, lexical_tones=True):
     members, groups, truth = [], [], []
     features = defaultdict(list)
     predictions, noise_predictions = defaultdict(list), defaultdict(list)
     pitch_counts = np.zeros((2, 5), dtype=int)
     turn = 0
-    columns = ["id", "audio", "language", "cohort", "silence_spans"]
-    if language == "zh":
+    columns = ["audio", "language", "cohort", "silence_spans"]
+    if "id" in source.schema_arrow.names:
+        columns.insert(0, "id")
+    if language == "zh" and lexical_tones:
         columns.append("words")
     for batch in source.iter_batches(batch_size=8, columns=columns):
         clips, padding = [], []
@@ -156,14 +158,14 @@ def scan(source, language, models, noise, meter, *, original_scores=None):
                 raw = decoded[edge - history:edge].astype(np.float32) / 32768
                 native_pitch, codec_pitch, counts = pitch_pair(raw, rendered)
                 pitch_counts[label] += counts
-                members.append((turn, row["id"], ordinal, edge, label))
+                members.append((turn, row.get("id", turn), ordinal, edge, label))
                 groups.append(turn)
                 truth.append(label)
                 features["history"].append("<1.2s" if history < 1.2 * RATE else "<2.7s" if history < EDGE else "full")
                 features["position"].append("first" if previous == 0 else "later")
                 features["native_f0"].append(native_pitch)
                 features["g711_f0"].append(codec_pitch)
-                if language == "zh":
+                if language == "zh" and lexical_tones:
                     tone = final_lexical_tone(row["words"] or [], edge / RATE)
                     features["lexical_tone"].append(tone)
                     features["lexical_tone_and_source_f0"].append(f"{tone}/{native_pitch}")

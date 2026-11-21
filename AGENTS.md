@@ -165,6 +165,14 @@ full runbook.
 - Report results per language and per audio condition (wideband, telephone,
   noisy). The headline metric is the false "complete" rate at a fixed pause
   length: how often the model ends a turn the caller had not finished.
+- Include a matched failure-strata comparison for each model experiment.
+  Report counts and paired turn intervals for short histories, single-pause
+  turns, first holds, rising source-pitch endings, Mandarin, and languages
+  absent from the fit data where those strata exist. Distinguish shared
+  owned-teacher errors from student-only errors. Use one matched cutoff
+  per language before slicing. Report English seed mean and range at the
+  2.5%, 5% and 7.5% hold budgets and apply a one-point non-regression guard
+  to the mean recall across these budgets.
 - Do not use reversed audio or preset-voice TTS as training data.
 - Use `uv` for Python environments (Python 3.12) and run shell commands
   through an interactive zsh that sources `~/.zshrc`.
