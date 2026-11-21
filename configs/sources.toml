@@ -167,6 +167,28 @@ files = [
 "preview/id_000003.mp3" = "88c278272155a733f431ed25c7e63dcaf06d8e2dc5c07d0a52ab08a622b55bec"
 "preview/id_000010.mp3" = "9256e610eb3064eaf8d48547a180f76b85f8837289af8ac1cdd585547a4647d8"
 
+[sources.spring-hindi-paired-pilot]
+kind = "http"
+licence = "CC BY 4.0"
+attribution = "SPRING-INX Hindi R1, SPRING Lab, IIT Madras (CC BY 4.0)"
+role = "train-conversation"
+opt_in = true
+order = 3
+max_total_bytes = 30000000
+selection_command = "python -m superturn.spring_hindi_pilot"
+origin = "https://asr.iitm.ac.in/SPRING_INX/data/SPRING_INX_Hindi_R1/"
+
+[sources.spring-hindi-paired-pilot.metadata_sha256]
+"train/segments" = "d6469b1535dc0e8f16195d531f94f32755e584d0ab576bb98397875759a50e62"
+"train/utt2spk" = "8e29b6c79e6476897f872ae6c2090356d5d1c5cba50d5f18b505ff1868d31eaf"
+"train/wav.scp" = "719a49821fa33966e3258013d29b6aa896890ff547d2026697d4f633898e987a"
+"dev/segments" = "6096b279e69e2a038effe0d3181799c962d530a1f75c072521b2c2fda07bdd7a"
+"dev/utt2spk" = "6fbda01ffd152cef44b6adf3278a236395520a025d4aa80d86fed8bd4db08a1a"
+"dev/wav.scp" = "037dcc29e58a9b60e490b5d03a0f3cef3bbad5eedab3402eedf28efc5199d535"
+"eval/segments" = "aaef4a158174e96ca2c98aae73f82cb666d890051c9430a4c0c5071783dc7689"
+"eval/utt2spk" = "276b5189e82b9cc907745efe265373edf579773169450ad51c45f4713f7eeb3b"
+"eval/wav.scp" = "208401af75c38d767a7f1f2bbda4e7699275a0be976f66837685f492529c563f"
+
 [sources.indic_diarbench]
 kind = "hf_rowgroups"
 repo = "sarvamai/indic-diarbench"

@@ -185,6 +185,19 @@ the tracks, screen channel isolation and check next-speaker labels with
 acoustic timing and independent word evidence before any model fit.
 [Publisher dataset card](https://huggingface.co/datasets/datahiveai/multilingual-conversations-sample)
 
+SPRING-INX Hindi R1 is a separate pilot using the publisher's
+original paired call channels and manually transcribed segments.
+The Download Data page identifies the first release as CC BY 4.0.
+Its directions describe mostly mock conversations and monologues,
+so the paired subset serves as recorded human role-play evidence.
+The publisher's train, dev and eval utterance lists can share the
+same calls and their speaker fields do not prove participant identity.
+The pilot excludes intersecting dev or eval intervals and keeps entire
+selected recordings on the training side of Superturn. The manual
+segment edges are coarse timing evidence. No test or train labels are
+enrolled until the acoustic screen and independent review.
+[IIT Madras Download Data](https://asr.iitm.ac.in/)
+
 Other unstaged full downloads include Common Voice locales (947 GB for
 all 295), FLEURS (878 GB) and Emilia beyond one partial archive per
 language (2.1 TB).
