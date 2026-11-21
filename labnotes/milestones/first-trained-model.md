@@ -1,6 +1,6 @@
 # First trained turn model
 
-Status: checkpoint C queue stopped at a completed run for AMI label review.
+Status: remaining Stage 1 architecture and size comparisons running on Vast.ai.
 Last updated 2026-11-21.
 
 ## Handover
@@ -168,6 +168,8 @@ training data on Vast.ai while retaining the original evaluation sets.
 Use the existing evidence to guide the experiment queue without changing
 the acceptance targets. The 3 s convolution export is available for
 latency checks on an eventual candidate.
+Finish the original Stage 1 validation ranking with the five remaining
+Conformer runs. The Stage 1 job stops before windows, export, and test.
 Preserve the original test shards and record the mixture decision before
 resuming the staged experiment matrix. Measure selected artifacts on the frozen test set,
 including the AMI reference diagnostic and telephone speech level and
@@ -193,6 +195,7 @@ destroy it unless the user asks to keep it.
 - [AMI meeting-group cross-validation](../20261121-0720-ami-group-crossvalidation.md)
 - [Additional AMI turns](../20261121-0736-ami-additional-turns.md)
 - [ONNX spectral latency](../20261121-0743-onnx-spectral-latency.md)
+- [Stage 1 resumption](../20261121-0753-stage-one-resumption.md)
 - [Local turn pipeline](../20261121-0112-local-turn-pipeline.md)
 - [Dataset sizes and scaffold](../20261120-1600-dataset-sizes-and-scaffold.md)
 - [Campaign runbook](../../docs/campaign-plan.md)

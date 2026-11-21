@@ -121,6 +121,14 @@ but not redistribution.
 
 A failed run must not stop the queue; it is logged and the next run starts.
 
+To resume architecture and size comparisons while reserving the frozen test,
+run only Stage 1. It verifies and reuses finished checkpoints and stops
+after writing the validation ranking and `stage1-queue.json`.
+
+```sh
+bin/vast-run -n experiments-stage-one 'uv run --no-sync superturn experiments --config configs/experiments.json --device cuda --stage-one-only'
+```
+
 The isolated AMI label pilot can run against the original campaign data
 with `bin/vast-run -n ami-label-pilot 'uv run --no-sync python -m superturn.ami_pilot && bin/sync push exports reports'`.
 It stores the matched data beneath `shards/ami-pilot/`, the versioned

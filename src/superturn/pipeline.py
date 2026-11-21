@@ -206,7 +206,7 @@ def _rank(results, count=1):
     return good[:count]
 
 
-def experiments(root, base, device):
+def experiments(root, base, device, *, stage_one_only=False):
     import torch
     from .ami_benchmark import AMI_THRESHOLD_ORIGIN, AmiTelephoneValidation
     from .evaluate import benchmark, export, quantization_auc
@@ -232,7 +232,8 @@ def experiments(root, base, device):
             require_gate(root)
         telephone_validation = AmiTelephoneValidation(root)
     # Stages select from validation. Only final, selected exports read test shards.
-    meter = Progress("experiments", 37, "runs")
+    meter = Progress("experiments-stage-one" if stage_one_only else "experiments",
+                     12 if stage_one_only else 37, "runs")
     failures = []
     final_models = []
     destination = root / "reports" / "experiments"
@@ -300,6 +301,9 @@ def experiments(root, base, device):
             for name, config, metrics in stage1_order
         ], "advanced": [name for name, _, _ in top_two]}
         (destination / "stage1-ranking.json").write_text(json.dumps(stage1_report, indent=2) + "\n")
+        if stage_one_only:
+            meter.finish("failed" if failures else "done")
+            return int(bool(failures))
         second = stage([
             (f"s2-{index}-{window}s", {**config, "window": window})
             for index, (_, config, _) in enumerate(top_two) for window in (1, 2, 4, 8)
@@ -389,7 +393,8 @@ def experiments(root, base, device):
     else:
         meter.finish("failed" if failures else "done")
     finally:
-        (destination / "queue.json").write_text(json.dumps({"models": final_models, "failures": failures}, indent=2) + "\n")
+        receipt = destination / ("stage1-queue.json" if stage_one_only else "queue.json")
+        receipt.write_text(json.dumps({"models": final_models, "failures": failures}, indent=2) + "\n")
         _run_sync(root)
     return int(bool(failures))
 
@@ -428,6 +433,9 @@ def register(sub):
             parser.add_argument("--judgments", type=Path, help="completed review.csv from the listening packet")
         if name in {"train", "experiments"}:
             parser.add_argument("--config", type=Path, required=True)
+        if name == "experiments":
+            parser.add_argument("--stage-one-only", action="store_true",
+                                help="complete Stage 1 and stop after validation ranking")
         if name == "train":
             parser.add_argument("--name", required=True)
         if name in {"export", "benchmark", "benchmark-volume"}:
@@ -492,7 +500,8 @@ def command(args):
     elif name == "smoke":
         smoke(root, _device(args.device), acquire=args.acquire_sample)
     elif name == "experiments":
-        return experiments(root, json.loads(args.config.read_text()), _device(args.device))
+        return experiments(root, json.loads(args.config.read_text()), _device(args.device),
+                           stage_one_only=args.stage_one_only)
     elif name == "train":
         from .train import train
 

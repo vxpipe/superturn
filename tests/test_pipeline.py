@@ -320,6 +320,16 @@ def test_experiment_queue_continues_after_failed_run(tmp_path, monkeypatch, conv
     monkeypatch.setattr(evaluate, "export", export)
     monkeypatch.setattr(evaluate, "quantization_auc", quantization_auc)
     monkeypatch.setattr(evaluate, "benchmark", lambda root, path, threshold: benchmarks.append(threshold))
+    assert experiments(tmp_path, {"epochs": 1}, "cpu", stage_one_only=True) == 1
+    assert len(runs) == 12 and all(name.startswith("s1-") for name in runs)
+    assert benchmarks == []
+    receipt = tmp_path / "reports" / "experiments" / "stage1-queue.json"
+    assert json.loads(receipt.read_text())["failures"] == [["s1-a-150000-17", "fixture training failure"]]
+    assert not receipt.with_name("selection.json").exists()
+    for path in (tmp_path / "runs").glob("*/best.pt"):
+        path.unlink()
+        path.parent.rmdir()
+    runs.clear()
     assert experiments(tmp_path, {"epochs": 1}, "cpu") == 1
     expected_threshold = .64 if conversation_ranking else .61
     assert len(runs) == 35 and benchmarks == [expected_threshold] * 3
