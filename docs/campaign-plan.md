@@ -3,7 +3,7 @@
 Status: local fixture pipeline verified 2026-11-21. The first campaign is pending.
 
 Datasets are never downloaded locally. Downloads are capped at 20 GB and
-fetch only the parts of each dataset that are used (18.1 GB; see
+fetch only the parts of each dataset that are used (16.7 GB; see
 [data options](data-options.md#download-plan-and-sizes)). Rented machines are
 still not created and destroyed ad hoc. Work is grouped into planned campaigns:
 one machine, rented once, that downloads, labels, runs a whole round of
@@ -78,9 +78,16 @@ but not redistribution.
    these commands. Review the speaker report and listening check before
    starting experiments.
    ```sh
-   bin/vast-run -n prepare 'uv run --no-sync superturn label --device cuda && uv run --no-sync superturn shard && bin/sync push raw labels shards manifests'
+   bin/vast-run -n prepare 'uv run --no-sync superturn label --device cuda && uv run --no-sync superturn shard && uv run --no-sync superturn listening && uv run --no-sync superturn check-pitch && bin/sync push raw labels shards manifests && bin/sync verify raw labels shards manifests'
    bin/vast-run -n experiments 'uv run --no-sync superturn experiments --device cuda --config configs/experiments.json'
    ```
+   The shard manifest shows per-language group and label counts after caps.
+   The listening packet is under `$REMOTE_DATA/labels/listening` on the
+   campaign machine. Review the WAV excerpts against the indicated pause
+   time, then fill the `heard` column of `review.csv` with `hold`, `shift`,
+   or `unclear`. Run `superturn listening --judgments PATH` on the machine
+   for per-language and per-method accuracy. Keep the packet and review
+   working data private.
    Each job runs in the tmux session `vxpipe`, logs under
    `$REMOTE_DATA/logs/`, and records its exit status under
    `$REMOTE_DATA/jobs/`. Keep the watcher running for estimate, stall,

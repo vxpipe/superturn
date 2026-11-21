@@ -12,7 +12,4 @@ export SUPERTURN_DATA="$campaign_root/smoke"
 mkdir -p "$SUPERTURN_DATA" "$campaign_root/"{progress,reports}
 ln -sfnT "$campaign_root/progress" "$SUPERTURN_DATA/progress"
 ln -sfnT "$campaign_root/reports" "$SUPERTURN_DATA/reports"
-uv run --no-sync superturn download --sample
-uv run --no-sync superturn check-licences
-uv run --no-sync superturn inspect-archive https://www.openslr.org/resources/17/musan.tar.gz --mb 50
-uv run --no-sync superturn smoke "$@"
+uv run --no-sync superturn smoke --acquire-sample "$@"

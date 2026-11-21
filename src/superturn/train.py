@@ -103,7 +103,9 @@ def _assets(root, samples):
     from zipfile import ZipFile
     from .audio import read_audio, write_wave
 
-    noise = sorted((root / "raw" / "musan" / "musan" / "noise").rglob("*.wav"))
+    noise = sorted((root / "raw" / "musan" / "noise" / "free-sound").rglob("*.wav"))
+    if (root / ".campaign-machine").is_file() and not noise:
+        raise ValueError("MUSAN Free Sound noise files are missing")
     ir_root = root / "labels" / "impulses"
     if not ir_root.exists():
         for path in (root / "raw" / "openslr26").glob("*.zip"):

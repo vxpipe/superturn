@@ -113,6 +113,7 @@ def plan_source(source: Source, sample: bool = False) -> Plan:
     return {
         "wav_slices": _plan_wav_slices,
         "hf_rowgroups": _plan_hf_rowgroups,
+        "hf_files": _plan_hf_files,
         "hf_tar_stream": _plan_hf_tar_stream,
         "http_tar_stream": _plan_http_tar_stream,
         "http": _plan_http,
@@ -198,6 +199,16 @@ def _plan_hf_rowgroups(source: Source, sample: bool) -> Plan:
             PlannedFile(path=path, size=sum(sizes[i] for i in groups), extra={"row_groups": groups})
         )
     return Plan(source, files, revision)
+
+
+def _plan_hf_files(source: Source, sample: bool) -> Plan:
+    revision = _hf_revision(source)
+    files = _hf_paths(source, revision, source.pick("files", sample))
+    plan = Plan(source, [PlannedFile(path=path, size=size) for path, size in files], revision)
+    cap = source.get("max_total_bytes")
+    if not files or (cap is not None and plan.size > cap):
+        raise ValueError(f"{source.name}: selection is empty or exceeds its byte cap")
+    return plan
 
 
 def _plan_hf_tar_stream(source: Source, sample: bool) -> Plan:
@@ -317,7 +328,8 @@ def download(plan: Plan, workers: int = 8, meter=None) -> None:
     fetch = {
         "wav_slices": _fetch_wav_slice,
         "hf_rowgroups": _fetch_rowgroups,
-        "hf_tar_stream": _fetch_hf_tar,
+        "hf_tar_stream": _fetch_hf_file,
+        "hf_files": _fetch_hf_file,
         "http_tar_stream": _fetch_http_tar,
         "http": _fetch_http,
     }[plan.source.kind]
@@ -398,14 +410,17 @@ def _hf_file_url(plan: Plan, path: str) -> str:
 
 
 @_once
-def _fetch_hf_tar(plan: Plan, f: PlannedFile, target: Path) -> dict:
+def _fetch_hf_file(plan: Plan, f: PlannedFile, target: Path) -> dict:
     url = _hf_file_url(plan, f.path)
     if not f.extra.get("stream"):
         destination = target / f.path
         destination.parent.mkdir(parents=True, exist_ok=True)
-        with _request(url, headers=_hf_auth()) as response:
-            destination.write_bytes(response.read())
-        return {"bytes": destination.stat().st_size}
+        with _request(url, headers=_hf_auth()) as response, destination.open("wb") as output:
+            while chunk := response.read(1 << 20):
+                output.write(chunk)
+        if destination.stat().st_size != f.size:
+            raise RuntimeError(f"{f.path}: size {destination.stat().st_size} != {f.size}")
+        return {"bytes": f.size}
     with _request(url, headers=_hf_auth()) as response:
         return stream_tar(response, target / f.path.rsplit("/", 1)[0], f.size)
 

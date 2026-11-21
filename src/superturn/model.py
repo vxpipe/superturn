@@ -38,13 +38,16 @@ class AcousticFeatures(nn.Module):
         pitch = 16000 / (lag_index.to(power.dtype) + 40)
         return pitch, corrected.gather(-1, lag_index).clamp(0, 1)
 
-    def forward(self, audio):
+    def power_spectrum(self, audio):
         # Left-align the 400-sample Hann window within the 512-point FFT.
         window = F.pad(self.window, (0, FFT - FRAME))
         padded = F.pad(audio, (0, FFT - FRAME))
         spectrum = torch.stft(padded, n_fft=FFT, hop_length=HOP, window=window,
                               center=False, return_complex=False)
-        power = spectrum[:, :129].square().sum(dim=-1).transpose(1, 2)
+        return spectrum[:, :129].square().sum(dim=-1).transpose(1, 2)
+
+    def forward(self, audio):
+        power = self.power_spectrum(audio)
         mel = (power @ self.mel).clamp_min(1e-8).log()
         energy = power.sum(dim=-1, keepdim=True).clamp_min(1e-8).log()
         pitch, voicing = self.pitch_features(power)

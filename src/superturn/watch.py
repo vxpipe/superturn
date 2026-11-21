@@ -74,6 +74,7 @@ def events(prev: dict, status: dict, summary_every: float = 3600) -> tuple[list[
     """Messages to send for `status`, given the state saved last time."""
     now = status["time"]
     seen_jobs = prev.get("jobs", {})
+    job_starts = prev.get("job_starts", {})
     estimated = set(prev.get("estimated", []))
     stalled = set(prev.get("stalled", []))
     milestones = dict(prev.get("milestones", {}))
@@ -81,6 +82,8 @@ def events(prev: dict, status: dict, summary_every: float = 3600) -> tuple[list[
 
     for name, job in status["jobs"].items():
         before = seen_jobs.get(name)
+        if name in job_starts and job_starts[name] != job["started_at"]:
+            before = None
         if before == job["state"]:
             continue
         took = ""
@@ -145,6 +148,7 @@ def events(prev: dict, status: dict, summary_every: float = 3600) -> tuple[list[
 
     state = {
         "jobs": {n: j["state"] for n, j in status["jobs"].items()},
+        "job_starts": {n: j["started_at"] for n, j in status["jobs"].items()},
         "estimated": sorted(estimated),
         "stalled": sorted(stalled),
         "milestones": milestones,

@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Snapshot download manifests under source-specific names for fetch and sync.
+set -euo pipefail
+: "${SUPERTURN_DATA:?set the campaign data root}"
+mkdir -p "$SUPERTURN_DATA/manifests"
+for manifest in "$SUPERTURN_DATA"/raw/*/MANIFEST.json; do
+  [[ -f "$manifest" ]] || continue
+  source_dir="$(basename "$(dirname "$manifest")")"
+  cp -f "$manifest" "$SUPERTURN_DATA/manifests/$source_dir.json"
+done

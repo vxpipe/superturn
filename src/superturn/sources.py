@@ -10,7 +10,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CONFIG = REPO_ROOT / "configs" / "sources.toml"
-KINDS = {"wav_slices", "hf_rowgroups", "hf_tar_stream", "http_tar_stream", "http"}
+KINDS = {"wav_slices", "hf_rowgroups", "hf_tar_stream", "hf_files", "http_tar_stream", "http"}
 ROLES = {
     "train-conversation",
     "train-read",

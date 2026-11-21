@@ -8,6 +8,7 @@
 # (read by `superturn status` and bin/vast-watch).
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
+export CUBLAS_WORKSPACE_CONFIG=:4096:8
 cd "$(dirname "$0")/.."
 source configs/campaign.env
 export SUPERTURN_DATA="$REMOTE_DATA"

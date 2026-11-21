@@ -8,7 +8,7 @@ Last updated 2026-11-21.
 ### Done
 
 - Registered AMI manual annotations v1.6.2 (22,887,865 bytes, CC BY 4.0).
-  Provider metadata puts the full selection at 18.1 GB and smoke at 0.9 GB.
+  Provider metadata puts the full selection at 16.7 GB and smoke at 0.9 GB.
   Emilia access is available. AMI is the English conversation training source.
   Indic DiarBench is held out for non-English conversation evaluation.
 - Implemented source labellers, speaker counts and caps, compressed shards,
@@ -31,20 +31,30 @@ Last updated 2026-11-21.
   unreachable timeout decisions. Added language-stratified speaker groups
   and quarter-point progress notifications.
 
+- Real-data smoke passed after adjusting the Emilia-YODAS adapter to its
+  observed `_id` field. The retry took 2m27s with cached data. It exercised
+  all six speech sources, made 3,106 shard copies and ran three GPU training
+  steps before exporting a 300,447-byte int8 model and benchmarking it.
+- Started the full download in `vxpipe`. Added split coverage auditing,
+  the listening packet workflow, a YIN pitch reference check and R2
+  copy verification for preparation. Verified a smoke report copy to R2
+  and back by file size. Switched MUSAN to the pinned Free Sound noise
+  subset and resumed acquisition from completed files.
+
 ### Waiting on
 
-- Bootstrap and the initial R2 pull, then the real-data smoke run. The
-  50-per-language label listening gate still applies.
+- Full download and licence check. The 50-per-language listening gate
+  still applies before the real training queue.
 
 ### Next step
 
-Run `bin/vast-run -n smoke 'bin/campaign-smoke --device cuda'` after bootstrap
-succeeds. Check real source layouts, language/speaker counts, and the smoke
-report before the full download. Keep `bin/vast-watch` running throughout.
-After all gates pass, send the final PushOver message prefixed with
-`COMPLETE`. Leave the machine running for at least one hour after that
-message so the user can review, then fetch, sync and destroy it unless the user
-asks to keep it.
+After the download exits cleanly, run the preparation command in the
+[campaign runbook](../../docs/campaign-plan.md). Review real source coverage
+and the listening results before starting the experiment matrix. Keep
+`bin/vast-watch` running throughout. After all gates pass, send the final
+PushOver message prefixed with `COMPLETE`. Leave the machine running for
+at least one hour after that message so the user can review, then fetch, sync
+and destroy it unless the user asks to keep it.
 
 ### Evidence
 
@@ -181,7 +191,7 @@ machine.
   selection and smoke-test sample per source.
 - [x] `bin/plan-downloads`: exact sizes from provider listings, no downloads.
   Total capped by `budget_gb` (20 GB) and refused above it; current
-  selection 18.1 GB, smoke-test sample 0.9 GB.
+  selection 16.7 GB, smoke-test sample 0.9 GB.
 - [x] `bin/download`: Hugging Face (pinned commit, size-verified), HTTP and
   URL lists (resumable, size-verified), Common Voice via the Mozilla Data
   Collective API; writes a manifest per source; ends with the licence check.
@@ -237,7 +247,7 @@ machine.
 Follows the [campaign runbook](../../docs/campaign-plan.md#runbook).
 
 - [x] `.env` filled (Emilia access is already granted).
-- [ ] Machine rented with `bin/vast-up`; smoke test passes on it, including
+- [x] Machine rented with `bin/vast-up`; smoke test passes on it, including
   the speaker count of the streamed Common Voice sample and the MUSAN member
   order from `superturn inspect-archive`.
 - [ ] All sources downloaded, manifests written, licence check passes.

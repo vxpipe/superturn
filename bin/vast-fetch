@@ -9,9 +9,9 @@ dest="$ROOT/data/campaigns/$id"
 mkdir -p "$dest"
 ssh_target
 mapfile -t opts < <(ssh_opts)
-remote "mkdir -p $REMOTE_DATA/manifests && cp -f $REMOTE_DATA/raw/*/MANIFEST.json $REMOTE_DATA/manifests/ 2>/dev/null; true"
+remote "cd $REMOTE_REPO && export SUPERTURN_DATA=$REMOTE_DATA && bin/collect-manifests"
 for d in reports logs manifests runs exports labels; do
-  rsync -az -e "ssh ${opts[*]}" --exclude '*.tar' --exclude '*.flac' --exclude '*.wav' \
+  rsync -az -e "ssh ${opts[*]}" --exclude '*.tar' --exclude '*.flac' --exclude '*.wav' --exclude '*.mp3' --exclude '*.opus' \
     "$SSH_HOST:$REMOTE_DATA/$d" "$dest/" 2>/dev/null || [[ $? -eq 23 ]]
 done
 du -sh "$dest"

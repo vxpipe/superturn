@@ -149,3 +149,33 @@ def test_source_locales_share_a_common_language_code():
     assert {language_code(value) for value in ("Hindi", "hi_IN", "hi")} == {"hi"}
     assert language_code("cmn_hans_cn") == "zh"
     assert language_code("Bodo") == "brx"
+
+
+def test_emilia_yodas_reads_observed_provider_id(tmp_path):
+    import json
+
+    from superturn.corpora import _emilia_clips
+
+    clip = tmp_path / "DE" / "clip"
+    clip.parent.mkdir()
+    clip.with_suffix(".json").write_text(json.dumps({"_id": "clip-id", "language": "de", "speaker": "voice"}))
+    clip.with_suffix(".mp3").touch()
+    assert list(_emilia_clips(tmp_path))[0][:4] == ("clip-id", "clip-id", "voice", "de")
+
+
+def test_listening_selection_is_order_independent_and_capped(tmp_path):
+    from superturn.listening import choose
+
+    rows = _generated_rows(tmp_path)
+    examples = dict(choose(rows, 3))
+    assert examples == dict(choose(reversed(rows), 3))
+    assert list(examples) == ["en-001", "en-002", "en-003"]
+
+
+def test_yin_reference_distinguishes_tone_and_silence():
+    pytest.importorskip("torch")
+    from superturn.pitch_check import yin_pitch
+
+    tone = np.sin(2 * np.pi * 160 * np.arange(400) / 16000)
+    assert yin_pitch(tone) == 160
+    assert np.isnan(yin_pitch(np.zeros_like(tone)))

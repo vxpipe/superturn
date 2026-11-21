@@ -55,17 +55,41 @@ def shard(root, sources, sample=False):
     make_shards(root, rows, sample=sample)
 
 
-def smoke(root, device):
+def smoke(root, device, *, acquire=False):
+    from .cli import main
     from .evaluate import benchmark, export
+    from .progress import Progress
     from .train import train
 
-    label(root, LABEL_SOURCES, device)
-    shard(root, LABEL_SOURCES, sample=True)
-    config = {"architecture": "a", "window": 1, "parameters": 150000,
-              "epochs": 1, "max_steps": 3, "seed": 17, "smoke": True, "augmentation": False}
-    artifact = export(train(root, "smoke", config, device))
-    details = json.loads(artifact.with_name("export.json").read_text())
-    benchmark(root, artifact, details["threshold"], samples=25, name="smoke")
+    meter = Progress("smoke-pipeline", 4, "stages")
+    try:
+        if acquire:
+            for command in (["download", "--sample"], ["check-licences"],
+                            ["inspect-archive", "https://www.openslr.org/resources/17/musan.tar.gz", "--mb", "50"]):
+                if main(command):
+                    raise RuntimeError(f"smoke acquisition command failed: {command[0]}")
+        if acquire:
+            meter.advance(1)
+        else:
+            meter.skip(1)
+        meter.report()
+        label(root, LABEL_SOURCES, device)
+        meter.advance(1)
+        meter.report()
+        shard(root, LABEL_SOURCES, sample=True)
+        config = {"architecture": "a", "window": 1, "parameters": 150000,
+                  "epochs": 1, "max_steps": 3, "seed": 17, "smoke": True, "augmentation": False}
+        artifact = export(train(root, "smoke", config, device))
+        meter.advance(1)
+        meter.report()
+        details = json.loads(artifact.with_name("export.json").read_text())
+        benchmark(root, artifact, details["threshold"], samples=25, name="smoke")
+        meter.advance(1)
+    except BaseException:
+        meter.finish("failed")
+        raise
+    else:
+        meter.finish()
 
 
 def _run_sync(root):
@@ -88,6 +112,14 @@ def experiments(root, base, device):
     from .progress import Progress
     from .train import train
 
+    if (root / ".campaign-machine").is_file():
+        from .listening import require_gate
+        from .shards import require_split_coverage
+
+        manifest = json.loads((root / "shards" / "manifest.json").read_text())
+        registry = load_sources()
+        require_split_coverage(manifest["speaker_report"], {name: registry[name].role for name in LABEL_SOURCES})
+        require_gate(root)
     # Stages select from validation. Only final, selected exports read test shards.
     meter = Progress("experiments", 37, "runs")
     failures = []
@@ -186,14 +218,20 @@ def register(sub):
         "benchmark": "report quality and single-core CPU latency",
         "smoke": "exercise the pipeline on a downloaded sample",
         "experiments": "run the first campaign experiment matrix",
+        "listening": "sample labelled audio and score human judgments",
+        "check-pitch": "compare pitch and voicing with a YIN speech reference",
     }
     for name, description in handlers.items():
         parser = sub.add_parser(name, help=description)
         parser.set_defaults(func=command)
         if name in {"label", "train", "smoke", "experiments"}:
             parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
-        if name in {"label", "shard"}:
+        if name in {"label", "shard", "listening"}:
             parser.add_argument("--only", nargs="+", choices=LABEL_SOURCES, default=LABEL_SOURCES)
+        if name == "smoke":
+            parser.add_argument("--acquire-sample", action="store_true")
+        if name == "listening":
+            parser.add_argument("--judgments", type=Path, help="completed review.csv from the listening packet")
         if name in {"train", "experiments"}:
             parser.add_argument("--config", type=Path, required=True)
         if name == "train":
@@ -213,8 +251,19 @@ def command(args):
         label(root, args.only, _device(args.device))
     elif name == "shard":
         shard(root, args.only)
+    elif name == "check-pitch":
+        from .pitch_check import check_pitch
+
+        print(check_pitch(root))
+    elif name == "listening":
+        from .listening import prepare, summarize
+
+        if args.judgments:
+            print(summarize(root, args.judgments))
+        else:
+            prepare(root, [row for source in args.only for row in read_rows(root / "labels" / f"{source}.jsonl")])
     elif name == "smoke":
-        smoke(root, _device(args.device))
+        smoke(root, _device(args.device), acquire=args.acquire_sample)
     elif name == "experiments":
         return experiments(root, json.loads(args.config.read_text()), _device(args.device))
     elif name == "train":

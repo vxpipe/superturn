@@ -41,24 +41,54 @@ def cap_training(rows, cap, disabled=False):
         yield row
 
 
-def speaker_report(rows):
+def speaker_report(rows, retained):
     speakers = defaultdict(set)
     counts = Counter()
     groups = defaultdict(set)
+    split_counts = defaultdict(Counter)
+    voice_splits = defaultdict(set)
     for row in rows:
         key = (row.source, row.language)
         counts[key] += 1
         groups[(*key, row.split)].add(row.group)
         if row.speaker and row.speaker != "unknown":
             speakers[key].add(row.speaker)
+            voice_splits[row.source, row.speaker].add(row.split)
+    overlaps = sum(len(splits) > 1 for splits in voice_splits.values())
+    if overlaps:
+        raise ValueError(f"{overlaps} speakers appear in multiple splits")
+    for row in retained:
+        split_counts[row.source, row.language, row.split][row.label] += 1
     return [
         {"source": source, "language": language, "examples": counts[source, language],
          "known_speakers": len(speakers[source, language]),
          "below_50": len(speakers[source, language]) < 50,
          "groups_by_split": {split: len(groups[source, language, split])
-                             for split in ("train", "validation", "test")}}
+                             for split in ("train", "validation", "test")},
+         "retained_labels_by_split": {split: dict(split_counts[source, language, split])
+                                     for split in ("train", "validation", "test")}}
         for source, language in sorted(counts)
     ]
+
+
+def require_split_coverage(report, roles):
+    sources = defaultdict(set)
+    issues = []
+    for row in report:
+        source = row["source"]
+        available = {name for name, count in row["groups_by_split"].items() if count}
+        if roles[source] == "test":
+            if available != {"test"}:
+                issues.append(f"{source}/{row['language']} is a test-only source")
+            continue
+        sources[source].update(available)
+        if sum(row["groups_by_split"].values()) >= 3 and len(available) < 3:
+            issues.append(f"{source}/{row['language']} lacks {', '.join(sorted({'train', 'validation', 'test'} - available))}")
+    for source, role in roles.items():
+        if role.startswith("train-") and len(sources[source]) < 3:
+            issues.append(f"{source} needs speaker groups in all three splits")
+    if issues:
+        raise ValueError("invalid split coverage: " + "; ".join(issues))
 
 
 def clip(row, pcm):
@@ -78,6 +108,7 @@ def make_shards(root, rows, *, sample=False):
     retained = list(cap_training(rows, 0.005, disabled=sample))
     if not retained:
         raise ValueError("no labelled pauses to shard")
+    report = speaker_report(rows, retained)
     grouped = defaultdict(list)
     for row in sorted(retained, key=lambda row: (row.audio, row.pause_start)):
         grouped[row.split].append(row)
@@ -106,7 +137,7 @@ def make_shards(root, rows, *, sample=False):
                         pq.write_table(pa.Table.from_pylist(records),
                                        folder / f"{start // SHARD_ROWS:06d}.parquet", compression="zstd")
             (staging / "manifest.json").write_text(json.dumps(
-                {"test_sha256": frozen.hexdigest(), "speaker_report": speaker_report(rows),
+                {"test_sha256": frozen.hexdigest(), "speaker_report": report,
                  "examples_by_split": {name: len(items) for name, items in grouped.items()}}, indent=2) + "\n")
             for entry in staging.iterdir():
                 destination = target / entry.name

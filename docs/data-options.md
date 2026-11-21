@@ -31,7 +31,7 @@ The model sees the audio up to the pause and must predict which one.
 | FLEURS | CC BY 4.0 | ~100 | Held-out test set only: the same sentences in every language. |
 | Indic DiarBench | CC BY 4.0 | 22 Indian languages | Test set only: ~108 h of natural multi-speaker conversation (53 h near-field from one microphone per speaker, mixed to mono), human-corrected speaker-attributed timestamps. |
 | AMI | CC BY 4.0 | English | The only training conversations: one headset per speaker, real hold/shift labels (see below). |
-| MUSAN | CC BY 4.0 | n/a | Noise, music and babble for augmentation. |
+| MUSAN Free Sound | CC BY 4.0 corpus; selected recordings in the US public domain | n/a | Environmental noise for augmentation. |
 | OpenSLR 26 (simulated RIRs) | Apache 2.0 | n/a | Room reverberation. |
 
 ### Per-speaker conversation sources
@@ -111,11 +111,11 @@ uses:
   publisher's row-group size is the smallest unit: ~124 MB for Indic
   DiarBench, ~0.5 GB for VoxPopuli.
 - **Partial tar streams** (Emilia-YODAS, FLEURS and Common Voice on Hugging
-  Face, MUSAN): the archive is read from the start and the connection closed
+  Face): the archive is read from the start and the connection closed
   at a byte cap, keeping the members already read. Metadata files are fetched
   whole first.
 
-Measured on 2026-11-20 by `bin/plan-downloads`:
+Measured on 2026-11-21 by `bin/plan-downloads`:
 
 | Source | What is fetched | Size |
 |---|---|---|
@@ -125,9 +125,10 @@ Measured on 2026-11-20 by `bin/plan-downloads`:
 | FLEURS | first 60 MB of the test archive, 30 languages (test) | 1.8 GB |
 | Emilia-YODAS | first 300 MB of one archive, 6 languages | 1.8 GB |
 | VoxPopuli | one row group each for Spanish, Italian, Polish | 1.8 GB |
-| MUSAN | first 1.5 GB of the archive, noise and music only | 1.5 GB |
+| MUSAN Free Sound | 100 direct noise files and the subset licence | 0.09 GB |
+| AMI annotations | Manual v1.6.2 ZIP | 0.023 GB |
 | OpenSLR 26 | 16 kHz simulated RIRs | 0.2 GB |
-| **Total** | | **18.1 GB** |
+| **Total** | | **16.7 GB** |
 
 The smoke-test sample (`--sample`) is 0.9 GB.
 
@@ -147,14 +148,13 @@ Partial streams and how their risks are handled:
   speakers the streamed clips cover per language; if the start of an archive
   is concentrated on few speakers, the byte budget is spread across the
   archive's split files.
-- MUSAN may store noise after music and speech. `superturn inspect-archive`
-  reads the first few MB and lists the member order without saving anything;
-  the smoke test runs it. Noise does not depend on MUSAN alone: augmentation
-  also makes babble (3-8 other speakers from our own data mixed in, the most
-  realistic background for calls), white, pink and brown noise, mains hum,
-  line hiss, and codec and packet-loss effects. If benchmarks show
-  environmental noise (traffic, cafe, keyboard) matters and MUSAN's noise is
-  out of reach, a small permissive noise set is added file by file.
+- The smoke inspection of OpenSLR's MUSAN tar found music at the start.
+  For augmentation we fetch 100 named recordings from the Free Sound
+  noise subset and its licence file, using the pinned mirror revision in
+  `configs/sources.toml`. The subset licence marks all selected Free Sound
+  recordings public domain. Other MUSAN subsets have distinct terms.
+  [Corpus](https://www.openslr.org/17/)
+  [Pinned Free Sound files](https://huggingface.co/datasets/bilguun/musan-noise/tree/d179de7b0c6adf58bf295495b481386b8fdb97c1/noise/free-sound)
 - Emilia-YODAS audio has been through source separation and quality
   filtering, so it is mostly clean; noise comes from augmentation for every
   source.

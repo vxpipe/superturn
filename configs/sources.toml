@@ -13,6 +13,7 @@
 #                    `max_bytes_per_file`, keeping the members already read;
 #                    `extra_files` (metadata) are fetched whole
 #   http_tar_stream  the same for a plain HTTPS archive
+#   hf_files         named whole files in a pinned Hugging Face repository
 #   http             small whole files
 #
 # `bin/plan-downloads` prices each source from provider listings and file
@@ -87,17 +88,17 @@ sample_urls = ["https://www.openslr.org/resources/26/sim_rir_16k.zip"]
 order = 2
 
 [sources.musan]
-kind = "http_tar_stream"
-licence = "CC BY 4.0"
-attribution = "MUSAN, OpenSLR 17 (CC BY 4.0)"
+kind = "hf_files"
+repo = "bilguun/musan-noise"
+revision = "d179de7b0c6adf58bf295495b481386b8fdb97c1"
+licence = "CC BY 4.0 (MUSAN corpus; selected Free Sound recordings are US public domain)"
+attribution = "MUSAN, David Snyder, Guoguo Chen and Daniel Povey, OpenSLR 17"
 role = "noise"
-urls = ["https://www.openslr.org/resources/17/musan.tar.gz"]
-# Noise and music only; the speech part is not needed. Stops at the cap even
-# if the archive order leaves noise short (check with `superturn
-# inspect-archive`); augmentation also makes babble and synthetic noise.
-keep = ["musan/noise/*", "musan/music/*"]
-max_bytes_per_file = 1_500_000_000
-sample_max_bytes_per_file = 50_000_000
+# Use direct Free Sound files. The source archive starts with music, some
+# of which has different terms, and has no efficient noise-only byte range.
+files = ["noise/free-sound/LICENSE", "noise/free-sound/noise-free-sound-00[0-9][0-9].wav"]
+sample_files = ["noise/free-sound/LICENSE", "noise/free-sound/noise-free-sound-000[0-3].wav"]
+max_total_bytes = 100_000_000
 order = 2
 
 [sources.emilia_yodas]

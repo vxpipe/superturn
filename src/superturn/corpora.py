@@ -128,7 +128,7 @@ def _read_clips(raw, source):
             language = table.parent.name
             clips = {p.name: p for p in table.parent.rglob("*.wav")}
             with table.open(encoding="utf-8", newline="") as handle:
-                for columns in csv.reader(handle, delimiter="\t"):
+                for columns in csv.reader(handle, delimiter="\t", quoting=csv.QUOTE_NONE):
                     if len(columns) >= 4 and (clip := clips.get(columns[1])):
                         # FLEURS TSV has an utterance ID but no global speaker ID.
                         yield clip.name, clip.name, None, language, columns[3], clip, None
@@ -143,7 +143,7 @@ def _emilia_clips(raw):
             row = json.loads(metadata.read_text())
             speaker = row.get("speaker")
             if speaker:
-                key = str(row["id"])
+                key = str(row.get("_id") or row.get("id") or metadata.stem)
                 yield key, key, str(speaker), row["language"], "", audio, None
 
 

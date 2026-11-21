@@ -94,7 +94,7 @@ def test_configured_caps_fit_the_budget_without_network():
         bound += len(s.get("languages")) * s.get("max_bytes_per_file")
     cv = sources["common_voice"]
     bound += len(cv.get("languages")) * (cv.get("max_bytes_per_file") + 5_000_000)  # + TSV
-    bound += sources["musan"].get("max_bytes_per_file")
+    bound += sources["musan"].get("max_total_bytes")
     bound += 22 * sources["indic_diarbench"].get("max_bytes_per_file")  # 22 language files
     bound += 3 * 600_000_000  # VoxPopuli: one row group (~0.5 GB) for 3 languages
     bound += 200_000_000  # OpenSLR 26

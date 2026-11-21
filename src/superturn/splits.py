@@ -126,4 +126,24 @@ def stratified_groups(
         for tag in tags:
             counts[tag][split] += 1
             remaining[tag] -= 1
+    # Repair uncovered splits where a multilingual group can move without
+    # removing another language's last group from a required split.
+    for tag in sorted(totals, key=lambda name: (totals[name], name)):
+        for split, _ in SPLITS:
+            if not goals[tag][split] or counts[tag][split]:
+                continue
+            candidates = [
+                group for group in order
+                if tag in languages[group] and all(
+                    not goals[other][assignments[group]] or counts[other][assignments[group]] > 1
+                    for other in languages[group]
+                )
+            ]
+            if candidates:
+                group = candidates[0]
+                previous = assignments[group]
+                assignments[group] = split
+                for other in languages[group]:
+                    counts[other][previous] -= 1
+                    counts[other][split] += 1
     return assignments

@@ -8,7 +8,7 @@
 # quarter; a step's first time
 # estimate once its pace is measured; a step that stopped updating; a summary
 # every --summary minutes (default 60); the machine idle but still rented;
-# the machine unreachable, and back. Check every --every minutes (default 5).
+# the machine unreachable, and back. Check every 30 seconds unless --every MIN is set.
 # --once checks a single time and exits (for an agent's own monitoring loop).
 # Stops by itself when no campaign instance is recorded any more.
 source "$(dirname "$0")/_lib.sh"
