@@ -129,15 +129,19 @@ def match_phrases(source, receiver, edges, source_direct, receiver_direct):
         elif echo > MAX_COPY_DB:
             rejected["copy_too_loud"] += 1
         else:
+            alternatives = np.flatnonzero(score >= best - MIN_MARGIN)
             matches.append({"start": start * HOP, "copy": target * HOP, "correlation": float(best),
+                            "copy_min": (left + alternatives[0]) * HOP,
+                            "copy_max": (left + alternatives[-1]) * HOP,
                             "margin": float(margin), "relative_copy_db": echo})
     return matches, rejected
 
 
 def inequality(point, reverse):
+    latest_copy = point["copy_max"] / RATE
     if reverse:
-        return -point["copy"] / RATE, -1, -point["start"] / RATE + MATCH_TOLERANCE / RATE
-    return point["start"] / RATE, 1, point["copy"] / RATE + MATCH_TOLERANCE / RATE
+        return -latest_copy, -1, -point["start"] / RATE + MATCH_TOLERANCE / RATE
+    return point["start"] / RATE, 1, latest_copy + MATCH_TOLERANCE / RATE
 
 
 def vertices(forward, reverse):
@@ -157,17 +161,20 @@ def vertices(forward, reverse):
 def clock_bounds(forward, reverse, duration_a, duration_b):
     # Require both directions in early, middle and late thirds. Hold out the
     # strongest middle match per direction while fitting the clock polygon.
-    training = []
-    for rows, duration in ((forward, duration_a), (reverse, duration_b)):
+    training, checks = [], []
+    for rows, duration, reverse_direction in ((forward, duration_a, False), (reverse, duration_b, True)):
         thirds = {min(2, 3 * row["start"] // duration) for row in rows}
         if thirds != {0, 1, 2}:
             return None
         held = max((row for row in rows if 3 * row["start"] // duration == 1), key=lambda row: row["correlation"])
+        checks.append(inequality(held, reverse_direction))
         training.append([row for row in rows if row is not held])
     fit_region = vertices(*training)
     fitted = vertices(forward, reverse)
     if not fit_region or not fitted:
         return None
+    confirmed = all(a * slope + b * offset <= bound + 1e-8
+                    for a, b, bound in checks for slope, offset in fit_region)
     bracket = (max(min(row["start"] for row in training[0]), min(row["copy"] for row in training[1])),
                min(max(row["start"] for row in training[0]), max(row["copy"] for row in training[1])))
     if bracket[0] >= bracket[1]:
@@ -176,7 +183,8 @@ def clock_bounds(forward, reverse, duration_a, duration_b):
     for point in bracket:
         possible = [slope * point + offset * RATE for slope, offset in fitted]
         width.append((max(possible) - min(possible)) * 1000 / RATE)
-    return {"slope_offset_seconds_vertices": fitted, "bracket_a_samples": list(bracket),
+    return {"slope_offset_seconds_vertices": fitted, "fit_only_vertices": fit_region,
+            "held_out_confirms_entire_fit_region": confirmed, "bracket_a_samples": list(bracket),
             "clock_width_ms_at_bracket_ends": width}
 
 
@@ -215,6 +223,9 @@ def run(root):
             matches, rejected = match_phrases(features, other, edges, own_direct, direct)
             controls, _ = match_phrases(features, wrong, edges, own_direct, wrong_direct)
             counts.append({"anchors": len(edges), "matches": len(matches), "matched_details": matches,
+                           "anchors_by_third": [sum(min(2, 3 * h * HOP // n) == i for h in edges) for i in range(3)],
+                           "matches_by_third": [sum(min(2, 3 * row["start"] // n) == i for row in matches)
+                                                for i in range(3)],
                            "rejected": rejected, "wrong_pair_matches": len(controls), "native_samples": n})
             directions.append(matches)
         a, b = (data[pair, track] for track in (1, 2))
@@ -224,7 +235,7 @@ def run(root):
         results[str(pair)].update({"directions": counts, "clock_bounds": bounds})
     report = {"decision_ms": 300, "manifest_sha256": file_digest(folder / "MANIFEST.json"),
               "same_lengths_do_not_establish_alignment": True, "pairs": results,
-              "paired_clock_verified": sum(row["clock_bounds"] is not None for row in results.values())}
+              "pairs_with_feasible_affine_map": sum(row["clock_bounds"] is not None for row in results.values())}
     _write_json(root / "reports/nsc-part6-clock-probe.json", report)
     return report
 
