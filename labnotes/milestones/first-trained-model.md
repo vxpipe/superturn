@@ -89,6 +89,9 @@ Last updated 2026-11-21.
   Stage 1 assessment will also compare AMI telephone scores.
   A validation-only export preflight for the first checkpoint produced
   a 302,367-byte int8 file with unchanged pooled AUC to four decimals.
+  A 512-step training probe found identical weights and validation metrics
+  with spawned workers in about 30% less time. The queue will switch at
+  the next run boundary and reuse verified completed checkpoints.
 
 ### Next step
 

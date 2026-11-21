@@ -365,6 +365,41 @@ def test_codec_augmentations_return_mono_int16():
     assert np.any(opus) and np.any(pitch)
 
 
+def test_training_augmentation_preserves_seeded_pcm():
+    from superturn.training_augmentation import TrainingAugmentation
+
+    rng = np.random.default_rng(29)
+    voices = {("fixture", str(i)): rng.integers(-5000, 5000, 48000, dtype=np.int16)
+              for i in range(4)}
+    items = list(voices.items())
+    jobs = [(items[seed % len(items)][1], seed, items[seed % len(items)][0], 200 * 16)
+            for seed in range(32)]
+    serial = TrainingAugmentation(1, ([], [], voices))
+    parallel = TrainingAugmentation(2, ([], [], voices))
+    try:
+        assert np.array_equal(serial.render(jobs), parallel.render(jobs))
+    finally:
+        parallel.close()
+
+
+def test_checkpoint_equivalence_binds_both_source_hashes(tmp_path, monkeypatch):
+    import importlib
+    import json
+
+    pytest.importorskip("torch")
+    train = importlib.import_module("superturn.train")
+    monkeypatch.setattr(train, "REPO_ROOT", tmp_path)
+    equivalent = tmp_path / "configs" / "training-source-equivalence.json"
+    equivalent.parent.mkdir()
+    equivalent.write_text(json.dumps({"previous": "threaded", "current": "process"}))
+    recorded = {"config": {"seed": 17}, "source": "threaded", "shards": "same"}
+    expected = {**recorded, "source": "process"}
+    assert train._compatible_signature(recorded, expected)
+    assert not train._compatible_signature(recorded, {**expected, "source": "other"})
+    assert not train._compatible_signature(recorded, {**expected, "shards": "other"})
+    assert not train._compatible_signature(expected, recorded)
+
+
 def test_pitch_rejects_constant_offset_and_low_energy_noise():
     torch = pytest.importorskip("torch")
     from superturn.model import AcousticFeatures

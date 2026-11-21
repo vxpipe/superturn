@@ -90,6 +90,9 @@ but not redistribution.
    listening packet remains available for manual follow-up.
    The experiment queue can reuse a finished training run when the shard
    fingerprints, configuration, device, Torch version and training code match.
+   One exact training source hash transition is permitted for the tested
+   move from threads to spawned augmentation workers. The original
+   checkpoint metadata and checksum stay in effect.
    Use `superturn compare-ami-validation` on the training server to compare
    completed Stage 1 checkpoints on held-out AMI telephone audio. The report
    includes each saved threshold and an AMI validation fit for diagnosing

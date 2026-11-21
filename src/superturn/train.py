@@ -6,7 +6,6 @@ import hashlib
 import json
 from importlib.metadata import PackageNotFoundError, version
 from collections import Counter
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -14,10 +13,11 @@ import pyarrow.parquet as pq
 import torch
 from torch.nn import functional as F
 
-from .augment import augment
 from .model import build
 from .progress import Progress
 from .shards import CONTEXT, seed_for
+from .sources import REPO_ROOT
+from .training_augmentation import TrainingAugmentation
 
 PAUSES = (200, 300, 500)
 
@@ -146,7 +146,8 @@ def _run_signature(root, config, device):
     if not shard_manifest.is_file():
         return None
     source = hashlib.sha256()
-    for name in ("train.py", "model.py", "augment.py", "audio.py", "quant_aware.py", "ami_training.py"):
+    for name in ("train.py", "model.py", "augment.py", "audio.py", "quant_aware.py",
+                 "ami_training.py", "training_augmentation.py"):
         source.update(Path(__file__).with_name(name).read_bytes())
     assets = {}
     if config.get("augmentation", True):
@@ -177,13 +178,25 @@ def _run_signature(root, config, device):
     }
 
 
+def _compatible_signature(recorded, expected):
+    if recorded == expected:
+        return True
+    if recorded is None or {**recorded, "source": expected["source"]} != expected:
+        return False
+    path = REPO_ROOT / "configs" / "training-source-equivalence.json"
+    if not path.is_file():
+        return False
+    equivalent = json.loads(path.read_text())
+    return equivalent["previous"] == recorded.get("source") and equivalent["current"] == expected["source"]
+
+
 def completed_run(root, name, config, device):
     run = root / "runs" / name
     marker, checkpoint = run / "finished.json", run / "best.pt"
     signature = _run_signature(root, config, device)
     if signature is not None and marker.is_file() and checkpoint.is_file():
         result = json.loads(marker.read_text())
-        if (result.get("signature") == signature
+        if (_compatible_signature(result.get("signature"), signature)
                 and result.get("checkpoint_sha256") == hashlib.sha256(checkpoint.read_bytes()).hexdigest()):
             return checkpoint
     return None
@@ -233,7 +246,7 @@ def train(root, name, config, device):
 
     language_normalizer = sum(count ** 0.7 for count in counts.values()) / sum(counts.values())
     augmentation = config.get("augmentation", True)
-    noise, impulse, voices = _assets(root, model.samples, config, verified_ami) if augmentation else ([], [], {})
+    assets = _assets(root, model.samples, config, verified_ami) if augmentation else None
     epochs = config.get("epochs", 5)
     steps = min(config.get("max_steps", train_batches * epochs), train_batches * epochs)
     meter = Progress(f"train-{name}", steps, "steps")
@@ -241,7 +254,7 @@ def train(root, name, config, device):
     best = None
     completed = 0
     processors = config.get("augmentation_workers", 1)
-    augmenter = ThreadPoolExecutor(max_workers=processors) if augmentation else None
+    augmenter = TrainingAugmentation(processors, assets) if augmentation else None
     try:
         for epoch in range(epochs):
             model.train()
@@ -260,11 +273,8 @@ def train(root, name, config, device):
                     gap_ms = rng.choice([v for v in PAUSES if v * 16 <= pause_samples])
                     pcm = _input(row, model.samples, gap_ms)
                     if augmenter is not None:
-                        other = [value for key, value in voices.items() if key != (row["source"], row["speaker"])]
-                        jobs.append(augmenter.submit(
-                            augment, pcm, int(rng.integers(2**63)), noise_paths=noise,
-                            ir_paths=impulse, voices=other, pause_samples=gap_ms * 16,
-                        ))
+                        jobs.append((pcm, int(rng.integers(2**63)),
+                                     (row["source"], row["speaker"]), gap_ms * 16))
                     else:
                         audio.append(pcm)
                     # Equalize class exposure to elapsed silence within each available gap.
@@ -276,7 +286,7 @@ def train(root, name, config, device):
                     weight *= 1 if positive else config.get("hold_weight", 2.0)
                     weights.append([weight])
                 if augmenter is not None:
-                    audio = [job.result() for job in jobs]
+                    audio = augmenter.render(jobs)
                 audio = np.asarray(audio, dtype=np.float32) / 32768
                 inputs = torch.from_numpy(audio).to(device)
                 gap = torch.as_tensor(np.asarray(gaps), dtype=torch.float32, device=device)
@@ -323,5 +333,5 @@ def train(root, name, config, device):
         meter.finish()
     finally:
         if augmenter is not None:
-            augmenter.shutdown(cancel_futures=True)
+            augmenter.close()
     return run / "best.pt"
