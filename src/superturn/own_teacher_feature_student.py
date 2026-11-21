@@ -172,7 +172,7 @@ def replace_history(audio, prefix, noise):
 
 def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active, arm, seed, *,
             shuffle_features=False, active_stats=False, score_history=None, parameters=150000, hop=HOP,
-            select_final=False, progress_prefix="own-feature"):
+            select_final=False, progress_prefix="own-feature", epochs=EPOCHS, epoch_checkpoint=None):
     config = {"architecture": "a", "window": 3, "parameters": parameters}
     if hop != HOP:
         config["hop"] = hop
@@ -206,9 +206,9 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
         name += f"-{parameters}"
     if hop != HOP:
         name += f"-hop{hop}"
-    meter = Progress(f"{progress_prefix}-{name}", EPOCHS * ((len(fit) + BATCH - 1) // BATCH), "updates")
+    meter = Progress(f"{progress_prefix}-{name}", epochs * ((len(fit) + BATCH - 1) // BATCH), "updates")
     try:
-        for epoch in range(1, EPOCHS + 1):
+        for epoch in range(1, epochs + 1):
             model.train()
             order = np.random.default_rng(seed_for("dense-teacher-order", seed, epoch)).permutation(fit)
             use_scores = arm != "feature-first" or epoch > 5
@@ -261,10 +261,12 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
                 rank = np.mean([data["by_deadline"][str(DEADLINE)]["spearman"] for data in stats.values()])
                 bce = np.mean([data["bce"] for data in stats.values()])
                 observed["selection_key"] = [rank, -bce, -epoch]
-                choose = epoch == EPOCHS if select_final else winner is None or observed["selection_key"] > winner["selection_key"]
+                choose = epoch == epochs if select_final else winner is None or observed["selection_key"] > winner["selection_key"]
                 if epoch > 5 and choose:
                     winner, best_state = observed, deepcopy(model.state_dict())
             history.append(observed)
+            if epoch_checkpoint is not None and epoch in (EPOCHS, epochs):
+                epoch_checkpoint(epoch, config, model.state_dict())
     except BaseException:
         meter.finish("failed")
         raise
