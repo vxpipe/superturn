@@ -66,7 +66,7 @@ def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture)
     monkeypatch.setenv("SUPERTURN_DATA", str(tmp_path))
     make_shards(tmp_path, [replace(row, source="ami") for row in _generated_rows(tmp_path)])
     config = {"architecture": architecture, "parameters": 150000, "window": 1,
-              "epochs": 1, "augmentation": False}
+              "epochs": 1, "augmentation": architecture == "a", "augmentation_workers": 2}
     checkpoint = train(tmp_path, "fixture", config, "cpu")
     assert completed_run(tmp_path, "fixture", config, "cpu") == checkpoint
     assert completed_run(tmp_path, "fixture", {**config, "epochs": 2}, "cpu") is None
@@ -75,8 +75,16 @@ def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture)
     assert all(auc is not None for auc in quantization_auc(tmp_path, result, 0.5))
     report = benchmark(tmp_path, result, 0.5, samples=3)
     assert all(row["300"]["auc"] is not None for row in report["groups"])
+    assert report["latency_ms"]["condition"] == "telephone"
     assert report["acceptance"]["artifact"]["passed"]
     assert "conversation_telephone_300ms" in report["acceptance"]
+    if architecture == "a":
+        from superturn.volume import benchmark_volume
+
+        sensitivity = benchmark_volume(tmp_path, result, 0.5, per_label_language=1)
+        assert sensitivity["examples"] == 2
+        assert len(sensitivity["qualifying_lowest_tested_db"]) == 3
+        assert all(level is None for level in sensitivity["qualifying_lowest_tested_db"].values())
 
 
 def test_pitch_on_known_reference_tone():
@@ -211,3 +219,26 @@ def test_listening_gate_requires_matching_human_judgments(tmp_path):
     require_gate(tmp_path, per_language=3)
     with pytest.raises(ValueError, match="below 4"):
         require_gate(tmp_path, per_language=4)
+
+
+def test_codec_augmentations_return_mono_int16():
+    from superturn.augment import _opus_roundtrip, _pitch_shift
+
+    pcm = (10000 * np.sin(2 * np.pi * 160 * np.arange(16000) / 16000)).astype("int16")
+    opus = _opus_roundtrip(pcm)
+    pitch = _pitch_shift(pcm, 1.1)
+    assert opus.dtype == pitch.dtype == np.dtype("int16")
+    assert len(opus) == len(pcm)
+    assert 0.95 * len(pcm) <= len(pitch) <= 1.05 * len(pcm)
+    assert np.any(opus) and np.any(pitch)
+
+
+def test_pitch_rejects_constant_offset_and_low_energy_noise():
+    torch = pytest.importorskip("torch")
+    from superturn.model import AcousticFeatures
+
+    frontend = AcousticFeatures()
+    rng = torch.Generator().manual_seed(19)
+    audio = torch.stack((torch.full((16000,), .05), torch.randn(16000, generator=rng) * .0001))
+    _, confidence = frontend.pitch_features(frontend.power_spectrum(audio))
+    assert torch.all(confidence < .35)

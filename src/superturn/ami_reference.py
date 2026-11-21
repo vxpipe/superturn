@@ -79,3 +79,64 @@ def check_ami_reference(root, tolerance_ms=200):
     else:
         meter.finish()
     return destination
+
+
+def _manual_vote(row, spans, annotated):
+    edge = row.pause_start
+    if not any(span.speaker == row.speaker and abs(span.end - edge) <= 3200 for span in spans):
+        return "unresolved"
+    speech_in_pause = sum(max(0, min(span.end, edge + 2880) - max(span.start, edge + 1280))
+                          for span in spans)
+    if speech_in_pause >= 640:
+        return "contradicted"
+    events = [span for span in spans if span.start >= edge + 1280]
+    if not events or abs(events[0].start - edge - row.pause_samples) > 4000:
+        return "unresolved"
+    first = events[0]
+    if first.speaker == row.speaker:
+        expected = "hold"
+    else:
+        words = [first]
+        for span in events[1:]:
+            if span.speaker != first.speaker or span.start - words[-1].end > 3200:
+                break
+            words.append(span)
+        marked = any(abs(point - first.start) <= 3200 for point in annotated[first.speaker])
+        if marked:
+            continuation = next((span for span in events if span.speaker != first.speaker), None)
+            if continuation is None or continuation.start - words[-1].end > 3 * 16000:
+                return "unresolved"
+            expected = "hold" if continuation.speaker == row.speaker else "shift"
+        elif words[-1].end - first.start < 16000:
+            # A short response may be an acknowledgement without a lexical tag.
+            return "unresolved"
+        else:
+            expected = "shift"
+    return "supported" if expected == row.label else "contradicted"
+
+
+def audit_sample(root, rows):
+    """Check every sampled AMI label against raw words and dialogue acts."""
+    from .labels import ami_backchannels
+
+    raw = root / "raw"
+    tracks = json.loads((raw / "ami" / "MANIFEST.json").read_text())["files"]
+    windows = {track["path"].split("/")[0]: (int(track["start_s"] * 16000), int(track["length_s"] * 16000))
+               for track in tracks}
+    selected = defaultdict(list)
+    for row in rows:
+        selected[row.recording].append(row)
+    archive_path, = (raw / "ami_annotations").glob("*.zip")
+    results = {}
+    with ZipFile(archive_path) as archive:
+        speakers = ami_speakers(archive)
+        for meeting, examples in selected.items():
+            offset, length = windows[meeting]
+            tracks = speakers[meeting]
+            spans = sorted(_manual_spans(archive, meeting, tracks, offset, length),
+                           key=lambda span: (span.start, span.end, span.speaker))
+            annotated = {speaker: ami_backchannels(archive, meeting, agent, offset)
+                         for speaker, agent in tracks.values()}
+            for row in examples:
+                results[row] = _manual_vote(row, spans, annotated)
+    return results

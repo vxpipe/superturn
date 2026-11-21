@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import subprocess
+from fractions import Fraction
+from io import BytesIO
 from functools import lru_cache
 
 import numpy as np
@@ -18,6 +20,76 @@ def _ffmpeg(pcm, *options):
          *options, "-f", "s16le", "-ar", str(RATE), "-ac", "1", "pipe:1"],
         input=pcm.astype("<i2").tobytes(), capture_output=True, check=True,
     ).stdout, "<i2")
+
+
+def _mono_frame(av, pcm):
+    frame = av.AudioFrame.from_ndarray(pcm.astype("<i2", copy=False)[None, :], format="s16", layout="mono")
+    frame.sample_rate = RATE
+    frame.time_base = Fraction(1, RATE)
+    return frame
+
+
+def _pitch_shift(pcm, factor):
+    shifted_rate = round(RATE * factor)
+    tempo = 1 / factor
+    try:
+        import av
+    except ImportError:
+        pass
+    else:
+        try:
+            graph = av.filter.Graph()
+            graph.threads = 1
+            nodes = [
+                graph.add_abuffer(sample_rate=RATE, format="s16", layout="mono", channels=1,
+                                  time_base=Fraction(1, RATE)),
+                graph.add("asetrate", str(shifted_rate)),
+                graph.add("aresample", str(RATE)),
+                graph.add("atempo", str(tempo)),
+                graph.add("aformat", f"sample_fmts=s16:channel_layouts=mono:sample_rates={RATE}"),
+                graph.add("abuffersink"),
+            ]
+            for left, right in zip(nodes, nodes[1:]):
+                left.link_to(right)
+            graph.configure()
+            graph.push(_mono_frame(av, pcm))
+            graph.push(None)
+            output = []
+            while True:
+                try:
+                    output.append(graph.pull().to_ndarray().reshape(-1))
+                except av.error.EOFError:
+                    break
+            return np.concatenate(output) if output else np.empty(0, dtype="<i2")
+        except (av.error.FFmpegError, AttributeError):
+            pass
+    return _ffmpeg(pcm, "-af", f"asetrate={shifted_rate},aresample={RATE},atempo={tempo}")
+
+
+def _opus_roundtrip(pcm):
+    try:
+        import av
+    except ImportError:
+        pass
+    else:
+        try:
+            dst = BytesIO()
+            with av.open(dst, "w", format="ogg") as media:
+                stream = media.add_stream("libopus", rate=RATE)
+                stream.codec_context.layout = "mono"
+                stream.codec_context.bit_rate = 12000
+                for frame in (_mono_frame(av, pcm), None):
+                    for packet in stream.encode(frame):
+                        media.mux(packet)
+            return read_audio(dst.getvalue())
+        except (av.error.FFmpegError, AttributeError):
+            pass
+    encoded = subprocess.run(
+        ["ffmpeg", "-v", "error", "-f", "s16le", "-ar", str(RATE), "-ac", "1", "-i", "pipe:0",
+         "-c:a", "libopus", "-b:a", "12k", "-f", "ogg", "pipe:1"],
+        input=pcm.astype("<i2").tobytes(), capture_output=True, check=True,
+    ).stdout
+    return read_audio(encoded)
 
 
 def _bandlimit(signal, low, high):
@@ -134,17 +206,11 @@ def augment(pcm, seed, *, noise_paths=(), ir_paths=(), voices=(), pause_samples=
             transformed = _resample(speech, round(speech_end / rng.uniform(0.9, 1.1)))
         else:
             factor = 2 ** (rng.uniform(-2, 2) / 12)
-            filters = f"asetrate={round(RATE * factor)},aresample={RATE},atempo={1 / factor}"
-            transformed = _ffmpeg(speech, "-af", filters)
+            transformed = _pitch_shift(speech, factor)
         transformed = np.pad(transformed, (max(0, speech_end - len(transformed)), 0))
         signal = np.concatenate((transformed[-speech_end:], signal[speech_end:]))
     elif effect == "opus":
-        opus = subprocess.run(
-            ["ffmpeg", "-v", "error", "-f", "s16le", "-ar", str(RATE), "-ac", "1", "-i", "pipe:0",
-             "-c:a", "libopus", "-b:a", "12k", "-f", "ogg", "pipe:1"],
-            input=pcm.astype("<i2").tobytes(), capture_output=True, check=True,
-        ).stdout
-        signal = read_audio(opus)
+        signal = _opus_roundtrip(pcm)
     if len(signal) < n:
         signal = np.pad(signal, (n - len(signal), 0))
     return _limit(signal[-n:] * rng.uniform(0.65, 1.35))

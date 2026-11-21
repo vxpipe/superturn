@@ -25,8 +25,12 @@ if [[ "$phase" == all ]]; then
   (( failed == 0 )) || exit 1
 fi
 uv run --no-sync superturn shard
-uv run --no-sync superturn listening
+uv run --no-sync superturn audit-labels
 uv run --no-sync superturn check-pitch
 uv run --no-sync superturn check-ami-reference
-bin/sync push raw labels shards manifests reports
-bin/sync verify raw labels shards manifests reports
+dirs=(labels shards reports)
+if [[ "$phase" == all ]]; then
+  dirs+=(raw manifests)
+fi
+bin/sync push "${dirs[@]}"
+bin/sync verify "${dirs[@]}"

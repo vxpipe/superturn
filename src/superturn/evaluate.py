@@ -212,6 +212,8 @@ def benchmark(root, model_path, threshold, *, split="test", samples=250, name=No
         raise ValueError(f"no {split} benchmark examples")
     meter = Progress(f"benchmark-{name or model_path.parent.name}", total + samples, "items")
     groups = defaultdict(list)
+    latency_inputs = []
+    latency_condition = "telephone" if split == "test" else "clean"
     try:
         for condition, files in work.items():
             for rows in records(files):
@@ -225,6 +227,10 @@ def benchmark(root, model_path, threshold, *, split="test", samples=250, name=No
                     audio = np.stack([_input(row, length, ms) for ms in decision_ms]).astype("float32") / 32768
                     gaps = np.asarray(decision_ms, dtype="float32").reshape(-1, 1)
                     scores = _predict(session, audio, gaps).tolist()
+                    if condition == latency_condition and len(latency_inputs) < 16:
+                        latency_index = DECISIONS.index(300) if 300 in decision_ms else 0
+                        latency_inputs.append((audio[latency_index:latency_index + 1].copy(),
+                                               gaps[latency_index:latency_index + 1].copy()))
                     example = (row["pause_samples"] / 16, int(row["label"] == "shift"), scores)
                     keys = [("all", "all", condition), (row["source"], "all", condition),
                             ("all", row["language"], condition),
@@ -235,16 +241,18 @@ def benchmark(root, model_path, threshold, *, split="test", samples=250, name=No
                     for key in keys:
                         groups[key].append(example)
 
-        audio = np.zeros((1, length), "float32")
-        gap = np.full((1, 1), 300, "float32")
-        for _ in range(20):
+        if not latency_inputs:
+            raise ValueError(f"no {latency_condition} audio for the CPU latency benchmark")
+        for index in range(20):
+            audio, gap = latency_inputs[index % len(latency_inputs)]
             _predict(session, audio, gap)
         times = []
         previous_affinity = os.sched_getaffinity(0) if hasattr(os, "sched_getaffinity") else None
         if previous_affinity:
             os.sched_setaffinity(0, {min(previous_affinity)})
         try:
-            for _ in range(samples):
+            for index in range(samples):
+                audio, gap = latency_inputs[index % len(latency_inputs)]
                 start = time.perf_counter_ns()
                 _predict(session, audio, gap)
                 times.append((time.perf_counter_ns() - start) / 1e6)
@@ -262,7 +270,9 @@ def benchmark(root, model_path, threshold, *, split="test", samples=250, name=No
         destination = root / "reports" / (name or model_path.parent.name)
         destination.mkdir(parents=True, exist_ok=True)
         report = {"threshold": threshold, "split": split,
-                  "latency_ms": {f"p{p}": float(np.percentile(times, p)) for p in (50, 99)},
+                  "latency_ms": {**{f"p{p}": float(np.percentile(times, p)) for p in (50, 99)},
+                                 "samples": samples, "condition": latency_condition,
+                                 "input_clips": len(latency_inputs)},
                   "groups": [{"source": s, "language": lang, "condition": c, **_summarize(rows, threshold)}
                              for (s, lang, c), rows in sorted(groups.items())]}
         if split == "test":

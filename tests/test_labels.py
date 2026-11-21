@@ -6,7 +6,7 @@ import wave
 import pytest
 from zipfile import ZipFile
 
-from superturn.ami_reference import check_ami_reference
+from superturn.ami_reference import audit_sample, check_ami_reference
 from superturn.labels import Speech, ami_labels, turns, write_rows
 
 
@@ -84,3 +84,4 @@ def test_ami_maps_channels_to_global_speakers_and_flags_backchannel(tmp_path, mo
     write_rows(tmp_path / "labels" / "ami.jsonl", labels)
     reference = json.loads(check_ami_reference(tmp_path).read_text())
     assert reference["groups"]["all"]["agreement_on_matched"] == 1.0
+    assert audit_sample(tmp_path, [first]) == {first: "supported"}

@@ -75,21 +75,21 @@ but not redistribution.
 4. Acquire with `bin/vast-run -n download 'bin/download'`. Rerun after an
    interruption to resume. The job ends with the licence check.
 5. After download passes, start preparation and the experiment matrix with
-   these commands. Review the speaker report and listening check before
+   these commands. Review the speaker report and automated label audit before
    starting experiments.
    ```sh
    bin/vast-run -n prepare 'bin/campaign-prepare --device cuda'
    bin/vast-run -n experiments 'uv run --no-sync superturn experiments --device cuda --config configs/experiments.json'
    ```
+   Use `bin/campaign-prepare --finish` after separately completed label jobs.
+   That path verifies the derived outputs. Run or verify the independent raw
+   and manifest backup before closing the data checkpoint.
    The shard manifest shows per-language group and label counts after caps.
-   The listening packet is under `$REMOTE_DATA/labels/listening` on the
-   campaign machine. Review the WAV excerpts against the indicated pause
-   time, then fill the `heard` column of `review.csv` with `hold`, `shift`,
-   or `unclear`. Run `superturn listening --judgments PATH` on the machine
-   for per-language and per-method accuracy. Keep the packet and review
-   working data private. The experiment queue can reuse a finished training
-   run when the shard fingerprints, configuration, device, Torch version
-   and training code match.
+   The automated label audit summarizes 50 sampled pauses per language and
+   retains acoustic contradictions and unresolved cases. The on-machine
+   listening packet remains available for manual follow-up.
+   The experiment queue can reuse a finished training run when the shard
+   fingerprints, configuration, device, Torch version and training code match.
    Each job runs in the tmux session `vxpipe`, logs under
    `$REMOTE_DATA/logs/`, and records its exit status under
    `$REMOTE_DATA/jobs/`. Keep the watcher running for estimate, stall,
@@ -110,3 +110,12 @@ stored raw downloads, labels and shards. It needs the machine for training
 only, unless the labelling code changed, in which case it relabels from the
 stored raw files without downloading. Without persistent storage it downloads
 and processes everything again.
+
+
+## Model distribution
+
+Fetch the selected int8 ONNX and its reports with `bin/vast-fetch`. Publish
+the approved ONNX and completed model card under the user's Hugging Face model
+repository `HashNuke/superturn`. Pin that repository's release commit as a Git
+submodule after it exists. Keep the repository's normal code and benchmark
+evidence in GitHub, with the model release in the Hugging Face repository.

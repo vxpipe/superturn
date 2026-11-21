@@ -205,6 +205,7 @@ def experiments(root, base, device):
     from .evaluate import benchmark, export, quantization_auc
     from .progress import Progress
     from .train import completed_run, train
+    from .volume import benchmark_volume
 
     if (root / ".campaign-machine").is_file():
         from .listening import require_gate
@@ -291,6 +292,8 @@ def experiments(root, base, device):
                 metadata["threshold"] = validation["threshold"]
                 model.with_name("export.json").write_text(json.dumps(metadata, indent=2) + "\n")
                 benchmark(root, model, metadata["threshold"])
+                if (root / ".campaign-machine").is_file():
+                    benchmark_volume(root, model, metadata["threshold"])
                 _run_sync(root)
                 final_models.append(name)
                 meter.advance(1)
@@ -319,19 +322,23 @@ def register(sub):
         "train": "train a model from a JSON configuration",
         "export": "export and check float and int8 ONNX",
         "benchmark": "report quality and single-core CPU latency",
+        "benchmark-volume": "measure level and SNR sensitivity on held-out conversations",
         "smoke": "exercise the pipeline on a downloaded sample",
         "experiments": "run the first campaign experiment matrix",
         "listening": "sample labelled audio and score human judgments",
+        "audit-labels": "audit sampled pauses with independent WebRTC speech activity",
         "check-pitch": "compare pitch and voicing with a YIN speech reference",
         "check-ami-reference": "compare AMI labels with manual timestamps",
     }
     for name, description in handlers.items():
         parser = sub.add_parser(name, help=description)
         parser.set_defaults(func=command)
-        if name in {"label", "train", "smoke", "experiments"}:
+        if name in {"label", "train", "smoke", "experiments", "audit-labels"}:
             parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
         if name == "label":
             parser.add_argument("--workers", type=int, default=1)
+        if name == "audit-labels":
+            parser.add_argument("--detector", choices=("webrtc", "speechbrain"), default="webrtc")
         if name in {"label", "shard", "listening"}:
             parser.add_argument("--only", nargs="+", choices=LABEL_SOURCES, default=LABEL_SOURCES)
         if name == "smoke":
@@ -342,10 +349,11 @@ def register(sub):
             parser.add_argument("--config", type=Path, required=True)
         if name == "train":
             parser.add_argument("--name", required=True)
-        if name in {"export", "benchmark"}:
+        if name in {"export", "benchmark", "benchmark-volume"}:
             parser.add_argument("model", type=Path)
-        if name == "benchmark":
+        if name in {"benchmark", "benchmark-volume"}:
             parser.add_argument("--threshold", type=float)
+        if name == "benchmark":
             parser.add_argument("--split", choices=("validation", "test"), default="test")
             parser.add_argument("--samples", type=int, default=250)
 
@@ -357,6 +365,18 @@ def command(args):
         label(root, args.only, _device(args.device), args.workers)
     elif name == "shard":
         shard(root, args.only)
+    elif name == "benchmark-volume":
+        from .volume import benchmark_volume
+
+        threshold = args.threshold
+        if threshold is None:
+            threshold = json.loads(args.model.with_name("export.json").read_text())["threshold"]
+        benchmark_volume(root, args.model, threshold)
+    elif name == "audit-labels":
+        from .label_audit import audit, label_hashes
+
+        rows = [row for source in LABEL_SOURCES for row in read_rows(root / "labels" / f"{source}.jsonl")]
+        print(audit(root, rows, label_hashes(root, LABEL_SOURCES), detector=args.detector, device=_device(args.device)))
     elif name == "check-ami-reference":
         from .ami_reference import check_ami_reference
 

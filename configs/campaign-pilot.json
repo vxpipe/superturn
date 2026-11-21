@@ -1,0 +1,11 @@
+{
+  "architecture": "a",
+  "parameters": 150000,
+  "window": 3,
+  "seed": 17,
+  "epochs": 1,
+  "max_steps": 256,
+  "batch_size": 64,
+  "augmentation": true,
+  "augmentation_workers": 8
+}

@@ -4,6 +4,7 @@ import hashlib
 import json
 import shutil
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from functools import lru_cache
 from tempfile import TemporaryDirectory
@@ -116,7 +117,8 @@ def make_shards(root, rows, *, sample=False):
                                   for split, items in grouped.items()), "clips")
     cached = lru_cache(maxsize=8)(read_audio)
     try:
-        with TemporaryDirectory(dir=target.parent) as temp:
+        with (TemporaryDirectory(dir=target.parent) as temp,
+              ThreadPoolExecutor(max_workers=6) as renderers):
             staging = target.parent / temp
             fingerprints = {split: hashlib.sha256() for split in grouped}
             for split, items in sorted(grouped.items()):
@@ -125,9 +127,13 @@ def make_shards(root, rows, *, sample=False):
                     folder.mkdir(parents=True)
                     for start in range(0, len(items), SHARD_ROWS):
                         records = []
-                        for row in items[start:start + SHARD_ROWS]:
-                            seed = _key(row)
-                            pcm = condition(clip(row, cached(root / row.audio)), name, seed)
+                        batch = items[start:start + SHARD_ROWS]
+                        clips = [clip(row, cached(root / row.audio)) for row in batch]
+                        if name == "clean":
+                            rendered = clips
+                        else:
+                            rendered = renderers.map(condition, clips, [name] * len(batch), map(_key, batch))
+                        for row, pcm in zip(batch, rendered):
                             metadata = asdict(row)
                             pcm_bytes = pcm.tobytes()
                             fingerprints[split].update(json.dumps((name, metadata), sort_keys=True).encode())

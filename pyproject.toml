@@ -22,6 +22,12 @@ campaign = [
   "openai-whisper==20250625",
   "silero-vad==6.2.3",
   "torch==2.8.0",
+  "webrtcvad-wheels==2.0.14.post1",
+]
+audit-model = [
+  {include-group = "campaign"},
+  "speechbrain==1.0.3",
+  "torchaudio==2.8.0",
 ]
 
 [build-system]

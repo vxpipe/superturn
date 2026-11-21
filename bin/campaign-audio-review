@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Run the local audio-language judge in an isolated package overlay.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+: "${SUPERTURN_DATA:?set the campaign data root}"
+[[ -f "$SUPERTURN_DATA/.campaign-machine" ]] || { echo "requires a campaign machine" >&2; exit 2; }
+overlay="$SUPERTURN_DATA/audit-models/qwen2-audio/site"
+if [[ ! -f "$overlay/.ready" ]]; then
+  mkdir -p "$overlay"
+  uv pip install --target "$overlay" 'transformers==4.56.2'
+  uv pip install --no-deps --target "$overlay" 'accelerate==1.10.1'
+  touch "$overlay/.ready"
+fi
+if [[ "${1:-}" == --setup ]]; then
+  exit 0
+fi
+export PYTHONPATH="$overlay${PYTHONPATH:+:$PYTHONPATH}"
+uv run --no-sync python -m superturn.audio_judge "$@"

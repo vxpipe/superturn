@@ -6,6 +6,7 @@ import hashlib
 import json
 from importlib.metadata import PackageNotFoundError, version
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
@@ -202,6 +203,8 @@ def train(root, name, config, device):
     metrics = []
     best = None
     completed = 0
+    processors = config.get("augmentation_workers", 1)
+    augmenter = ThreadPoolExecutor(max_workers=processors) if augmentation else None
     try:
         for epoch in range(epochs):
             model.train()
@@ -211,16 +214,19 @@ def train(root, name, config, device):
                 selected = [row for row in batch if eligible(row, config)]
                 if not selected:
                     continue
-                audio, gaps, truth, weights = [], [], [], []
+                audio, jobs, gaps, truth, weights = [], [], [], [], []
                 for index in rng.permutation(len(selected)):
                     row = selected[index]
                     gap_ms = rng.choice([v for v in PAUSES if v * 16 <= row["pause_samples"]])
                     pcm = _input(row, model.samples, gap_ms)
-                    if augmentation:
+                    if augmenter is not None:
                         other = [value for key, value in voices.items() if key != (row["source"], row["speaker"])]
-                        pcm = augment(pcm, int(rng.integers(2**63)), noise_paths=noise,
-                                      ir_paths=impulse, voices=other, pause_samples=gap_ms * 16)
-                    audio.append(pcm)
+                        jobs.append(augmenter.submit(
+                            augment, pcm, int(rng.integers(2**63)), noise_paths=noise,
+                            ir_paths=impulse, voices=other, pause_samples=gap_ms * 16,
+                        ))
+                    else:
+                        audio.append(pcm)
                     # Equalize class exposure to elapsed silence within each available gap.
                     gaps.append([gap_ms])
                     positive = row["label"] != "hold"
@@ -229,6 +235,8 @@ def train(root, name, config, device):
                     weight *= 0.35 if row["label"] == "weak-shift" else 1
                     weight *= 1 if positive else config.get("hold_weight", 2.0)
                     weights.append([weight])
+                if augmenter is not None:
+                    audio = [job.result() for job in jobs]
                 audio = np.asarray(audio, dtype=np.float32) / 32768
                 inputs = torch.from_numpy(audio).to(device)
                 gap = torch.as_tensor(np.asarray(gaps), dtype=torch.float32, device=device)
@@ -273,4 +281,7 @@ def train(root, name, config, device):
             temp.write_text(json.dumps(result, sort_keys=True) + "\n")
             temp.replace(marker)
         meter.finish()
+    finally:
+        if augmenter is not None:
+            augmenter.shutdown(cancel_futures=True)
     return run / "best.pt"

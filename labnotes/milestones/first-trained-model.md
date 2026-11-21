@@ -43,24 +43,39 @@ Last updated 2026-11-21.
   subset and resumed acquisition from completed files. The final AMI retry
   resolved the provider HTTP 503 and passed the licence check.
 
+- All speech labels and shards are present. There are 296,744 unique
+  examples after caps and 442,642 condition copies. A reorder check
+  reproduced the speaker splits, with both labels at 300 ms in all
+  43 test languages. R2 verification passed for labels, shards and reports.
+- The user requested an automated substitute for the manual listening
+  review. WebRTC and SpeechBrain processed 50 sampled pauses per language
+  and 50 per-track AMI examples, with supplemental AMI samples as needed.
+  Both acoustic audits leave the per-track quality gate open. Qwen2-Audio
+  scored 17/40 on blinded calibration and cannot serve as an acceptance
+  judge. The direct manual AMI comparison supports 989 original labels.
+
 ### Waiting on
 
-- Full preparation is in progress. Indic and VoxPopuli labelling passed.
-  The repaired AMI lane is running. Parallel read-speech and Emilia
-  labelling passed a separate cached-sample check and will replace the
-  slower serial lanes. The 50-per-language listening gate still applies
-  before the real training queue.
+- Raw backup and verification. Await the user's decision on using the
+  989 AMI examples supported by the manual annotation comparison as the
+  automated English review scope. The full experiment matrix has not
+  started. A 256-step validation-only pilot verified real training
+  throughput without consulting the test split.
 
 ### Next step
 
-After all label lanes finish, run `bin/campaign-prepare --finish` in
-`vxpipe` to shard, prepare the listening packet and verify the R2 copy.
-Review real source coverage
-and the listening results before starting the experiment matrix. Keep
-`bin/vast-watch` running throughout. After all gates pass, send the final
-PushOver message prefixed with `COMPLETE`. Leave the machine running for
-at least one hour after that message so the user can review, then fetch, sync
-and destroy it unless the user asks to keep it.
+Resolve the automated review gate, then run the staged experiment matrix in
+`vxpipe`. Measure the selected artifacts on the frozen test set, including
+the telephone speech level and SNR sweeps, and fill the
+[model card](../../docs/model-card.md) with the results. Fetch the verified
+artifact locally with `bin/vast-fetch`. Publish the approved ONNX and model
+card to `HashNuke/superturn` when that Hugging Face repository exists, and
+pin its release commit as a Git submodule.
+
+Keep `bin/vast-watch` running throughout. After all gates pass, send the
+final PushOver message prefixed with `COMPLETE`. Leave the machine running
+for at least one hour after that message for review, then fetch, sync and
+destroy it unless the user asks to keep it.
 
 ### Evidence
 
@@ -257,12 +272,14 @@ Follows the [campaign runbook](../../docs/campaign-plan.md#runbook).
   the speaker count of the streamed Common Voice sample and the MUSAN member
   order from `superturn inspect-archive`.
 - [x] All sources downloaded, manifests written, licence check passes.
-- [ ] Labels, speaker report, splits, frozen test sets and shards built per
+- [x] Labels, speaker report, splits, frozen test sets and shards built per
   source.
 - [ ] Raw downloads, labels, shards and test copies pushed to storage
   (`bin/sync push`) and listed back.
-- [ ] 50 randomly sampled labelled pauses per language listened to and marked
-  correct or wrong in labnotes; per-track labels at least 90% correct.
+- [ ] Validate the automated replacement for the listening review on 50
+  sampled pauses per language. Report supported, contradicted, and
+  unresolved labels. Meet the 90% per-track review target across the
+  predetermined AMI sample.
 
 ### C. Campaign 1: experiment round
 
@@ -307,6 +324,9 @@ results. Every number is reported per source, per language, per condition
   and 1,500 ms.
 - [ ] **CPU latency**: p50 and p99 per call on one CPU core with ONNX Runtime,
   batch 1.
+- [ ] **Speech level and SNR**: paired telephone sweeps at 300 ms with the
+  validation threshold fixed. Report the lowest tested levels meeting the
+  quality targets and put the operating limits in the model card.
 - [ ] **Local production calls**: the same metrics on local call recordings
   when available, kept out of the repository and out of training.
 - [ ] **Decision record** in labnotes: which model goes forward and why, or
@@ -318,9 +338,9 @@ The targets below are our own starting proposals, chosen for the product's
 needs; they are not taken from any other project. They are revisited after
 stage 1 results, and any change is recorded here with its reason.
 
-- [ ] Only permissively licensed sources in training and test data; the
+- [x] Only permissively licensed sources in training and test data; the
   licence check passes.
-- [ ] Splits reproduce exactly from the code; no speaker in more than one
+- [x] Splits reproduce exactly from the code; no speaker in more than one
   split; every training source present in train, validation and test.
 - [ ] int8 ONNX file at most 1 MB, 100k–1M parameters, raw PCM in.
 - [ ] p99 inference under 2 ms per call on one CPU core.

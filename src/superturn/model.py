@@ -31,17 +31,25 @@ class AcousticFeatures(nn.Module):
         self.register_buffer("lag_window", window_correlation / padded.square().sum(), persistent=False)
 
     def pitch_features(self, power):
-        harmonics = (self.bins[:, None] * self.lags * (2 * math.pi / FFT)).cos()
-        correlation = (power @ harmonics) / power.sum(dim=-1, keepdim=True).clamp_min(1e-8)
+        # DC and sub-pitch rumble can otherwise appear perfectly periodic.
+        pitch_power = power[..., 2:]
+        harmonics = (self.bins[2:, None] * self.lags * (2 * math.pi / FFT)).cos()
+        strength = pitch_power.sum(dim=-1, keepdim=True)
+        correlation = (pitch_power @ harmonics) / strength.clamp_min(1e-8)
         corrected = (correlation / self.lag_window).clamp(-1, 1)
         lag_index = (corrected - self.lags * 0.0005).argmax(dim=-1, keepdim=True)
         pitch = 16000 / (lag_index.to(power.dtype) + 40)
-        return pitch, corrected.gather(-1, lag_index).clamp(0, 1)
+        raw_peak = correlation.gather(-1, lag_index)
+        floor = strength.amax(dim=1, keepdim=True) * 0.0003
+        reliable = (strength >= floor.clamp_min(0.01)) & (raw_peak >= 0.18)
+        confidence = corrected.gather(-1, lag_index).clamp(0, 1)
+        return pitch, confidence * reliable.to(power.dtype)
 
     def power_spectrum(self, audio):
         # Left-align the 400-sample Hann window within the 512-point FFT.
         window = F.pad(self.window, (0, FFT - FRAME))
-        padded = F.pad(audio, (0, FFT - FRAME))
+        centered = audio - audio.mean(dim=1, keepdim=True)
+        padded = F.pad(centered, (0, FFT - FRAME))
         spectrum = torch.stft(padded, n_fft=FFT, hop_length=HOP, window=window,
                               center=False, return_complex=False)
         return spectrum[:, :129].square().sum(dim=-1).transpose(1, 2)
