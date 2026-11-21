@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
-# Optional: copy downloads, derived data and results between $SUPERTURN_DATA
-# and persistent storage ($SUPERTURN_REMOTE, an rclone remote, kept private),
-# so a later campaign starts from them instead of downloading and labelling
-# again. Usage: bin/sync push|pull [DIR...]
+# Copy downloads, derived data and results between $SUPERTURN_DATA and
+# persistent storage, so a later campaign starts from them instead of
+# downloading and labelling again. Usage: bin/sync push|pull [DIR...]
+#
+# $SUPERTURN_REMOTE names the bucket (store:<bucket>, an rclone remote kept
+# private). Everything this project stores goes under the fixed directory
+# superturn/ in that bucket, so it never mixes with other projects' files:
+# store:<bucket>/superturn/<dir>. Only rclone copy is used, never sync, so
+# nothing in the bucket is ever deleted by this script.
 # Raw downloads keep their per-file markers, so bin/download skips them after
 # a pull.
 set -euo pipefail
@@ -10,15 +15,29 @@ cd "$(dirname "$0")/.."
 [[ -f .env ]] && { set -a; source .env; set +a; }
 : "${SUPERTURN_DATA:?set SUPERTURN_DATA}"
 : "${SUPERTURN_REMOTE:?set SUPERTURN_REMOTE in .env}"
-direction="${1:?usage: bin/sync push|pull [DIR...]}"; shift
+
+BUCKET_DIR=superturn
+[[ "$SUPERTURN_REMOTE" =~ ^[A-Za-z0-9_-]+:[A-Za-z0-9._-]+/?$ ]] ||
+  { echo "error: SUPERTURN_REMOTE must be store:<bucket> (no path); files go under <bucket>/$BUCKET_DIR/" >&2; exit 2; }
+root="${SUPERTURN_REMOTE%/}/$BUCKET_DIR"
+
+usage() { echo "usage: bin/sync push|pull [DIR...]" >&2; exit 2; }
+direction="${1:-}"; [[ "$direction" == push || "$direction" == pull ]] || usage; shift
 dirs=("$@"); [[ ${#dirs[@]} -eq 0 ]] && dirs=(raw labels shards tests runs reports logs manifests)
+for d in "${dirs[@]}"; do
+  [[ "$d" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "error: DIR must be a plain directory name: $d" >&2; exit 2; }
+done
+
 mkdir -p "$SUPERTURN_DATA/manifests"
 cp -f "$SUPERTURN_DATA"/raw/*/MANIFEST.json "$SUPERTURN_DATA/manifests/" 2>/dev/null || true
 for d in "${dirs[@]}"; do
-  case "$direction" in
-    push) [[ -d "$SUPERTURN_DATA/$d" ]] && rclone copy --transfers 16 "$SUPERTURN_DATA/$d" "$SUPERTURN_REMOTE/$d" ;;
-    pull) rclone lsf --max-depth 1 "$SUPERTURN_REMOTE/$d" >/dev/null 2>&1 || continue
-          rclone copy --transfers 16 "$SUPERTURN_REMOTE/$d" "$SUPERTURN_DATA/$d" ;;
-    *) echo "usage: bin/sync push|pull [DIR...]" >&2; exit 2 ;;
-  esac
+  if [[ "$direction" == push ]]; then
+    [[ -d "$SUPERTURN_DATA/$d" ]] || continue
+    echo "push $d -> $root/$d"
+    rclone copy --transfers 16 "$SUPERTURN_DATA/$d" "$root/$d"
+  else
+    rclone lsf --max-depth 1 "$root/$d" >/dev/null 2>&1 || continue
+    echo "pull $root/$d -> $d"
+    rclone copy --transfers 16 "$root/$d" "$SUPERTURN_DATA/$d"
+  fi
 done

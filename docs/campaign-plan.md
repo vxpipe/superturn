@@ -47,7 +47,10 @@ file is 1–4 MB.
 
 Raw downloads, labels, shards and test copies are kept in persistent storage
 (`SUPERTURN_REMOTE`, a private Cloudflare R2 bucket via rclone; see
-`env.sample`). `bin/vast-down` pushes them with `bin/sync push` before it
+`env.sample`). The bucket may be shared with other work, so everything goes
+under one project directory, `<bucket>/superturn/<dir>` (`raw`, `labels`,
+`shards`, `tests`, `runs`, `reports`, `logs`, `manifests`); `bin/sync` only
+copies, never deletes. `bin/vast-down` pushes them with `bin/sync push` before it
 destroys the machine; a later campaign runs `bin/sync pull` after bootstrap.
 This guards against a source being changed, gated or withdrawn and saves the
 download and labelling hours. Expected size: about 18 GB raw plus 15–40 GB

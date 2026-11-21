@@ -130,7 +130,7 @@ Implemented in `src/superturn/splits.py`, tested in `tests/test_splits.py`.
 - Never downloaded locally; only on the campaign machine.
 - Raw downloads stay on the campaign machine (20 GB on a 200 GB disk) and,
   with labels, shards and results, are pushed to private persistent storage
-  (`SUPERTURN_REMOTE`, Cloudflare R2) before the machine is released, so a
+  (`SUPERTURN_REMOTE`, Cloudflare R2, all under `<bucket>/superturn/`) before the machine is released, so a
   later campaign pulls them instead of downloading and labelling again.
 
 ## Checkpoints
