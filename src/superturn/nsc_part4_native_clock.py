@@ -30,9 +30,14 @@ DIRECTIONAL_COPY_LIMIT_DB = -10.
 
 def plan(preflight):
     paths = []
+    seconds = preflight.get("sample_prefix_seconds")
     for pair, task in enumerate(preflight["selected"], 1):
         for channel, (speaker, files) in enumerate(sorted(task["people"].items()), 1):
             for fmt, entry in sorted(files.items()):
+                if fmt == "flac" and seconds:
+                    rate, channels, bits, _, _ = entry["format"]
+                    transport_bound = (seconds + 2) * rate * channels * (bits // 8) + (256 << 10)
+                    entry = {**entry, "read_bytes": min(entry["read_bytes"], transport_bound)}
                 paths.append({"pair": pair, "channel": channel, "speaker": speaker, **entry,
                               "local": f"pair-{pair}-track-{channel}.{fmt}"})
     if len(paths) != 8 or len({row["speaker"] for row in paths}) != 4:
