@@ -3,6 +3,7 @@
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+import hashlib
 import json
 import random
 
@@ -139,16 +140,20 @@ def run(root):
     selected_bytes = metadata_bytes + sum(split["bytes"] for split in splits.values())
     if selected_bytes > BUDGET or not all(split["calls"] for split in splits.values()):
         raise ValueError("HarperValleyBank plan exceeds its cap or is missing a split")
-    _write_json(cache.with_name(f"{REVISION}-selection.json"), {
-        split: [{"id": row.identifier, "caller": row.caller, "agent": row.agent, "files": files(row.identifier)}
+    manifest = cache.with_name(f"{REVISION}-selection.json")
+    _write_json(manifest, {
+        split: [{"id": row.identifier, "caller": row.caller, "agent": row.agent,
+                 "files": [{"path": path, "bytes": sizes[path]} for path in files(row.identifier)]}
                 for row in cases] for split, cases in selection.items()
     })
     report = root / "reports" / "harper-valley-plan.json"
+    report.parent.mkdir(parents=True, exist_ok=True)
     _write_json(report, {
         "revision": REVISION, "corpus_calls": len(rows),
         "corpus_speakers": len({voice for row in rows for voice in (row.agent, row.caller)}),
         "metadata_bytes": metadata_bytes, "projected_bytes": selected_bytes,
         "cap_per_speaker": CALLS_PER_SPEAKER, "splits": splits, "audio_bytes_downloaded": 0,
+        "selection_sha256": hashlib.sha256(manifest.read_bytes()).hexdigest(),
     })
     return report
 
