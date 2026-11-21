@@ -80,7 +80,8 @@ def run(root):
     agree(archive, labels, turns, "en")
     truth = np.asarray(labels, dtype=bool)
     values = {name: [] for name in (*REFERENCES, LEGACY)}
-    prefix_peaks = []
+    observed_only = {name: [] for name in REFERENCES}
+    prefix_peaks, observed_peaks = [], []
     meter = Progress(REPORT, len(rows), "pauses")
     try:
         for pcm, edge, _, _ in rows:
@@ -88,9 +89,14 @@ def run(root):
             if len(clip) != NATIVE_SMART_TURN_SAMPLES:
                 raise ValueError("the 8-second benchmark clip does not already have the native fixed length")
             prefix_peaks.append(float(np.abs(clip[:-REFERENCES["smart-turn-3s"]]).max()))
+            clean = clip.copy()
+            clean[:max(0, len(clean) - (edge + GAP))] = 0
+            observed_peaks.append(float(np.abs(clean[:-REFERENCES["smart-turn-3s"]]).max()))
             for name, size in REFERENCES.items():
                 audio = np.pad(clip[-size:], (NATIVE_SMART_TURN_SAMPLES - size, 0))
                 values[name].append(score(audio))
+                control = np.pad(clean[-size:], (NATIVE_SMART_TURN_SAMPLES - size, 0))
+                observed_only[name].append(score(control))
             values[LEGACY].append(score(clip[-REFERENCES["smart-turn-3s"]:]))
             meter.advance(1)
     except BaseException:
@@ -111,6 +117,9 @@ def run(root):
         raise ValueError("the historical reference operating points did not reproduce")
     paired = {"en": {"labels": labels, "turn_ordinals": turns, "scores": scores}}
     effects = {name: paired_seed_turns(paired, candidate, (name,) * len(candidate)) for name in REFERENCES}
+    clean_history = reference_history(rows, truth, observed_only, observed_peaks)
+    if clean_history["bins"]["at_most_3s"]["max_absolute_score_difference"] != 0:
+        raise ValueError("the zero-unobserved-history control differs at identical short inputs")
     results = {"scope": "frozen benchmark comparison only; development thresholds matched retrospectively",
                "decision_ms": 300, "dataset_sha256": DATASET_SHA256, "rows": len(rows),
                "turns": len(set(turns)), "shifts": int(truth.sum()), "holds": int((~truth).sum()),
@@ -121,10 +130,11 @@ def run(root):
                "epoch20_mean_recall": float(np.mean([points[name]["shift_recall"] for name in candidate])),
                "epoch20_minus_smart_turn": effects,
                "smart_turn_history_strata": reference_history(rows, truth, {name: values[name] for name in REFERENCES},
-                                                               prefix_peaks)}
+                                                               prefix_peaks),
+               "zero_unobserved_history_strata": clean_history}
     _write_json(root / "reports" / f"{REPORT}.json", results)
     print(json.dumps({key: results[key] for key in ("epoch20_mean_recall", "epoch20_minus_smart_turn",
-                                                    "smart_turn_history_strata")}, indent=2))
+                                                    "smart_turn_history_strata", "zero_unobserved_history_strata")}, indent=2))
 
 
 if __name__ == "__main__":
