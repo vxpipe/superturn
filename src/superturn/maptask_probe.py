@@ -62,7 +62,7 @@ def stage(folder, name):
     return signals.clip(-32768, 32767).astype(np.int16), rate, path
 
 
-def analyze(signal, detect):
+def analyze(signal, detect, *, candidates=None):
     intervals = [list(detect(channel)) for channel in signal]
     kept = []
     ratios = [[], []]
@@ -86,6 +86,8 @@ def analyze(signal, detect):
                 following = [row for row in segments if row.start == span.end + gap]
                 if len(following) != 1 or acoustic_status(span, following[0], track_audio) != "passed":
                     continue
+                if candidates is not None:
+                    candidates.append((span, following[0], label))
             by_channel[span.speaker, label] += 1
         return {str(i): {label: by_channel[str(i), label] for label in ("hold", "shift")} for i in range(2)}
     return {"channels": spans, "dominant_segments": len(kept), "all_segments": len(raw),
