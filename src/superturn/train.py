@@ -184,10 +184,13 @@ def _compatible_signature(recorded, expected):
     if recorded is None or {**recorded, "source": expected["source"]} != expected:
         return False
     path = REPO_ROOT / "configs" / "training-source-equivalence.json"
-    if not path.is_file():
+    if not path.is_file() or expected.get("config", {}).get("fixed_epochs", False):
         return False
     equivalent = json.loads(path.read_text())
-    return equivalent["previous"] == recorded.get("source") and equivalent["current"] == expected["source"]
+    previous = equivalent["previous"]
+    if isinstance(previous, str):
+        previous = [previous]
+    return recorded.get("source") in previous and equivalent["current"] == expected["source"]
 
 
 def completed_run(root, name, config, device):
@@ -248,6 +251,7 @@ def train(root, name, config, device):
     augmentation = config.get("augmentation", True)
     assets = _assets(root, model.samples, config, verified_ami) if augmentation else None
     epochs = config.get("epochs", 5)
+    fixed_epochs = config.get("fixed_epochs", False)
     steps = min(config.get("max_steps", train_batches * epochs), train_batches * epochs)
     meter = Progress(f"train-{name}", steps, "steps")
     metrics = []
@@ -303,6 +307,11 @@ def train(root, name, config, device):
                 meter.advance(1)
                 if completed >= steps:
                     break
+            if fixed_epochs and completed < steps:
+                metrics.append({"epoch": epoch + 1, "loss": loss_total / batches})
+                print(json.dumps(metrics[-1]), flush=True)
+                (run / "metrics.json").write_text(json.dumps(metrics, indent=2) + "\n")
+                continue
             validation, threshold = _validation(model, valid_files, device)
             if not config.get("smoke") and validation["auc"] is None:
                 raise ValueError("validation requires both 300 ms holds and shifts")

@@ -447,6 +447,12 @@ def test_checkpoint_equivalence_binds_both_source_hashes(tmp_path, monkeypatch):
     assert not train._compatible_signature(recorded, {**expected, "source": "other"})
     assert not train._compatible_signature(recorded, {**expected, "shards": "other"})
     assert not train._compatible_signature(expected, recorded)
+    equivalent.write_text(json.dumps({"previous": ["threaded", "process"], "current": "fixed-epoch"}))
+    updated = {**expected, "source": "fixed-epoch"}
+    assert train._compatible_signature(recorded, updated)
+    assert train._compatible_signature(expected, updated)
+    fixed = {"fixed_epochs": True, "seed": 17}
+    assert not train._compatible_signature({**expected, "config": fixed}, {**updated, "config": fixed})
 
 
 def test_pitch_rejects_constant_offset_and_low_energy_noise():

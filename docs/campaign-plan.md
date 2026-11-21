@@ -175,6 +175,15 @@ bin/vast-run -n ami-activity 'uv run --no-sync python -m superturn.ami_activity 
 This uses existing AMI word timings and speaker headsets from training
 meetings. Find its reports and checkpoints under `ami-activity/`.
 
+Compare AMI models across connected meeting-group folds.
+
+```sh
+bin/vast-run -n ami-crossval 'uv run --no-sync python -m superturn.ami_crossval bed0ba3de027429f && bin/sync push exports reports && bin/sync verify exports reports'
+```
+
+The pilot holds each evaluation group out of training and threshold
+calibration. Results and checkpoints are under `ami-crossval/`.
+
 ## Later campaigns
 
 A later campaign runs `bin/sync pull` after bootstrap and starts from the

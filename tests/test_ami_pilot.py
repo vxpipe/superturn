@@ -8,6 +8,7 @@ import pytest
 from superturn import ami_mixture
 from superturn.ami_activity import anchors
 from superturn.ami_calibration import development_splits
+from superturn.ami_crossval import assign_folds
 from superturn.ami_learning import select_speakers
 from superturn.ami_transfer import partial_auc
 from superturn.ami_pilot import acoustic_status, annotated_pauses, group_words, match_training
@@ -126,3 +127,14 @@ def test_activity_anchor_depends_on_past_frames_and_uses_disjoint_future_bins():
     assert silent_future[30] == (200, (0,) * 8)
     activity[1, 29] = True
     assert 30 not in {frame for frame, _, _ in anchors(activity, 0)}
+
+
+def test_crossval_retains_largest_component_and_balances_disjoint_folds():
+    rows = [{"group": str(group)} for group, count in enumerate([12, 4, 4, 3, 2, 2, 1, 1])
+            for _ in range(count)]
+    assignments = assign_folds(rows, count=3)
+    assert assignments == assign_folds(reversed(rows), count=3)
+    assert assignments["0"] is None
+    assert set(assignments.values()) == {None, 0, 1, 2}
+    counts = [sum(assignments[row["group"]] == fold for row in rows) for fold in range(3)]
+    assert max(counts) - min(counts) <= 1
