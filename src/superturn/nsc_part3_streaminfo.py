@@ -22,8 +22,8 @@ def describe(reader, member):
     if length < HEADER_SIZE or position < 512 or position % 512 or position + length > reader.ends[-1]:
         raise ValueError("invalid FLAC extent")
     rate, channels, bits, samples, digest = flac_streaminfo(reader.read(position, HEADER_SIZE))
-    if not rate or not samples:
-        raise ValueError("unknown native sample rate or duration")
+    if not rate:
+        raise ValueError("invalid native sample rate")
     return {"rate": rate, "channels": channels, "bits": bits, "samples": samples, "pcm_md5": digest}
 
 
@@ -55,17 +55,18 @@ def run(root, pair_limit, expected_digest):
             speaker = [describe(reader, member) for member in pair["speaker_tracks"]]
             room = [describe(reader, member) for member in pair["room_tracks"]]
             tracks = speaker + room
-            durations = [track["samples"] / track["rate"] for track in tracks]
-            rate_match = len({track["rate"] for track in tracks}) == 1
-            span = max(durations) - min(durations)
+            formats = {(track["rate"], track["channels"], track["bits"]) for track in tracks}
+            durations = [track["samples"] / track["rate"] for track in tracks if track["samples"]]
+            span = max(durations) - min(durations) if len(durations) == len(tracks) else None
+            compatible = len(formats) == 1 and span <= MAX_DURATION_DELTA if span is not None else None
             room_match = len(room) == 2 and room[0] == room[1] and room[0]["pcm_md5"] != ZERO_MD5
             close_md5 = [track["pcm_md5"] for track in speaker]
             copied_speech = (close_md5[0] == close_md5[1] != ZERO_MD5
                              or any(track["pcm_md5"] != ZERO_MD5 and track["pcm_md5"] in close_md5
                                     for track in room))
             outcomes.append({"keys": pair["keys"], "speaker": speaker, "room": room,
-                             "same_native_rate": rate_match, "duration_span_seconds": span,
-                             "duration_compatible": rate_match and span <= MAX_DURATION_DELTA,
+                             "same_native_format": len(formats) == 1, "duration_span_seconds": span,
+                             "duration_compatible": compatible,
                              "duplicate_declared_room_format_and_checksum": room_match,
                              "shared_declared_speaker_checksum": copied_speech})
             meter.advance(1)
@@ -78,7 +79,9 @@ def run(root, pair_limit, expected_digest):
               "streaminfo_payload_bytes": reader.bytes, "audio_frames_read": 0,
               "logical_range_requests": reader.requests, "maximum_duration_span_seconds": MAX_DURATION_DELTA,
               "indexed_pairs_with_two_transcripts_and_room": len(available), "examined_pairs": count,
-              "duration_compatible_pairs": sum(row["duration_compatible"] for row in outcomes),
+              "duration_compatible_pairs": sum(row["duration_compatible"] is True for row in outcomes),
+              "duration_incompatible_pairs": sum(row["duration_compatible"] is False for row in outcomes),
+              "duration_unverifiable_pairs": sum(row["duration_compatible"] is None for row in outcomes),
               "pairs_with_two_room_tracks": sum(len(row["room"]) == 2 for row in outcomes),
               "duplicate_declared_room_format_and_checksum_pairs":
                   sum(row["duplicate_declared_room_format_and_checksum"] for row in outcomes),
