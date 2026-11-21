@@ -10,6 +10,17 @@ import numpy as np
 RATE = 16000
 
 
+def flac_streaminfo(header):
+    """Read native format, sample count and PCM checksum from the first 42 bytes."""
+    if (len(header) != 42 or header[:4] != b"fLaC" or header[4] & 127
+            or int.from_bytes(header[5:8], "big") != 34):
+        raise ValueError("missing native FLAC STREAMINFO")
+    packed = int.from_bytes(header[18:26], "big")
+    rate, channels = packed >> 44, ((packed >> 41) & 7) + 1
+    bits, count = ((packed >> 36) & 31) + 1, packed & ((1 << 36) - 1)
+    return rate, channels, bits, count, header[26:42].hex()
+
+
 def read_audio(source):
     if isinstance(source, Path) and source.suffix.lower() == ".wav":
         try:

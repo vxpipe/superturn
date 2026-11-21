@@ -9,7 +9,7 @@ import math
 import numpy as np
 
 from .ami_calibration import _write_json
-from .audio import RATE, read_audio, silero
+from .audio import RATE, flac_streaminfo, read_audio, silero
 from .dense_teacher import file_digest
 from .nsc_part6_recording_pilot import SOURCE, verify_stage
 from .progress import Progress
@@ -27,12 +27,7 @@ MATCH_TOLERANCE = 3 * HOP
 
 def track_info(audio, timing, speaker):
     with audio.open("rb") as stream:
-        header = stream.read(42)
-    if len(header) != 42 or header[:4] != b"fLaC" or header[4] & 127 or int.from_bytes(header[5:8], "big") != 34:
-        raise ValueError("missing native FLAC STREAMINFO")
-    packed = int.from_bytes(header[18:26], "big")
-    native_rate, channels = packed >> 44, ((packed >> 41) & 7) + 1
-    bits, count = ((packed >> 36) & 31) + 1, packed & ((1 << 36) - 1)
+        native_rate, channels, bits, count, _ = flac_streaminfo(stream.read(42))
     pcm = read_audio(audio)
     if (native_rate, channels, bits, count) != (RATE, 1, 16, len(pcm)):
         raise ValueError("decoded audio differs from the native 16 kHz mono stream")
