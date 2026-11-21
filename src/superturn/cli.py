@@ -17,7 +17,11 @@ def _gb(n: int) -> str:
 
 def _plans(args):
     sources = load_sources()
-    return [plan_source(s, sample=args.sample) for s in select(sources, args.only)]
+    plans = [plan_source(source, sample=args.sample) for source in select(sources, args.only)]
+    empty = [plan.source.name for plan in plans if not plan.files]
+    if empty:
+        raise ValueError(f"no files match the configured selection for {', '.join(empty)}")
+    return plans
 
 
 def _over_budget(plans, args) -> bool:
@@ -53,7 +57,10 @@ def cmd_download(args) -> int:
     if _over_budget(plans, args):
         return 2
     failed = []
-    meter = Progress("download-sample" if args.sample else "download", sum(p.size for p in plans), "B")
+    suffix = "-sample" if args.sample else ""
+    if args.only:
+        suffix += "-" + "-".join(args.only)
+    meter = Progress("download" + suffix, sum(p.size for p in plans), "B")
     for plan in plans:
         name = plan.source.name
         print(f"== {name}: {len(plan.files)} files, up to {_gb(plan.size).strip()}", flush=True)

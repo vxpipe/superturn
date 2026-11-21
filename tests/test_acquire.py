@@ -109,3 +109,24 @@ def test_inspect_archive_lists_member_order_without_writing(tmp_path):
     members = inspect_archive(archive.as_uri(), max_bytes=10**9)
     assert [name for name, _, _ in members] == ["musan/music/m.wav", "musan/noise/n.wav"]
     assert sorted(p.name for p in tmp_path.iterdir()) == ["a.tar.gz"]
+
+
+def test_request_retries_transient_provider_failure(monkeypatch):
+    from urllib.error import HTTPError
+
+    from superturn import acquire
+
+    response = object()
+    calls = []
+    waits = []
+
+    def open_request(request, *, timeout):
+        calls.append(request.full_url)
+        if len(calls) == 1:
+            raise HTTPError(request.full_url, 503, "try later", {}, io.BytesIO())
+        return response
+
+    monkeypatch.setattr(acquire.urllib.request, "urlopen", open_request)
+    monkeypatch.setattr(acquire.time, "sleep", waits.append)
+    assert acquire._request("https://example.test/audio") is response
+    assert len(calls) == 2 and waits == [1]

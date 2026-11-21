@@ -15,6 +15,7 @@ import struct
 import tarfile
 import threading
 import time
+import urllib.error
 import urllib.request
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -48,9 +49,19 @@ class Plan:
 
 def _request(url: str, method: str = "GET", headers: dict | None = None, data: bytes | None = None):
     all_headers = {"User-Agent": USER_AGENT, **(headers or {})}
-    response = urllib.request.urlopen(
-        urllib.request.Request(url, data=data, method=method, headers=all_headers), timeout=120
-    )
+    request = urllib.request.Request(url, data=data, method=method, headers=all_headers)
+    for attempt in range(4):
+        try:
+            response = urllib.request.urlopen(request, timeout=120)
+            break
+        except urllib.error.HTTPError as error:
+            if attempt == 3 or error.code not in {429, 500, 502, 503, 504}:
+                raise
+            error.close()
+        except (urllib.error.URLError, TimeoutError):
+            if attempt == 3:
+                raise
+        time.sleep(2 ** attempt)
     counter = getattr(_local, "counter", None)
     return _Counted(response, counter) if counter else response
 
@@ -372,6 +383,8 @@ def _once(fetch):
 @_once
 def _fetch_wav_slice(plan: Plan, f: PlannedFile, target: Path) -> dict:
     with _request(f.url, headers={"Range": "bytes=0-4095"}) as response:
+        if response.status != 206:
+            raise RuntimeError(f"{f.url}: server ignored the header range request")
         fmt, data_offset = parse_wav_header(response.read())
     channels, rate, _, block_align = struct.unpack("<HIIH", fmt[2:14])
     first = data_offset + int(f.extra["start_s"] * rate) * block_align
