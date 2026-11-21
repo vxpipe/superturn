@@ -26,11 +26,15 @@ includes the handover.
   sees a pause.
 - Audio in, probability out. Transcripts are not a model input; an application
   may combine the score with transcript rules on its own side.
+- The shipping model takes up to 3 s of caller audio and `silence_ms`.
+  Teacher-only analysis may use longer causal history.
 - Train and fine-tune Superturn's own turn detector. Existing architectures
   and pretrained audio components from other tasks, such as TTS, are
-  allowed. Third-party turn detectors may be benchmarked. Do not use their
-  checkpoints to initialize, fine-tune or ship Superturn. Use permissively
-  licensed datasets.
+  allowed. Third-party turn detectors may be benchmarked. Smart Turn
+  probabilities may supervise a separately initialized Superturn student.
+  Record the teacher release, licence, input data and target provenance.
+  Do not use third-party turn detector weights to initialize or ship Superturn.
+  Use training data whose terms allow commercial training and open weights.
 - Labelling uses Silero VAD for pause boundaries on per-speaker tracks and
   pyannote for diarization of mixed single-track audio.
 
@@ -128,8 +132,17 @@ full runbook.
   (`src/superturn/splits.py`). Never split by clip. Never tune on test sets.
 - Guard speaker variety: count speakers per source and language from the
   data, cap examples per speaker, and report metrics on unseen voices only.
-- Never commit audio, transcripts, shards, checkpoints or recordings from real
-  customer calls. Use customer calls only for local evaluation.
+- Customer calls may be used for training and evaluation when the applicable
+  consent and terms cover that use and publication of trained weights.
+  Confirm the authorized processing and storage locations before copying calls.
+  Split by customer and caller before sampling pauses, and reserve held-out
+  customers for evaluation. Retain customer audio, transcripts, labels with
+  identifiers, and checkpoints in approved private storage. Keep them out of
+  Git, shared notes, public reports and notifications.
+- Obtain consent covering the same uses for project-collected recordings.
+  Use Open Yap 1K only after the authorized recipient accepts its agreement
+  and obtains access. Keep its source files and reconstructible derivatives
+  in storage allowed by that agreement.
 - This is a public GitHub repository, including its history and docs.
   Keep secrets out of both the public repository and the shared notes
   repository:
