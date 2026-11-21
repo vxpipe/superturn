@@ -30,11 +30,12 @@ includes the handover.
   Teacher-only analysis may use longer causal history.
 - Train and fine-tune Superturn's own turn detector. Existing architectures
   and pretrained audio components from other tasks, such as TTS, are
-  allowed. Third-party turn detectors may be benchmarked. Smart Turn
-  probabilities may supervise a separately initialized Superturn student.
-  Record the teacher release, licence, input data and target provenance.
-  Do not use third-party turn detector weights to initialize or ship Superturn.
-  Use training data whose terms allow commercial training and open weights.
+  allowed, including as the basis of a general speech teacher trained on
+  Superturn's real labels. Record the teacher release, licence, input data
+  and target provenance. Existing turn detectors are benchmarks only.
+  Their weights and predictions are excluded from initialization,
+  distillation, ensemble targets and model selection. Use training data
+  whose terms allow commercial training and open weights.
 - Labelling uses Silero VAD for pause boundaries on per-speaker tracks and
   pyannote for diarization of mixed single-track audio.
 
