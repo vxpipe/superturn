@@ -155,6 +155,18 @@ files = [
 max_total_bytes = 602674
 order = 3
 
+[sources.nsc-part4-native-pilot]
+kind = "http"
+repo = "recursal/reprocessed_singapore_national_speech_corpus"
+revision = "5e8294c3fb5f2634fd1d7004f7c0264969fe6687"
+licence = "Singapore Open Data Licence v1.0"
+attribution = "Contains information from the IMDA National Speech Corpus Part 4, accessed on 21 November 2026 from the Recursal mirror, made available under the Singapore Open Data Licence version 1.0 (https://data.gov.sg/open-data-licence)."
+role = "metadata"
+opt_in = true
+selection_command = "python -m superturn.nsc_part4_native_preflight"
+max_total_bytes = 120000000
+order = 3
+
 [sources.icsi-transcript-census]
 kind = "http"
 url = "https://groups.inf.ed.ac.uk/ami/ICSICorpusAnnotations/ICSI_original_transcripts.zip"
