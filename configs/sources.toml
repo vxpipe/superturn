@@ -98,6 +98,15 @@ opt_in = true
 selection_command = "python -m superturn.maptask_probe"
 order = 3
 
+[sources.dral-original-pilot]
+kind = "http"
+licence = "CC0-1.0"
+attribution = "Dialogs Re-enacted Across Languages, Ward, Avila, Rivas and Marco"
+role = "test"
+opt_in = true
+selection_command = "python -m superturn.dral_original_pilot --plan-only"
+order = 3
+
 [sources.indic_diarbench]
 kind = "hf_rowgroups"
 repo = "sarvamai/indic-diarbench"
