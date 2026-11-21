@@ -19,19 +19,13 @@ from .sources import data_root
 SMART_TURN_REVISION = "f766f81d3cfdf7737ac64aad813d91bbfd56bf93"
 
 
-def run(root):
+def load_detectors(root):
     import onnxruntime as ort
     from _whisper_features import compute_whisper_log_mel_features
     from livekit.local_inference import EOT, EOT_MAX_SAMPLES, EOT_THRESHOLDS
 
-    from .train import _stats, _threshold, paths, records
-
-    if not (root / ".campaign-machine").is_file():
-        raise ValueError("External AMI baselines use the training server")
     if EOT_MAX_SAMPLES != 2 * RATE:
         raise ValueError("expected the LiveKit v1.1-mini two-second audio window")
-    base = root / "shards" / "ami-crossval" / CROSSVAL
-    reference = json.loads((root / "reports" / "ami-crossval" / f"{CROSSVAL}.json").read_text())
     smart_path = root / "cache" / "eot-competitors" / "smart-turn-v3.2-cpu.onnx"
     options = ort.SessionOptions()
     options.intra_op_num_threads = 2
@@ -50,6 +44,17 @@ def run(root):
         smart_score = smart_turn.run(None, {"input_features": features})[0].item()
         return {"livekit-v1.1-mini": float(mini_score), "smart-turn-v3.2": float(smart_score)}
 
+    return predict, defaults, hashlib.sha256(smart_path.read_bytes()).hexdigest()
+
+
+def run(root):
+    from .train import _stats, _threshold, paths, records
+
+    if not (root / ".campaign-machine").is_file():
+        raise ValueError("External AMI baselines use the training server")
+    base = root / "shards" / "ami-crossval" / CROSSVAL
+    reference = json.loads((root / "reports" / "ami-crossval" / f"{CROSSVAL}.json").read_text())
+    predict, defaults, checkpoint_sha256 = load_detectors(root)
     cached = {}
     cached_audio = lru_cache(maxsize=6)(read_audio)
     runs = defaultdict(list)
@@ -89,7 +94,7 @@ def run(root):
         _write_json(report, {
             "crossval": CROSSVAL, "rows": len(cached), "deadlines_ms": TIMES,
             "livekit_runtime": "0.3.2", "smart_turn_revision": SMART_TURN_REVISION,
-            "smart_turn_sha256": hashlib.sha256(smart_path.read_bytes()).hexdigest(),
+            "smart_turn_sha256": checkpoint_sha256,
             "scope": "AMI telephone development; LiveKit turn length proxied by available history, capped at 8 s",
             "partial_auc_max_fpr": 0.05,
             "results": {"/".join(key): {"summary": summarize_runs(rows), "folds": rows}

@@ -11,6 +11,7 @@ from superturn.ami_calibration import development_splits
 from superturn.ami_crossval import assign_folds
 from superturn.ami_floor_audit import floor_vote, matched_floor_intervals, reference_context
 from superturn.ami_deadline import retrospective_limits
+from superturn.ami_dialogue_audit import Act, classify
 from superturn.ami_learning import select_speakers
 from superturn.ami_more_turns import extra_turns
 from superturn.ami_text_signal import preceding
@@ -23,6 +24,21 @@ def test_text_signal_uses_word_end_and_excludes_future_words():
     assert preceding([(0, 8000, "first"), (9000, 9600, "last"), (9400, 9700, "tail")], 9600) == [
         (0, 8000, "first"), (9000, 9600, "last"),
     ]
+
+
+def test_dialogue_act_proxy_distinguishes_a_hold_inside_an_act_from_a_new_act():
+    row = {"pause_start": 9600, "speaker": "caller", "label": "hold", "annotated_backchannel": False}
+    first = (8000, 9600)
+    later = (14500, 18000)
+    tracks = {"caller": ({"first": first, "later": later}, {"first": [Act("a", "Inform", (first, later))]})}
+    assert classify(row, tracks, set()) == ("interior-or-fragment-hold", 0)
+    tracks["caller"][1]["first"] = [Act("a", "Inform", (first,))]
+    assert classify(row, tracks, set()) == ("terminal-act-hold", 1)
+    tracks["answerer"] = ({"answer": later}, {"answer": [Act("b", "Inform", (later,))]})
+    row["label"] = "shift"
+    assert classify(row, tracks, {("a", "b")}) == ("other-shift", 1)
+    tracks["caller"][0].pop("later")
+    assert classify(row, tracks, {("a", "b")}) == ("response-or-elicit-shift", 1)
 
 
 def test_retrospective_limits_keep_threshold_ties_together():

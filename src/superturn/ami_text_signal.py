@@ -91,6 +91,11 @@ def fit(train, truth, other):
     return [np.column_stack(((data - offset) / scale, np.ones(len(data)))) @ weights for data in other]
 
 
+def caller_words_matrix(features, vocabulary):
+    return np.array([timing + categories + [float(final == key) for key in vocabulary]
+                     for timing, categories, final, _, _ in features])
+
+
 def run(root):
     from .train import _stats, _threshold, paths, records
 
@@ -118,12 +123,11 @@ def run(root):
             matrices = defaultdict(list)
             for split in features:
                 matrices["caller-timing"].append(np.array([row[0] for row in split]))
-                lexical = [timing + tokens + [float(final == key) for key in common]
-                           for timing, tokens, final, _, _ in split]
-                matrices["caller-words"].append(np.array(lexical))
-                matrices["caller-punctuation"].append(np.array([a + row[3] for a, row in zip(lexical, split)]))
-                matrices["caller-plus-other-timing"].append(np.array([a + row[4][:3] for a, row in zip(lexical, split)]))
-                matrices["all-speaker-past"].append(np.array([a + row[4] for a, row in zip(lexical, split)]))
+                lexical = caller_words_matrix(split, common)
+                matrices["caller-words"].append(lexical)
+                matrices["caller-punctuation"].append(np.column_stack((lexical, [row[3] for row in split])))
+                matrices["caller-plus-other-timing"].append(np.column_stack((lexical, [row[4][:3] for row in split])))
+                matrices["all-speaker-past"].append(np.column_stack((lexical, [row[4] for row in split])))
             punctuation_rows += sum(any(row[3]) for row in features[2])
             y, cy, ty = [np.array([int(row["label"] == "shift") for row in cases]) for cases in splits]
 
