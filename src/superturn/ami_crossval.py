@@ -116,7 +116,7 @@ def summarize_runs(runs):
     }
 
 
-def paired_deltas(predictions, meta, *, variants=VARIANTS, baseline="gru-3s"):
+def paired_deltas(predictions, meta, *, variants=VARIANTS, baseline="gru-3s", seeds=SEEDS):
     """Bootstrap connected evaluation groups within each fold and pair by seed."""
     from .train import _auc
 
@@ -138,7 +138,7 @@ def paired_deltas(predictions, meta, *, variants=VARIANTS, baseline="gru-3s"):
                     continue
                 for variant in output:
                     effects = []
-                    for seed in SEEDS:
+                    for seed in seeds:
                         base = predictions[fold, baseline, seed]
                         values = predictions[fold, variant, seed]
                         effects.append(metric([values[i] for i in chosen], labels)

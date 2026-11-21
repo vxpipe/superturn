@@ -13,9 +13,16 @@ from superturn.ami_floor_audit import floor_vote, matched_floor_intervals, refer
 from superturn.ami_deadline import retrospective_limits
 from superturn.ami_learning import select_speakers
 from superturn.ami_more_turns import extra_turns
+from superturn.ami_text_signal import preceding
 from superturn.ami_transfer import partial_auc
 from superturn.ami_pilot import acoustic_status, annotated_pauses, group_words, match_training
 from superturn.labels import Label, Speech
+
+
+def test_text_signal_uses_word_end_and_excludes_future_words():
+    assert preceding([(0, 8000, "first"), (9000, 9600, "last"), (9400, 9700, "tail")], 9600) == [
+        (0, 8000, "first"), (9000, 9600, "last"),
+    ]
 
 
 def test_retrospective_limits_keep_threshold_ties_together():
