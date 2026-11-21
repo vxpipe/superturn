@@ -1,6 +1,6 @@
 # First trained turn model
 
-Status: checkpoint C training on a South Korea RTX 5090 datacenter rental.
+Status: checkpoint C queue stopped at a completed run for AMI label review.
 Last updated 2026-11-21.
 
 ## Handover
@@ -99,16 +99,25 @@ Last updated 2026-11-21.
   19m04s, versus 29m29s for the threaded seed. The first 1M GRU seed
   completed in 19m07s, with 5.11% recall at 4.79% false completes on AMI
   telephone validation. The server suite passed 54 tests.
-- All six GRU Stage 1 runs finished. Best AMI telephone recall is 5.84%
-  at 4.79% false completes. The Conformer runs are next. A validation
-  probe with identical digital silence in every pause showed that most
+- All six GRU runs and the first Conformer finished. Best AMI telephone
+  recall is 5.84% at 4.79% false completes. The Conformer reached 5.11%.
+  A validation probe with identical digital silence showed that most
   read-speech ranking survives removal of the original pause audio.
+- Reviewed the independent failure analysis and stopped the full queue
+  after the first Conformer checkpoint, at 7 of 12 Stage 1 runs. The
+  seven checkpoint hashes and matching AMI reports were verified.
+  The existing AMI slices have 2,144 annotation-led training candidates
+  and 196 validation candidates before acoustic checks.
 
 ### Next step
 
-Monitor the staged experiment matrix in `vxpipe`. Measure the selected
-artifacts on the frozen test set, including the AMI reference diagnostic
-and telephone speech level and SNR sweeps, and fill the
+Run a paired AMI-only pilot on the existing slices, comparing the current
+verified examples against annotation-led labels with acoustic checks.
+Use a fixed, speaker-disjoint validation comparison and preserve the
+original test shards. Record what changes before resuming the staged
+experiment matrix. Measure selected artifacts on the frozen test set,
+including the AMI reference diagnostic and telephone speech level and
+SNR sweeps, and fill the
 [model card](../../docs/model-card.md) with the results. Fetch the verified
 artifact locally with `bin/vast-fetch`. Publish the approved ONNX and model
 card to `HashNuke/superturn` when that Hugging Face repository exists, and
