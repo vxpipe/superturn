@@ -302,6 +302,16 @@ distribution and licence](https://docs.google.com/forms/d/e/1FAIpQLSd3k8wFF4GQP4
 · [Singapore Open Data Licence](https://data.gov.sg/open-data-licence)
 · [Pinned Recursal mirror](https://huggingface.co/datasets/recursal/reprocessed_singapore_national_speech_corpus/tree/5e8294c3fb5f2634fd1d7004f7c0264969fe6687)
 
+### Singapore National Speech Corpus Part 3 metadata
+
+The opt-in `nsc-part3-metadata` preflight uses the same mirror revision
+and Singapore Open Data Licence v1.0. It reads same-room TAR headers
+and can join them to the publisher's paired speaker-code index. The
+probe processes only the participant and partner codes from the index.
+It does not download audio or transcript payloads. A header and index
+match still needs channel, clock and speaker-independence validation.
+[Pinned Part 3 documentation](https://huggingface.co/datasets/recursal/reprocessed_singapore_national_speech_corpus/blob/5e8294c3fb5f2634fd1d7004f7c0264969fe6687/Docs/Part%203%20-%206.md)
+
 ### AMI manual annotations
 
 The University of Edinburgh's [manual annotations v1.6.2](https://groups.inf.ed.ac.uk/ami/download/)
