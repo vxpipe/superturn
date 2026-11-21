@@ -1,5 +1,6 @@
 """Check caller-prefix text signal on the pinned English development pauses."""
 
+import argparse
 from collections import Counter
 import hashlib
 import json
@@ -17,7 +18,8 @@ from .audio_judge import MODEL, REVISION
 from .dense_teacher import file_digest
 from .eot_domain_probe import DATASET_SHA256
 from .harper_history_probe import recall_area
-from .harper_partial_stt import GAP, HISTORY, english_membership, tick_at
+from .harper_partial_stt import GAP, HISTORY, english_membership, pinned_membership, tick_at
+from .harper_valley_benchmark import pinned_split
 from .model import build
 from .own_head_distillation import student_scores
 from .progress import Progress
@@ -216,6 +218,84 @@ def lexical_features(words):
     return [final in category for category in CLASSES] + [repeat, standalone]
 
 
+def lexical_rule(features):
+    return features[:, -1] - np.max(features[:, :4], axis=1)
+
+
+def matched_word_auc(scores, truth, counts, weights):
+    """Compare shift and hold only when they have the same word count."""
+    matched, concordant = 0, 0.
+    for count in np.unique(counts):
+        bucket = counts == count
+        holds = np.bincount(scores[bucket & ~truth] + 1, weights[bucket & ~truth], minlength=3)
+        shifts = np.bincount(scores[bucket & truth] + 1, weights[bucket & truth], minlength=3)
+        matched += holds.sum() * shifts.sum()
+        concordant += shifts @ (np.cumsum(holds) - .5 * holds)
+    return concordant / matched if matched else None, int(matched)
+
+
+def harper_lexical_transfer(root):
+    if not (root / ".campaign-machine").is_file():
+        raise ValueError("the text diagnostic requires staged Vast data")
+    replay_path = root / "reports/harper-partial-stt.json"
+    replay = json.loads(replay_path.read_text())
+    artifact = root / replay["snapshot_file"]
+    if file_digest(artifact) != replay["snapshot_file_sha256"]:
+        raise ValueError("the HarperValley transcript replay changed")
+    snapshots = json.loads(artifact.read_text())
+    data = {}
+    for role in ("train", "validation"):
+        members, digest = pinned_membership(root, role)
+        if digest != replay[f"{role}_membership_sha256"]:
+            raise ValueError("the HarperValley pause membership changed")
+        calls, _, _ = pinned_split(root, role)
+        agents = {call["id"]: call["agent"] for call in calls}
+        rows = []
+        for member, record in zip(members, snapshots[role], strict=True):
+            ordinal, call, edge, label, caller = member
+            snapshot = record["snapshots"]["300"]
+            if (record["ordinal"] != ordinal or record["decision_sample"] != edge + GAP
+                    or snapshot["audio_sample"] != tick_at(edge + GAP, 300)):
+                raise ValueError("a HarperValley snapshot moved")
+            words = unpack(snapshot["guarded_text_bytes"]).split()
+            rows.append((label == "shift", caller, agents[call], len(words), lexical_features(words)))
+        data[role] = rows
+    if {row[1] for row in data["train"]} & {row[1] for row in data["validation"]}:
+        raise ValueError("HarperValley callers overlap roles")
+    data["all"] = data["train"] + data["validation"]
+    results = {}
+    for role, rows in data.items():
+        labels, callers, agents, lengths, features = zip(*rows, strict=True)
+        truth, counts = np.asarray(labels), np.asarray(lengths)
+        scores = lexical_rule(np.asarray(features, dtype=np.int64))
+        n = len(rows)
+        point, pairs = matched_word_auc(scores, truth, counts, np.ones(n))
+        intervals = {}
+        rng = np.random.default_rng(29073)
+        caller = np.unique(callers, return_inverse=True)[1]
+        agent = np.unique(agents, return_inverse=True)[1]
+        for name, dimensions in (("caller", (caller,)), ("caller_agent", (caller, agent))):
+            replicates = []
+            for _ in range(400):
+                weights = np.ones(n)
+                for dimension in dimensions:
+                    groups = dimension.max() + 1
+                    weights *= np.bincount(rng.integers(groups, size=groups), minlength=groups)[dimension]
+                statistic, _ = matched_word_auc(scores, truth, counts, weights)
+                if statistic is not None:
+                    replicates.append(statistic)
+            intervals[name] = np.quantile(replicates, [.025, .975]).tolist()
+        results[role] = {"pauses": n, "shifts": int(truth.sum()), "holds": int((~truth).sum()),
+                         "callers": len(set(callers)), "agents": len(set(agents)),
+                         "unstratified_auc": _auc(scores, truth), "matched_word_count_auc": point,
+                         "matched_pairs": pairs, "cluster_bootstrap_95": intervals,
+                         "lexical_score_counts": Counter(f"{label}/{score}" for label, score in zip(truth, scores, strict=True))}
+    report = {"scope": "fixed caller-only lexical rule; no fitting or threshold selection",
+              "replay_sha256": file_digest(replay_path), "results": results}
+    _write_json(root / "reports/harper-lexical-transfer.json", report)
+    print(json.dumps(report, indent=2))
+
+
 def score_strata(scores, truth, groups, word_counts):
     bins = np.digitize(word_counts, [1, 4, 8, 13])
     strata = {}
@@ -260,7 +340,7 @@ def run(root):
         lengths = np.asarray([len(" ".join(row).encode("utf-8")) for row in words], dtype=np.float64)
         length_features = np.column_stack((lengths / 128, word_counts / 24))
         lexicon = np.asarray([lexical_features(row) for row in words], dtype=np.float64)
-        lexical_rule = lexicon[:, -1] - np.max(lexicon[:, :4], axis=1)
+        rule = lexical_rule(lexicon)
         values = texts[name]
         fused = crossfit(audio, values, observed, truth, groups)
         length_control = crossfit(audio, length_features, observed, truth, groups)
@@ -283,7 +363,7 @@ def run(root):
                          "text_strata": {scorer: {**score_strata(scores, truth, groups, word_counts),
                                                  "operating_points": recall_area(scores, truth).tolist()}
                                          for scorer, scores in (("word_count", word_counts), ("characters", lengths),
-                                                                ("lexicon", lexical_rule), ("semantic", values))}}
+                                                                ("lexicon", rule), ("semantic", values))}}
     report = {"scope": "English development, provider timings not independently realigned",
               "membership_sha256": membership_sha, "audio_report_sha256": audio_sha,
               "tiny_replay_report_sha256": replay_sha, "judge": MODEL, "judge_revision": REVISION,
@@ -298,5 +378,8 @@ def run(root):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--harper-lexicon", action="store_true")
+    arguments = parser.parse_args()
     torch.set_num_threads(2)
-    run(data_root())
+    (harper_lexical_transfer if arguments.harper_lexicon else run)(data_root())
