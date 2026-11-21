@@ -178,6 +178,9 @@ full runbook.
   across languages, then whole turns within each language, keeping the
   resample shared across arms and recalculating the cutoffs. A confirmed
   improvement requires a positive joint-bootstrap lower bound.
+- Use fixed 20 epochs for new 973k feature-first runs with this recipe.
+  Preserve archived controls for their pinned comparisons. Use held-source
+  fidelity for diagnostics and avoid using it to pick a training seed.
 - Do not use reversed audio or preset-voice TTS as training data.
 - Use `uv` for Python environments (Python 3.12) and run shell commands
   through an interactive zsh that sources `~/.zshrc`.

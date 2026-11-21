@@ -172,7 +172,8 @@ def replace_history(audio, prefix, noise):
 
 def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active, arm, seed, *,
             shuffle_features=False, active_stats=False, score_history=None, parameters=150000, hop=HOP,
-            select_final=False, progress_prefix="own-feature", epochs=EPOCHS, epoch_checkpoint=None):
+            select_final=False, progress_prefix="own-feature", epochs=EPOCHS, epoch_checkpoint=None,
+            checkpoint_epochs=None):
     config = {"architecture": "a", "window": 3, "parameters": parameters}
     if hop != HOP:
         config["hop"] = hop
@@ -207,6 +208,8 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
     if hop != HOP:
         name += f"-hop{hop}"
     meter = Progress(f"{progress_prefix}-{name}", epochs * ((len(fit) + BATCH - 1) // BATCH), "updates")
+    if checkpoint_epochs is None:
+        checkpoint_epochs = (EPOCHS, epochs)
     try:
         for epoch in range(1, epochs + 1):
             model.train()
@@ -265,7 +268,7 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
                 if epoch > 5 and choose:
                     winner, best_state = observed, deepcopy(model.state_dict())
             history.append(observed)
-            if epoch_checkpoint is not None and epoch in (EPOCHS, epochs):
+            if epoch_checkpoint is not None and epoch in checkpoint_epochs:
                 epoch_checkpoint(epoch, config, model.state_dict())
     except BaseException:
         meter.finish("failed")
