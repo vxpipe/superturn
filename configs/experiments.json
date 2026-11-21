@@ -3,5 +3,6 @@
   "batch_size": 64,
   "lr": 0.001,
   "augmentation": true,
+  "ami_verified_training": true,
   "augmentation_workers": 8
 }

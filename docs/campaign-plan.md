@@ -79,7 +79,7 @@ but not redistribution.
    starting experiments.
    ```sh
    bin/vast-run -n prepare 'bin/campaign-prepare --device cuda'
-   bin/vast-run -n experiments 'uv run --no-sync superturn experiments --device cuda --config configs/experiments.json'
+   bin/vast-run -n experiments 'uv run --no-sync python -m superturn.ami_training && uv run --no-sync superturn experiments --device cuda --config configs/experiments.json'
    ```
    Use `bin/campaign-prepare --finish` after separately completed label jobs.
    That path verifies the derived outputs. Run or verify the independent raw

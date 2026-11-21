@@ -1,6 +1,6 @@
 # First trained turn model
 
-Status: checkpoint B in progress on a South Korea RTX 5090 datacenter rental.
+Status: checkpoint C training on a South Korea RTX 5090 datacenter rental.
 Last updated 2026-11-21.
 
 ## Handover
@@ -57,20 +57,25 @@ Last updated 2026-11-21.
   In 4,551 paired training cases, the median absolute timestamp difference
   was 253 ms at the caller's speech end and 50 ms at the next speech onset.
   Widening both windows from 200/250 to 300/375 ms confirmed 45 more training
-  labels and exposed 830 additional conflicts. The review gate remains open.
+  labels and exposed 830 additional conflicts.
+- The user approved full training with verified AMI training cases, original
+  validation and frozen test splits, and a disclosed review limitation.
+  The timing check supported 862 AMI training labels before the existing
+  speaker cap. The queue uses 532 retained pauses from 132 speakers, with
+  262 holds and 270 shifts. The original 90% review target was not met.
+- Started the full staged experiment matrix on the RTX 5090. Verified
+  the conditional quantization recovery path on both architectures with
+  generated examples, including a forced retry after an int8 AUC drop.
 
 ### Waiting on
 
-- Raw backup and verification. Await the user's decision on using the
-  989 AMI examples supported by the manual annotation comparison as the
-  automated English review scope. The full experiment matrix has not
-  started. A 256-step validation-only pilot verified real training
-  throughput without consulting the test split.
+- Raw backup and verification, experiment checkpoints and final benchmarks.
+  A 256-step validation-only pilot measured training pace before the matrix.
 
 ### Next step
 
-Resolve the automated review gate, then run the staged experiment matrix in
-`vxpipe`. Measure the selected artifacts on the frozen test set, including
+Monitor the staged experiment matrix in `vxpipe`. Measure the selected
+artifacts on the frozen test set, including
 the telephone speech level and SNR sweeps, and fill the
 [model card](../../docs/model-card.md) with the results. Fetch the verified
 artifact locally with `bin/vast-fetch`. Publish the approved ONNX and model
@@ -281,10 +286,10 @@ Follows the [campaign runbook](../../docs/campaign-plan.md#runbook).
   source.
 - [ ] Raw downloads, labels, shards and test copies pushed to storage
   (`bin/sync push`) and listed back.
-- [ ] Validate the automated replacement for the listening review on 50
-  sampled pauses per language. Report supported, contradicted, and
-  unresolved labels. Meet the 90% per-track review target across the
-  predetermined AMI sample.
+- [x] Run and report the automated review on 50 sampled pauses per language
+  with supported, contradicted and unresolved counts. The original 90%
+  per-track target was unmet. The user approved the verified AMI training
+  subset and the original evaluation sets as the scope for this campaign.
 
 ### C. Campaign 1: experiment round
 

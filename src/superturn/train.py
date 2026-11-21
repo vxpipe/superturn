@@ -32,7 +32,10 @@ def records(files, batch_size=16, columns=None):
             yield batch.to_pylist()
 
 
-def eligible(row, config):
+def eligible(row, config, verified_ami=None):
+    if (verified_ami is not None and row["source"] == "ami"
+            and (row["audio"], row["pause_start"], row["label"]) not in verified_ami):
+        return False
     if row["label"] == "weak-shift" and not config.get("weak", True):
         return False
     if config.get("sources") and row["source"] not in config["sources"]:
@@ -102,7 +105,7 @@ def _validation(model, files, device):
     return _stats(scores, truth, threshold), threshold
 
 
-def _assets(root, samples):
+def _assets(root, samples, verified_ami=None):
     from zipfile import ZipFile
     from .audio import read_audio, write_wave
 
@@ -119,6 +122,8 @@ def _assets(root, samples):
     voices = {}
     for batch in records(paths(root, "train")):
         for row in batch:
+            if not eligible(row, {}, verified_ami):
+                continue
             key = (row["source"], row["speaker"])
             if key not in voices:
                 voices[key] = _input(row, samples)
@@ -127,12 +132,21 @@ def _assets(root, samples):
     return noise, sorted(ir_root.glob("*.wav")), voices
 
 
+def _starting_checkpoint(root, config):
+    name = config.get("warm_start")
+    if name is None:
+        return None
+    if not name or Path(name).name != name or name in {".", ".."}:
+        raise ValueError("warm_start must be one run name")
+    return root / "runs" / name / "best.pt"
+
+
 def _run_signature(root, config, device):
     shard_manifest = root / "shards" / "manifest.json"
     if not shard_manifest.is_file():
         return None
     source = hashlib.sha256()
-    for name in ("train.py", "model.py", "augment.py", "audio.py"):
+    for name in ("train.py", "model.py", "augment.py", "audio.py", "quant_aware.py"):
         source.update(Path(__file__).with_name(name).read_bytes())
     assets = {}
     if config.get("augmentation", True):
@@ -144,8 +158,16 @@ def _run_signature(root, config, device):
         decoder = version("av")
     except PackageNotFoundError:
         decoder = None
+    warm_start = _starting_checkpoint(root, config)
+    ami_hash = None
+    if config.get("ami_verified_training", False):
+        from .ami_training import selection_hash
+
+        ami_hash = selection_hash(root)
     return {
         "config": config,
+        "ami_verified_sha256": ami_hash,
+        "warm_start_sha256": hashlib.sha256(warm_start.read_bytes()).hexdigest() if warm_start else None,
         "augmentation_assets": assets,
         "decoder": decoder,
         "device": device,
@@ -178,17 +200,32 @@ def train(root, name, config, device):
         torch.set_num_threads(1)
     torch.use_deterministic_algorithms(True, warn_only=True)
     model = build(config).to(device)
+    warm_start = _starting_checkpoint(root, config)
+    if warm_start is not None:
+        model.load_state_dict(torch.load(warm_start, map_location="cpu", weights_only=True)["state"])
+    parameter_total = sum(p.numel() for p in model.parameters())
+    state_dict = type(model).state_dict
+    if config.get("quantization_aware", False):
+        from .quant_aware import enable, plain_state_dict
+
+        enable(model)
+        state_dict = plain_state_dict
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.get("lr", 0.001))
     run = root / "runs" / name
     run.mkdir(parents=True, exist_ok=True)
     marker = run / "finished.json"
     marker.unlink(missing_ok=True)
     signature = _run_signature(root, config, device)
+    verified_ami = None
+    if config.get("ami_verified_training", False):
+        from .ami_training import load_selection
+
+        verified_ami = load_selection(root)
     counts = Counter()
     train_batches = 0
     for batch in records(train_files, config.get("batch_size", 16),
                          columns=["source", "language", "audio", "label", "pause_start"]):
-        selection = [row for row in batch if eligible(row, config)]
+        selection = [row for row in batch if eligible(row, config, verified_ami)]
         counts.update(row["language"] for row in selection)
         train_batches += bool(selection)
     if not train_batches:
@@ -196,7 +233,7 @@ def train(root, name, config, device):
 
     language_normalizer = sum(count ** 0.7 for count in counts.values()) / sum(counts.values())
     augmentation = config.get("augmentation", True)
-    noise, impulse, voices = _assets(root, model.samples) if augmentation else ([], [], {})
+    noise, impulse, voices = _assets(root, model.samples, verified_ami) if augmentation else ([], [], {})
     epochs = config.get("epochs", 5)
     steps = min(config.get("max_steps", train_batches * epochs), train_batches * epochs)
     meter = Progress(f"train-{name}", steps, "steps")
@@ -211,7 +248,7 @@ def train(root, name, config, device):
             rng = np.random.default_rng(seed_for(seed, epoch))
             loss_total, batches = 0.0, 0
             for batch in records(rng.permutation(train_files), config.get("batch_size", 16)):
-                selected = [row for row in batch if eligible(row, config)]
+                selected = [row for row in batch if eligible(row, config, verified_ami)]
                 if not selected:
                     continue
                 audio, jobs, gaps, truth, weights = [], [], [], [], []
@@ -262,8 +299,8 @@ def train(root, name, config, device):
             score = ((record["recall"] or 0), (record["auc"] or 0), -record["loss"])
             if best is None or score > best:
                 best = score
-                checkpoint = {"config": config, "state": model.state_dict(), "metrics": record,
-                              "parameters": sum(p.numel() for p in model.parameters())}
+                checkpoint = {"config": config, "state": state_dict(model), "metrics": record,
+                              "parameters": parameter_total}
                 temp = run / "best.tmp"
                 torch.save(checkpoint, temp)
                 temp.replace(run / "best.pt")

@@ -87,6 +87,52 @@ def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture)
         assert all(level is None for level in sensitivity["qualifying_lowest_tested_db"].values())
 
 
+@pytest.mark.parametrize("architecture", ["a", "b"])
+def test_quantization_recovery_checkpoint_exports(tmp_path, architecture):
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("onnx")
+    pytest.importorskip("onnxruntime")
+    from superturn.evaluate import export
+    from superturn.train import completed_run, train
+
+    make_shards(tmp_path, _generated_rows(tmp_path))
+    config = {"architecture": architecture, "parameters": 150000, "window": 1,
+              "epochs": 1, "augmentation": False}
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    baseline = train(tmp_path, "baseline", config, device)
+    retry = {**config, "lr": 0.0001, "warm_start": "baseline", "quantization_aware": True}
+    recovery = train(tmp_path, "recovery", retry, device)
+    assert completed_run(tmp_path, "recovery", retry, device) == recovery
+    before = torch.load(baseline, map_location="cpu", weights_only=True)["state"]
+    after = torch.load(recovery, map_location="cpu", weights_only=True)["state"]
+    assert before.keys() == after.keys()
+    assert any(not torch.equal(before[key], after[key]) for key in before)
+    assert export(recovery).stat().st_size < 1000000
+
+
+def test_ami_review_filters_training_without_rebuilding_shards(tmp_path, monkeypatch):
+    from dataclasses import replace
+    from superturn import ami_training
+    from superturn.labels import write_rows
+
+    rows = [replace(row, source="ami") for row in _generated_rows(tmp_path)]
+    make_shards(tmp_path, rows)
+    manifest = tmp_path / "shards" / "manifest.json"
+    before = manifest.read_bytes()
+    write_rows(tmp_path / "labels" / "ami.jsonl", rows)
+
+    def audit(root, offered, **kwargs):
+        assert all(row.split == "train" for row in offered)
+        assert kwargs == {"end_ms": 300, "onset_ms": 375}
+        return {row: "supported" if row.label == "hold" else "contradicted" for row in offered}
+
+    monkeypatch.setattr(ami_training, "audit_sample", audit)
+    summary = ami_training.prepare(tmp_path)
+    assert summary["sharded_labels"] == {"hold": 1}
+    accepted = next(row for row in rows if row.split == "train" and row.label == "hold")
+    assert ami_training.load_selection(tmp_path) == {(accepted.audio, accepted.pause_start, "hold")}
+    assert manifest.read_bytes() == before
+
 def test_pitch_on_known_reference_tone():
     torch = pytest.importorskip("torch")
     from superturn.model import AcousticFeatures
@@ -131,14 +177,16 @@ def test_experiment_queue_continues_after_failed_run(tmp_path, monkeypatch):
         destination = root / "reports" / f"{path.parent.name}-int8-validation"
         destination.mkdir(parents=True)
         (destination / "metrics.json").write_text(json.dumps({"threshold": .61}))
-        return .90, .895
+        return .90, .87 if path.parent.name == "s4-1" else .895
 
     monkeypatch.setattr(trainer, "train", train)
     monkeypatch.setattr(evaluate, "export", export)
     monkeypatch.setattr(evaluate, "quantization_auc", quantization_auc)
     monkeypatch.setattr(evaluate, "benchmark", lambda root, path, threshold: benchmarks.append(threshold))
     assert experiments(tmp_path, {"epochs": 1}, "cpu") == 1
-    assert len(runs) == 34 and benchmarks == [.61] * 3
+    assert len(runs) == 35 and benchmarks == [.61] * 3
+    assert runs["s4-1-qat"]["warm_start"] == "s4-1"
+    assert runs["s4-1-qat"]["quantization_aware"]
     report = json.loads((tmp_path / "reports" / "experiments" / "queue.json").read_text())
     assert len(report["models"]) == 3
     assert report["failures"] == [["s1-a-150000-17", "fixture training failure"]]

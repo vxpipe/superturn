@@ -214,7 +214,14 @@ def experiments(root, base, device):
         manifest = json.loads((root / "shards" / "manifest.json").read_text())
         registry = load_sources()
         require_split_coverage(manifest["speaker_report"], {name: registry[name].role for name in LABEL_SOURCES})
-        require_gate(root)
+        if base.get("ami_verified_training", False):
+            from .ami_training import load_selection
+
+            selection = load_selection(root)
+            print(f"Approved training scope: {len(selection)} verified AMI pauses. "
+                  "Validation and test use original splits.", flush=True)
+        else:
+            require_gate(root)
     # Stages select from validation. Only final, selected exports read test shards.
     meter = Progress("experiments", 37, "runs")
     failures = []
@@ -276,7 +283,7 @@ def experiments(root, base, device):
         stage([(f"s3b-{fraction}", {**winner, "fraction": fraction}) for fraction in (0.25, 0.5, 1)])
         fourth = stage([(f"s4-{weight}", {**winner, "hold_weight": weight}) for weight in (1, 2, 4)])
         ranked = _rank(fourth + third + second + first, len(fourth + third + second + first))
-        for name, _, _ in ranked:
+        for name, config, _ in ranked:
             if len(final_models) == 3:
                 break
             try:
@@ -284,9 +291,26 @@ def experiments(root, base, device):
                 metadata = json.loads(model.with_name("export.json").read_text())
                 full_auc, int8_auc = quantization_auc(root, model, metadata["threshold"])
                 metadata["validation_auc"] = {"float": full_auc, "int8": int8_auc}
-                if full_auc is None or int8_auc is None or full_auc - int8_auc > 0.01:
+                model.with_name("export.json").write_text(json.dumps(metadata, indent=2) + "\n")
+                if full_auc is None or int8_auc is None:
+                    raise ValueError("validation needs both holds and shifts for the export check")
+                if full_auc - int8_auc > 0.01:
+                    source_name = name
+                    name = f"{name}-qat"
+                    retry = {**config, "epochs": 1, "lr": config.get("lr", 0.001) / 10,
+                             "quantization_aware": True, "warm_start": source_name}
+                    print(f"{source_name}: validation AUC drop {full_auc - int8_auc:.4f}, starting QAT",
+                          flush=True)
+                    checkpoint = completed_run(root, name, retry, device)
+                    if checkpoint is None:
+                        checkpoint = train(root, name, retry, device)
+                    model = export(checkpoint)
+                    metadata = json.loads(model.with_name("export.json").read_text())
+                    qat_float, qat_int8 = quantization_auc(root, model, metadata["threshold"])
+                    metadata["validation_auc"] = {"original_float": full_auc, "float": qat_float, "int8": qat_int8}
                     model.with_name("export.json").write_text(json.dumps(metadata, indent=2) + "\n")
-                    raise ValueError(f"int8 validation AUC {int8_auc}, float AUC {full_auc}")
+                    if qat_float is None or qat_int8 is None or max(full_auc, qat_float) - qat_int8 > 0.01:
+                        raise ValueError("int8 validation AUC remains outside tolerance after QAT")
                 validation = json.loads((root / "reports" / f"{name}-int8-validation" / "metrics.json").read_text())
                 metadata["float_threshold"] = metadata["threshold"]
                 metadata["threshold"] = validation["threshold"]

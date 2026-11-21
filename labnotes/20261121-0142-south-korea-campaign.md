@@ -198,3 +198,19 @@
   500/625 ms they were 917 and 3,073. The checks for speech in the early
   pause and speaker order ran throughout. No validation or test examples
   informed the timing sweep.
+
+## Approved training scope
+
+- The user approved training with verified AMI examples and retaining the
+  original validation and frozen test splits. Of the 862 supported training
+  labels, 532 met the original speaker caps and were present in the shards.
+  These comprise 262 holds and 270 shifts from 132 speakers. The filter
+  applies both to primary training examples and the AMI augmentation voice
+  pool. See `reports/ami-verified-training.json`. The 90% review target was
+  unmet and the original evaluation labels carry that limitation.
+- The full five-epoch staged experiment queue started in `vxpipe` with
+  `configs/experiments.json`. Recovery fine-tunes failed int8 candidates
+  with simulated weight and linear input quantization, then rechecks the
+  deployed ONNX artifact against the original float AUC on validation.
+  Both generated recovery checkpoints trained on the RTX 5090 and exported.
+  The campaign suite passed 48 tests before adding the AMI selection fixture.
