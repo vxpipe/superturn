@@ -141,6 +141,32 @@ selection_command = "python -m superturn.open_yap_preflight"
 max_total_bytes = 16000000
 order = 3
 
+[sources.datahive-conversation-pilot]
+kind = "hf_files"
+repo = "datahiveai/multilingual-conversations-sample"
+revision = "c29728a0c9792ba486807fa1ea9ca64e292cec01"
+licence = "CC BY 4.0"
+attribution = "DataHive Multilingual Conversations, DataHive AI (CC BY 4.0)"
+role = "train-conversation"
+opt_in = true
+order = 3
+max_total_bytes = 61542245
+# Label feasibility only. No global participant IDs are supplied.
+# Three nearest the median compressed size within each language, ties by path.
+files = [
+  "preview/metadata.jsonl",
+  "preview/hi_000001.mp3", "preview/hi_000005.mp3", "preview/hi_000007.mp3",
+  "preview/id_000002.mp3", "preview/id_000003.mp3", "preview/id_000010.mp3",
+]
+
+[sources.datahive-conversation-pilot.audio_sha256]
+"preview/hi_000001.mp3" = "4700867590d9eddc7114fafb39bb2f96d3bf1b67a05c67b0f2f981811512d7c4"
+"preview/hi_000005.mp3" = "6dbd2ed553dbecbed84e22ec5d90a2776851288fe7d81323965093997deb6731"
+"preview/hi_000007.mp3" = "1ac0679d1c871c2a4f8d2d8d5c2f02c65ac3b84e030ff5c0a7b29d4b95c11621"
+"preview/id_000002.mp3" = "6cbbb5ecbbaf8329d910a2bd27129e2c47f24e8726ab015247d6c2a25ade928f"
+"preview/id_000003.mp3" = "88c278272155a733f431ed25c7e63dcaf06d8e2dc5c07d0a52ab08a622b55bec"
+"preview/id_000010.mp3" = "9256e610eb3064eaf8d48547a180f76b85f8837289af8ac1cdd585547a4647d8"
+
 [sources.indic_diarbench]
 kind = "hf_rowgroups"
 repo = "sarvamai/indic-diarbench"

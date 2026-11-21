@@ -174,6 +174,17 @@ decoder and decoded sample intervals. Verify speaker-channel mapping
 and timing before accepting any hold or shift label.
 [Official ICSI download and licence](https://groups.inf.ed.ac.uk/ami/icsi/download/)
 
+The opt-in DataHive conversation pilot pins six unscripted stereo calls
+in Hindi and Indonesian plus the metadata at a total of 61.55 MB.
+Callers and callees are isolated on left and right channels of a common
+MP3 timeline. The publisher licenses the release under CC BY 4.0 and
+explicitly permits commercial model training. Repeated participants
+lack published stable IDs, so these calls form a single train-side
+feasibility pool until speaker linkage can be resolved. Decode and hash
+the tracks, screen channel isolation and check next-speaker labels with
+acoustic timing and independent word evidence before any model fit.
+[Publisher dataset card](https://huggingface.co/datasets/datahiveai/multilingual-conversations-sample)
+
 Other unstaged full downloads include Common Voice locales (947 GB for
 all 295), FLEURS (878 GB) and Emilia beyond one partial archive per
 language (2.1 TB).
