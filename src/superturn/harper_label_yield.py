@@ -7,6 +7,7 @@ import json
 from .ami_calibration import _write_json
 from .ami_pilot import group_words
 from .audio import RATE, silero
+from .dense_teacher import file_digest
 from .harper_transcript_coverage import MEMBERSHIP
 from .harper_valley_audit import BOUNDARY_TOLERANCE, GAP, ROLES, audit_call, label_support
 from .harper_valley_benchmark import pinned_split
@@ -97,12 +98,13 @@ def capped(rows):
             voices[voice] += 1
             calls[key] += 1
             kept.append(row)
-    return {"counts_before_cap": dict(Counter(row[-1] for row in rows)),
-            "counts_after_cap": dict(Counter(row[-1] for row in kept)),
-            "speakers_after_cap": len(voices),
-            "calls_after_cap": len({row[0] for row in kept}),
-            "speakers_per_class": {label: len({row[2] for row in kept if row[-1] == label})
-                                   for label in ("hold", "shift")}}
+    summary = {"counts_before_cap": dict(Counter(row[-1] for row in rows)),
+               "counts_after_cap": dict(Counter(row[-1] for row in kept)),
+               "speakers_after_cap": len(voices),
+               "calls_after_cap": len({row[0] for row in kept}),
+               "speakers_per_class": {label: len({row[2] for row in kept if row[-1] == label})
+                                      for label in ("hold", "shift")}}
+    return summary, kept
 
 
 def run(root):
@@ -175,11 +177,18 @@ def run(root):
         raise
     else:
         meter.finish()
+    selected = {key: capped(value) for key, value in labels.items()}
     result = {"set": "train", "audit_sha256": audit, "old_membership_sha256": MEMBERSHIP,
               "old": archived, "verified_calls": counts["audited_calls"],
               "voice_cap": VOICE_CAP, "per_call_role_class_cap": PER_CALL_ROLE_CLASS_CAP,
-              "candidates": {key: capped(value) for key, value in labels.items()}, "audit": audits}
-    _write_json(reports / "harper-label-yield.json", result)
+              "candidates": {key: stats for key, (stats, _) in selected.items()}, "audit": audits}
+    previous = reports / "harper-label-yield.json"
+    if previous.is_file() and json.loads(previous.read_text()) != result:
+        raise ValueError("the archived HarperValley label-yield report did not reproduce")
+    _write_json(previous, result)
+    _, agent = selected["strict_agent"]
+    _write_json(reports / "harper-strict-agent-membership.json",
+                {"yield_sha256": file_digest(previous), "rows": agent})
     return result
 
 
