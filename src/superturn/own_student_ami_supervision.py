@@ -111,14 +111,15 @@ def train(root, parent, arm, seed, replay, supplement, order, *, supplement_weig
         "parent": parent, "last_loss": float(loss.detach())}
 
 
-def summarize(rows, *, arm_names=ARMS, contrasts=CONTRASTS):
+def summarize(rows, *, arm_names=ARMS, contrasts=CONTRASTS, arm_seeds=None):
     rng = np.random.default_rng(29062)
     individual, draws = {}, {}
     paired = [(arm_names.index(arm), arm_names.index(ref)) for arm, ref in contrasts]
     for language, row in rows.items():
         truth = np.asarray(row["labels"], dtype=bool)
         groups = np.asarray(row["turn_ordinals"])
-        values = [np.asarray([row["scores"][f"{arm}-{seed}"] for seed in SEEDS]) for arm in arm_names]
+        values = [np.asarray([row["scores"][f"{arm}-{seed}"] for seed in (arm_seeds or {}).get(arm, SEEDS)])
+                  for arm in arm_names]
 
         def metrics(idx):
             return np.asarray([recall_metrics(arm[:, idx], truth[idx]) for arm in values])
