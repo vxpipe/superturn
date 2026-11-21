@@ -96,18 +96,19 @@ def shuffled_targets(targets, sources, groups, fit, seed):
     result = targets.copy()
     rng = np.random.default_rng(seed_for("dense-teacher-shuffle-v1", seed))
     for rows in strata.values():
-        for j in range(len(DEADLINES)):
+        for j in range(targets.shape[1]):
             result[rows, j] = targets[rng.permutation(rows), j]
     return result
 
 
-def batch(pcm, i, j, device):
+def batch(pcm, i, j, device, deadlines=DEADLINES):
     audio = torch.as_tensor(pcm[i, j], dtype=torch.float32, device=device) / 32768
-    elapsed = torch.as_tensor(np.asarray(DEADLINES)[j, None], dtype=torch.float32, device=device)
+    elapsed = torch.as_tensor(np.asarray(deadlines)[j, None], dtype=torch.float32, device=device)
     return audio, elapsed
 
 
-def evaluate_fidelity(model, pcm, targets, fidelity, sources, active_sources, device, *, record_layers=False):
+def evaluate_fidelity(model, pcm, targets, fidelity, sources, active_sources, device, *,
+                      record_layers=False, deadlines=DEADLINES):
     results = {}
     model.eval()
     with torch.inference_mode():
@@ -115,12 +116,12 @@ def evaluate_fidelity(model, pcm, targets, fidelity, sources, active_sources, de
             rows = fidelity[sources[fidelity] == source]
             if not len(rows):
                 raise ValueError(f"{source} is missing from the fidelity pool")
-            i = np.repeat(rows, len(DEADLINES))
-            j = np.tile(np.arange(len(DEADLINES)), len(rows))
+            i = np.repeat(rows, len(deadlines))
+            j = np.tile(np.arange(len(deadlines)), len(rows))
             predictions, states, losses, recurrent = [], [], [], []
             for start in range(0, len(i), BATCH):
                 sl = slice(start, start + BATCH)
-                x, elapsed = batch(pcm, i[sl], j[sl], device)
+                x, elapsed = batch(pcm, i[sl], j[sl], device, deadlines)
                 if record_layers:
                     features, hidden = model.decision_input(x, elapsed, return_state=True)
                     recurrent.append(hidden.cpu().numpy())
@@ -135,8 +136,8 @@ def evaluate_fidelity(model, pcm, targets, fidelity, sources, active_sources, de
             if not np.isfinite(scores).all():
                 raise ValueError("nonfinite student scores")
             by_deadline = {}
-            for index, deadline in enumerate(DEADLINES):
-                s, t = scores[index::len(DEADLINES)], targets[rows, index]
+            for index, deadline in enumerate(deadlines):
+                s, t = scores[index::len(deadlines)], targets[rows, index]
                 rank_s, rank_t = rankdata(s), rankdata(t)
                 lower, upper = np.quantile(s, [0.01, 0.99])
                 by_deadline[str(deadline)] = {
@@ -153,17 +154,29 @@ def evaluate_fidelity(model, pcm, targets, fidelity, sources, active_sources, de
     return results
 
 
-def fit_model(output, config, pcm, targets, sources, roles, groups, cache_hash, device):
+def fit_model(output, config, pcm, targets, sources, roles, groups, cache_hash, device, *, deadlines=DEADLINES):
+    if pcm.shape[:2] != targets.shape or targets.shape != (len(roles), len(deadlines)):
+        raise ValueError("student PCM, targets and deadline dimensions differ")
     source = Path(__file__)
     params = {"config": config, "target_report_sha256": cache_hash, "epochs": EPOCHS, "batch_size": BATCH,
               "code_sha256": {name: file_digest(source.with_name(name))
                               for name in (source.name, "model.py", "shards.py")},
               "torch_version": torch.__version__, "cuda_version": torch.version.cuda,
               "device": torch.cuda.get_device_name(device) if device == "cuda" else device}
+    if deadlines != DEADLINES:
+        params["deadlines_ms"] = list(deadlines)
     checkpoint, report_path = output / "best.pt", output / "fit.json"
     if checkpoint.is_file() and report_path.is_file():
         report = json.loads(report_path.read_text())
-        if report["inputs"] != params or report["checkpoint_sha256"] != file_digest(checkpoint):
+        compatible = params
+        historical = report["inputs"]["code_sha256"].get(source.name)
+        equivalence = source.resolve().parents[2] / "configs/dense-trainer-compatibility.json"
+        if deadlines == DEADLINES and equivalence.is_file():
+            digests = json.loads(equivalence.read_text())
+            if (digests["previous"], digests["current"]) == (historical, params["code_sha256"][source.name]):
+                # The reviewed implementations use the same two-deadline recipe.
+                compatible = {**params, "code_sha256": {**params["code_sha256"], source.name: historical}}
+        if report["inputs"] != compatible or report["checkpoint_sha256"] != file_digest(checkpoint):
             raise ValueError(f"saved diagnostic fit differs from its provenance: {output.name}")
         return checkpoint, report
     output.mkdir(parents=True, exist_ok=True)
@@ -181,8 +194,8 @@ def fit_model(output, config, pcm, targets, sources, roles, groups, cache_hash, 
     torch.manual_seed(seed)
     model = build(config).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
-    fit_i = np.repeat(fit, len(DEADLINES))
-    fit_j = np.tile(np.arange(len(DEADLINES)), len(fit))
+    fit_i = np.repeat(fit, len(deadlines))
+    fit_j = np.tile(np.arange(len(deadlines)), len(fit))
     steps = (len(fit_i) + BATCH - 1) // BATCH
     meter = Progress(f"dense-teacher-{output.name}", EPOCHS * steps, "steps")
     best_loss, best, history = float("inf"), None, []
@@ -193,7 +206,7 @@ def fit_model(output, config, pcm, targets, sources, roles, groups, cache_hash, 
             for start in range(0, len(order), BATCH):
                 ids = order[start:start + BATCH]
                 i, j = fit_i[ids], fit_j[ids]
-                audio, elapsed = batch(pcm, i, j, device)
+                audio, elapsed = batch(pcm, i, j, device, deadlines)
                 truth = torch.as_tensor(y[i, j], device=device)
                 weight = torch.as_tensor(weights[i], device=device)
                 logits = model.logits(audio, elapsed).flatten()
@@ -204,7 +217,7 @@ def fit_model(output, config, pcm, targets, sources, roles, groups, cache_hash, 
                 optimizer.step()
                 meter.advance(1)
             stats = evaluate_fidelity(model, pcm, targets, fidelity, sources, active_sources, device,
-                                      record_layers="gru_hidden_size" in config)
+                                      record_layers="gru_hidden_size" in config, deadlines=deadlines)
             loss = float(np.mean([value["bce"] for value in stats.values()]))
             history.append({"epoch": epoch, "macro_bce": loss, "sources": stats})
             if loss < best_loss:
