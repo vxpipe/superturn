@@ -80,13 +80,11 @@ Last updated 2026-11-21.
 ### Waiting on
 
 - Stage 1 and later experiments, export selection, and final benchmarks.
-  The first of 12 Stage 1 configurations completed all five epochs and
-  was backed up. At 300 ms it achieved 74.79% recall at 4.997% false
-  completes on pooled clean validation. The same threshold on AMI
-  telephone validation yielded 12.10% false completes and 5.11% recall.
-  Fitting an AMI validation threshold yielded 4.79% false completes and
-  2.92% recall. The first checkpoint was fetched and its SHA-256 checked.
-  The second Stage 1 configuration has started.
+  Both seeds of the 150k GRU finished and were backed up. Their pooled
+  clean validation recalls were 74.79% and 66.93% at 4.997% false
+  completes. At a fitted 4.79% false-complete operating point on AMI
+  telephone validation, recall was 2.92% and 5.84%. The first checkpoint
+  was fetched and its SHA-256 checked. The 500k GRU is training.
 
 ### Next step
 
