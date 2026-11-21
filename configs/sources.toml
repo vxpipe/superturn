@@ -119,6 +119,18 @@ opt_in = true
 selection_command = "python -m superturn.dral_original_pilot --plan-only"
 order = 3
 
+[sources.open-yap-sample]
+kind = "http"
+repo = "TheAgenticDataCompany/open-yap-1k"
+revision = "cae5c0617b2e225422076599ef99516b73c637e3"
+licence = "CC BY 4.0"
+attribution = "Open Yap 1K sample, The Agentic Data Company (CC BY 4.0)."
+role = "test"
+opt_in = true
+selection_command = "python -m superturn.open_yap_preflight"
+max_total_bytes = 16000000
+order = 3
+
 [sources.indic_diarbench]
 kind = "hf_rowgroups"
 repo = "sarvamai/indic-diarbench"

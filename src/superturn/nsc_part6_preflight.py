@@ -45,13 +45,15 @@ def inventory():
 
 
 class RangeReader:
-    def __init__(self, parts, *, byte_limit=BYTES, request_limit=REQUESTS):
+    def __init__(self, parts, *, byte_limit=BYTES, request_limit=REQUESTS, repo=REPO, revision=REVISION):
         self.parts = parts
         self.ends = tuple(accumulate(size for _, size, _ in parts))
         self.byte_limit = byte_limit
         self.request_limit = request_limit
         self.bytes = 0
         self.requests = 0
+        self.repo = repo
+        self.revision = revision
 
     def read(self, position, count):
         data = bytearray()
@@ -67,7 +69,7 @@ class RangeReader:
                 raise ValueError("the archive read exceeded its transport budget")
             self.requests += 1
             path = quote(name, safe="/")
-            url = f"https://huggingface.co/datasets/{REPO}/resolve/{REVISION}/{path}?download=true&offset={start}"
+            url = f"https://huggingface.co/datasets/{self.repo}/resolve/{self.revision}/{path}?download=true&offset={start}"
             with _request(url, headers={"Range": f"bytes={start}-{end}", "Accept-Encoding": "identity"}) as response:
                 if (response.status != 206 or response.headers.get("Content-Range") != f"bytes {start}-{end}/{size}"
                         or response.headers.get("Content-Encoding", "identity") != "identity"):

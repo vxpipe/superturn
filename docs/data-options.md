@@ -100,7 +100,7 @@ private storage. Publish aggregate evaluation results.
 
 ## Download plan and sizes
 
-The whole download is capped at 20 GB (`budget_gb` in `configs/sources.toml`);
+The whole download is capped at 25 GB (`budget_gb` in `configs/sources.toml`);
 `bin/plan-downloads` and `bin/download` refuse a selection over it. A model of
 100k–1M parameters deciding hold or shift from prosody needs a few hundred
 thousand labelled pauses with many voices, languages and conditions, not
@@ -272,3 +272,16 @@ distribution and licence](https://docs.google.com/forms/d/e/1FAIpQLSd3k8wFF4GQP4
 The University of Edinburgh's [manual annotations v1.6.2](https://groups.inf.ed.ac.uk/ami/download/)
 are CC BY 4.0. The 22,887,865-byte ZIP is included in the full and smoke
 plans. Labelling uses the headset-to-speaker map and dialogue acts.
+
+### Open Yap sample
+
+The pinned Open Yap sample contains 16 opt-in English conversations from
+eight voices, delivered as paired 48 kHz tracks on a shared timeline.
+The sample's CC BY 4.0 grant is separate from the full corpus's access
+agreement. Respect the release's requests about speaker privacy and
+reproduction. The selected conversations can support a timing and
+label-yield diagnostic. Their Deepgram word timing is machine-generated
+and requires cross-checking against the native tracks. Use the published
+speaker IDs to keep connected speakers together.
+[Dataset card](https://huggingface.co/datasets/TheAgenticDataCompany/open-yap-1k/blob/cae5c0617b2e225422076599ef99516b73c637e3/README.md)
+· [Licence](https://huggingface.co/datasets/TheAgenticDataCompany/open-yap-1k/blob/cae5c0617b2e225422076599ef99516b73c637e3/LICENSE.txt)
