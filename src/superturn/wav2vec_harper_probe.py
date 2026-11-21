@@ -3,6 +3,7 @@
 from collections import defaultdict
 from dataclasses import fields
 from functools import lru_cache
+import argparse
 import hashlib
 import json
 import wave
@@ -32,6 +33,7 @@ from .turn1_mini_probe import english_rows, harper_rows, upsample_prefix
 
 SEEDS = (17, 29, 43)
 PENALTIES = (.01, .05, .25)
+HEAD_SEEDS = (17, 29, 43, 53, 71)
 BUNDLE = "wav2vec2_fairseq_base_ls960.pth"
 CHECKPOINT_SHA256 = "1275f890a623b31b9915295dc01d5049c93dc6de8813406c16dfab9b6bd36056"
 AMI = "bed0ba3de027429f"
@@ -97,20 +99,24 @@ def pause_rows(rows):
         yield decision_audio(pcm, edge, "telephone")[-SAMPLES:], truth, group
 
 
-def pooled(frames, stride, width):
+def pooled(frames, stride, width, *, temporal=False):
     center = torch.arange(frames.shape[1], device=frames.device) * stride + (width - 1) / 2
     edge = SAMPLES - GAP
     previous = (center >= edge - RATE // 2) & (center < edge)
     silence = center >= edge
-    return torch.cat((frames.mean(1), frames[:, previous].mean(1), frames[:, silence].mean(1)), dim=-1)
+    parts = [frames.mean(1), frames[:, previous].mean(1), frames[:, silence].mean(1)]
+    if temporal:
+        tail = center >= edge - RATE // 4
+        parts.append(frames[:, previous & tail].mean(1) - frames[:, previous & ~tail].mean(1))
+    return torch.cat(parts, dim=-1)
 
 
-def speech_features(model, audio):
+def speech_features(model, audio, *, temporal=False):
     audio = F.layer_norm(audio, (SAMPLES,), eps=1e-7)
     features, lengths = model.feature_extractor(audio, None)
     projection = model.encoder.feature_projection(features)
     layers = model.encoder.extract_features(features, lengths)
-    return torch.stack([pooled(layer, 320, 400) for layer in (projection, *layers)], dim=1)
+    return torch.stack([pooled(layer, 320, 400, temporal=temporal) for layer in (projection, *layers)], dim=1)
 
 
 def extract(name, predict, audio):
@@ -165,14 +171,24 @@ def head_logits(values, layer, weights, bias):
 
 
 def fit(features, truth, training, evaluation, penalty, seed, *, normalizer=None, sample_weights=None):
-    center, scale, layer, weights, bias = fit_head(
+    head = fit_head(
         features, truth, training, penalty, seed, normalizer=normalizer, sample_weights=sample_weights)
+    return predict_logits(features[evaluation], head), head[2].softmax(0).tolist()
+
+
+def predict_logits(features, head):
+    center, scale, *params = head
     with torch.no_grad():
-        other = torch.as_tensor(features[evaluation]).double()
-        return head_logits((other - center) / scale, layer, weights, bias).numpy(), layer.softmax(0).tolist()
+        other = torch.as_tensor(features).double()
+        return head_logits((other - center) / scale, *params).numpy()
 
 
-def fit_arm(features, truth, splits, caller_folds, meter):
+def rank_at_95pct(features):
+    variance = np.linalg.eigvalsh(features @ features.T).clip(min=0)[::-1]
+    return int(np.searchsorted(np.cumsum(variance), .95 * variance.sum()) + 1) if variance.sum() else 0
+
+
+def fit_arm(features, truth, splits, caller_folds, meter, *, contrast_width=0, head_states=None):
     train = splits["train"]
     search = {}
     for penalty in PENALTIES:
@@ -187,8 +203,11 @@ def fit_arm(features, truth, splits, caller_folds, meter):
     penalty = max(PENALTIES, key=lambda value: search[value][0])
     evaluation = np.concatenate([indices for name, indices in splits.items() if name != "train"])
     repeats = []
-    for seed in (17, 29, 43, 53, 71):
-        repeats.append(fit(features, truth, train, evaluation, penalty, seed))
+    for seed in HEAD_SEEDS:
+        head = fit_head(features, truth, train, penalty, seed)
+        repeats.append((predict_logits(features[evaluation], head), head[2].softmax(0).tolist()))
+        if head_states is not None:
+            head_states.append(head)
         meter.advance(1)
     weight = np.mean([weights for _, weights in repeats], axis=0)
     score = np.full(len(truth), np.nan)
@@ -196,10 +215,11 @@ def fit_arm(features, truth, splits, caller_folds, meter):
     score[evaluation] = np.mean([expit(values) for values, _ in repeats], axis=0)
     probe = features[train] - features[train].mean(0)
     projection = probe.transpose(0, 2, 1) @ weight.astype(np.float32)
-    variance = np.linalg.eigvalsh(projection @ projection.T).clip(min=0)[::-1]
-    rank = int(np.searchsorted(np.cumsum(variance), .95 * variance.sum()) + 1)
-    return score, {"penalty": penalty, "selection_partial_auc": {p: value[0] for p, value in search.items()},
-                   "layer_weights": weight.tolist(), "raw_pooled_rank_at_95pct": rank}
+    diagnostics = {"penalty": penalty, "selection_partial_auc": {p: value[0] for p, value in search.items()},
+                   "layer_weights": weight.tolist(), "raw_pooled_rank_at_95pct": rank_at_95pct(projection)}
+    if contrast_width:
+        diagnostics["raw_contrast_rank_at_95pct"] = rank_at_95pct(projection[:, -contrast_width:])
+    return score, diagnostics
 
 
 def rates(scores, truth):
@@ -208,7 +228,98 @@ def rates(scores, truth):
             "mean_recall": float(np.mean(values[:3])), "partial_auc": values[-1]}
 
 
-def run(root):
+def temporal_report(root, features, truth, splits, folds, english_groups, report):
+    reference_path = root / "reports/wav2vec-harper-probe.json"
+    reference = json.loads(reference_path.read_text())
+    anchor = reference["heads"]["pretrained"]
+    width = features.shape[-1] // 4
+    original = np.ascontiguousarray(features[..., :3 * width])
+    feature_hash = hashlib.sha256(original.tobytes()).hexdigest()
+    if (reference["pcm_sha256"] != report["pcm_sha256"] or
+            reference["model_sha256"] != report["model_sha256"] or
+            anchor["pooled_features_sha256"] != feature_hash):
+        raise ValueError("archived frozen inputs and features did not reproduce")
+    sign_seed = 6903
+    signs = np.random.default_rng(sign_seed).choice(np.array([-1, 1], dtype=np.float32), len(truth))
+    control = features.copy()
+    control[..., -width:] *= signs[:, None, None]
+    scores, metrics = {}, {}
+    temporal_heads = []
+    for arm, values in (("frozen", original), ("temporal", features), ("random-sign", control)):
+        meter = Progress(f"wav2vec-temporal-{arm}", 5 * len(PENALTIES) + 5, "fits")
+        try:
+            scores[arm], report["heads"][arm] = fit_arm(
+                values, truth, splits, folds, meter, contrast_width=0 if arm == "frozen" else width,
+                head_states=temporal_heads if arm == "temporal" else None,
+            )
+        except BaseException:
+            meter.finish("failed")
+            raise
+        meter.finish()
+        for name, idx in splits.items():
+            if name == "calibration":
+                continue
+            cal = splits["calibration"]
+            result = rates(scores[arm][idx], truth[idx])
+            if name != "train":
+                threshold = _threshold(scores[arm][cal], truth[cal])
+                result.update(ami_threshold=threshold,
+                              ami_fixed=_stats(scores[arm][idx].tolist(), truth[idx].tolist(), threshold))
+            metrics.setdefault(name, {})[arm] = result
+            if arm == "frozen":
+                for key, value in result.items():
+                    if key != "ami_fixed" and not np.allclose(
+                        value, reference["cohorts"][name]["pretrained"][key], rtol=0, atol=1e-10,
+                    ):
+                        raise ValueError(f"the archived frozen head {name} {key} did not reproduce")
+    en = splits["english"]
+    evaluation = np.concatenate([idx for name, idx in splits.items() if name != "train"])
+    replay = json.loads((root / "reports/harper-ami-transfer.json").read_text())
+    score_hash = hashlib.sha256(scores["frozen"][evaluation].tobytes()).hexdigest()
+    if score_hash != replay["own_head_probability_sha256"]["caller"]:
+        raise ValueError("the archived frozen probabilities did not reproduce")
+    groups = {arm: values[en] for arm, values in scores.items()}
+    paired = paired_intervals(groups, truth[en], english_groups, {"temporal": "frozen"}, partial_auc=True)
+    matched = paired_intervals(groups, truth[en], english_groups, {"temporal": "random-sign"}, partial_auc=True)
+    english = metrics["english"]
+    recall = {arm: result["recalls_at_2_5_5_7_5pct"][1] for arm, result in english.items()}
+    harper = metrics["harper"]
+    gates = {
+        "english_recall_gain_four_points": recall["temporal"] + 1e-12 >= recall["frozen"] + .04,
+        "paired_english_recall_gain": paired["temporal"]["recall_delta_95"][0] > 0,
+        "english_recall_and_partial_auc_above_random_sign": (
+            recall["temporal"] > recall["random-sign"] and
+            english["temporal"]["partial_auc"] > english["random-sign"]["partial_auc"]
+        ),
+        "english_partial_auc_within_tolerance": english["temporal"]["partial_auc"] >= english["frozen"]["partial_auc"] - .005,
+        "harper_partial_auc_within_tolerance": harper["temporal"]["partial_auc"] >= harper["frozen"]["partial_auc"] - .03,
+    }
+    report.update(cohorts=metrics, reference_sha256=file_digest(reference_path),
+                  original_features_sha256=feature_hash, frozen_probability_sha256=score_hash,
+                  contrast_windows_before_edge_ms=[[250, 0], [500, 250]], control_sign_seed=sign_seed,
+                  paired_english=paired, paired_english_random_sign=matched,
+                  advancement=gates, promoted=all(gates.values()))
+    if report["promoted"]:
+        folder = root / "runs/wav2vec-harper-temporal"
+        folder.mkdir(parents=True, exist_ok=True)
+        path = folder / "heads.pt"
+        temporary = path.with_suffix(".tmp")
+        torch.save({"heads": temporal_heads, "seeds": HEAD_SEEDS, "encoder_sha256": CHECKPOINT_SHA256,
+                    "decision_ms": 300, "contrast_windows_before_edge_ms": report["contrast_windows_before_edge_ms"],
+                    "ensemble": "mean-probability"}, temporary)
+        payload = torch.load(temporary, map_location="cpu", weights_only=True)
+        probabilities = np.mean([expit(predict_logits(features[evaluation], head))
+                                 for head in payload["heads"]], axis=0)
+        if not np.array_equal(probabilities, scores["temporal"][evaluation]):
+            raise ValueError("serialized temporal head probabilities did not reproduce")
+        temporary.replace(path)
+        report["checkpoint"] = {"path": path.relative_to(root).as_posix(), "sha256": file_digest(path),
+                                "evaluation_probability_sha256": hashlib.sha256(probabilities.tobytes()).hexdigest()}
+    _write_json(root / "reports/wav2vec-harper-temporal.json", report)
+    return report
+
+
+def run(root, *, temporal=False):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("this diagnostic uses only staged Vast audio")
     cohorts = {"train": list(training_rows(root)),
@@ -233,6 +344,8 @@ def run(root):
     folder.mkdir(parents=True, exist_ok=True)
     checkpoint = folder / BUNDLE
     if not checkpoint.is_file():
+        if temporal:
+            raise ValueError("the temporal diagnostic requires the staged encoder checkpoint")
         url = "https://download.pytorch.org/torchaudio/models/" + BUNDLE
         torch.hub.download_url_to_file(url, checkpoint, hash_prefix=CHECKPOINT_SHA256)
     if checkpoint.stat().st_size != 377565405 or file_digest(checkpoint) != CHECKPOINT_SHA256:
@@ -247,6 +360,13 @@ def run(root):
         assignment[index] = fold
         load[fold] += weights[index]
     folds = assignment[caller]
+    report = {"model_file": BUNDLE, "model_sha256": file_digest(checkpoint), "decision_ms": 300,
+              "pcm_sha256": hashlib.sha256(clips.tobytes()).hexdigest(), "harper_train_sha256": MEMBERSHIP,
+              "heads": {}, "cohorts": {}}
+    if temporal:
+        pretrained.requires_grad_(False).eval().to("cuda")
+        features = extract("harper-temporal", lambda audio: speech_features(pretrained, audio, temporal=True), clips)
+        return temporal_report(root, features, truth, splits, folds, groups["english"], report)
     scores, heads = {}, {}
     for name in ("pretrained", *(f"random-{seed}" for seed in SEEDS), "acoustic"):
         if name == "acoustic":
@@ -272,9 +392,7 @@ def run(root):
         heads[name]["pooled_features_sha256"] = hashlib.sha256(features.tobytes()).hexdigest()
         del features, model
     scores["random-mean"] = np.mean([scores[f"random-{seed}"] for seed in SEEDS], axis=0)
-    report = {"model_file": BUNDLE, "model_sha256": file_digest(checkpoint), "decision_ms": 300,
-              "pcm_sha256": hashlib.sha256(clips.tobytes()).hexdigest(), "harper_train_sha256": MEMBERSHIP,
-              "heads": heads, "cohorts": {}}
+    report["heads"] = heads
     for name, idx in splits.items():
         if name == "calibration":
             continue
@@ -296,5 +414,7 @@ def run(root):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--temporal", action="store_true", help="test pre-edge temporal contrast")
     torch.set_num_threads(2)
-    print(json.dumps(run(data_root()), indent=2))
+    print(json.dumps(run(data_root(), temporal=parser.parse_args().temporal), indent=2))
