@@ -172,7 +172,7 @@ def source_track(folder, row, detect, prefix_seconds):
         while interval < len(intervals) and intervals[interval][1] <= start * HOP:
             interval += 1
         if interval < len(intervals) and intervals[interval][0] <= start * HOP < intervals[interval][1]:
-            anchors.append(start)
+            anchors.append(int(start))
     profile = {**local_activity(pcm, activity, intervals), **prefix_receipt, "native_rate": rate,
                "annotation_intervals_outside_pcm": len(annotation) - len(intervals)}
     return profile, (features, anchors, direct_power(features[1], activity), lexical, len(pcm))
