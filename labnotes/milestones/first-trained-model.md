@@ -148,7 +148,8 @@ artifact locally with `bin/vast-fetch`. Publish the approved ONNX and model
 card to `HashNuke/superturn` when that Hugging Face repository exists, and
 pin its release commit as a Git submodule.
 
-Keep `bin/vast-watch` running throughout. After all gates pass, send the
+Keep `bin/vast-watch` running locally and use PushOver for experiment
+results. After all gates pass, send the
 final PushOver message prefixed with `COMPLETE`. Leave the machine running
 for at least one hour after that message for review, then fetch, sync and
 destroy it unless the user asks to keep it.

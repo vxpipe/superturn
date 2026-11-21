@@ -104,9 +104,9 @@ but not redistribution.
    tolerance remains the export check.
    Each job runs in the tmux session `vxpipe`, logs under
    `$REMOTE_DATA/logs/`, and records its exit status under
-   `$REMOTE_DATA/jobs/`. Keep the watcher running for estimate, stall,
-   idle and hourly notifications. For steps estimated or measured above
-   three minutes, the watcher reports every quarter from 0% through 100%.
+   `$REMOTE_DATA/jobs/`. The watcher logs estimates, stalls and step
+   progress locally. Use PushOver for experiment summaries with the outcome,
+   measured model performance and any verified cause.
 6. `bin/vast-progress` shows each long step's progress, measured pace and
    estimated time left (from `$REMOTE_DATA/progress/<step>.json`); `bin/vast-ssh` to inspect; `bin/vast-fetch` copies results here at any
    time. Use `bin/vast-fetch --results-only` for reports and model files

@@ -72,6 +72,10 @@ consistent improvement, so keep the scratch comparison and proceed with
 training-size and augmentation probes on the AMI cohorts.
 
 The 17-run series took 2m43s after preparation. At 9/17 the estimate
-was 1m20s remaining. Server pytest passed 60 tests in 35 s, the job
-exited 0, and R2 matched 165 export files and 40 reports with zero
-differences.
+was 1m20s remaining. The full job took 4m11s and exited 0. Server pytest
+passed 60 tests in 35 s, and R2 matched 165 export files and 40 reports
+with zero differences.
+
+The user switched PushOver to consolidated experiment outcomes and verified
+causes. The local watcher now prints its events without sending them to the
+phone. Its one-shot check passed.

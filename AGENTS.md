@@ -70,15 +70,12 @@ full runbook.
   `/workspace/data/logs/NAME.log` and records its exit status. Never run
   long work in a plain ssh session. Inspect with
   `bin/vast-ssh tmux attach -t vxpipe`.
-- While anything runs on the campaign machine, keep the user informed with
-  `pushnotify` (Pushover; credentials in the local environment): run
-  `bin/vast-watch` locally in the background from the first job until
-  `bin/vast-down`. It sends each event once: job started, finished or
-  failed; each step's time estimate once its pace is measured; a step that
-  stopped updating; an hourly summary; the machine idle but still rented;
-  the machine unreachable. Send anything else the user should know (a
-  decision needed, a result) with `pushnotify "superturn: ..."`. Messages
-  carry progress only, never secrets or machine addresses.
+- Run `bin/vast-watch` locally from the first job until `bin/vast-down`.
+  It prints step progress, estimates, stalls and availability events locally.
+  Use `pushnotify "superturn: ..."` for consolidated experiment results.
+  State what was attempted, what succeeded or failed, and any verified cause.
+  Lead with model performance when available. Keep secrets and machine
+  addresses out of messages.
 - Never run tmux commands that create or remove sessions or windows on the
   local computer: agents run inside the user's own tmux, where `$TMUX` makes
   tmux reach the user's server. Test tmux behaviour on the campaign machine.
@@ -141,6 +138,8 @@ full runbook.
 - Do not use reversed audio or preset-voice TTS as training data.
 - Use `uv` for Python environments (Python 3.12) and run shell commands
   through an interactive zsh that sources `~/.zshrc`.
+- When asking Claude for suggestions in the user's tmux session, identify
+  yourself as Codex and include the relevant evidence, constraints and paths.
 - Run `uv run pytest` before committing code. Commit only when asked; stage
   exact paths.
 

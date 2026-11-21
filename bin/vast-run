@@ -2,7 +2,7 @@
 # Run a command on the campaign machine as a window of the tmux session
 # vxpipe (survives disconnects), logging to $REMOTE_DATA/logs/<name>.log.
 # Usage: bin/vast-run [-n NAME] 'command'
-# Then: bin/vast-progress to check, bin/vast-watch to be notified.
+# Then: bin/vast-progress for a snapshot, bin/vast-watch for local events.
 source "$(dirname "$0")/_lib.sh"
 name="job-$(date +%Y%m%d-%H%M%S)"
 if [[ "${1:-}" == "-n" ]]; then name="$2"; shift 2; fi
