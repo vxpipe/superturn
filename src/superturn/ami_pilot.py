@@ -43,12 +43,12 @@ def group_words(words):
                   key=lambda span: (span.start, span.end, span.speaker))
 
 
-def annotated_pauses(spans, backchannels):
+def annotated_pauses(spans, backchannels, *, minimum_gap=GAP):
     """Anchor global silence to speech spans and use explicit backchannel tags."""
     active_until = 0
     for index, (caller, first) in enumerate(zip(spans, spans[1:])):
         active_until = max(active_until, caller.end)
-        if active_until > caller.end or first.start - caller.end < GAP:
+        if active_until > caller.end or first.start - caller.end < minimum_gap:
             continue
         marked = first.end - first.start < RATE and any(
             abs(point - first.start) <= JOIN for point in backchannels.get(first.speaker, ())

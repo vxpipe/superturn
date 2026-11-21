@@ -9,11 +9,27 @@ from superturn import ami_mixture
 from superturn.ami_activity import anchors
 from superturn.ami_calibration import development_splits
 from superturn.ami_crossval import assign_folds
+from superturn.ami_floor_audit import floor_vote, matched_floor_intervals
 from superturn.ami_learning import select_speakers
 from superturn.ami_more_turns import extra_turns
 from superturn.ami_transfer import partial_auc
 from superturn.ami_pilot import acoustic_status, annotated_pauses, group_words, match_training
 from superturn.labels import Label, Speech
+
+
+def test_floor_audit_matches_short_overlapping_pause_without_fixed_time():
+    row = Label("ami", "en", "a", "meeting", "group", "train", 6200, 8000,
+                "shift", "fixture", "fixture.wav")
+    caller = Speech("a", 0, 6000)
+    reply = Speech("b", 7600, 26000)
+    assert not list(annotated_pauses([caller, reply], {}))
+    intervals = list(annotated_pauses([caller, reply], {}, minimum_gap=1))
+    matches = matched_floor_intervals(row, intervals)
+    assert floor_vote(row, matches) == "agrees"
+    assert floor_vote(replace(row, label="hold"), matches) == "opposite label"
+    assert floor_vote(row, matched_floor_intervals(replace(row, pause_start=7600), intervals)) == "no matching reference pause"
+    ambiguous = intervals + [(Speech("a", 9000, 9900), Speech("a", 12000, 15000), "hold", False)]
+    assert floor_vote(row, matched_floor_intervals(row, ambiguous)) == "multiple matching reference pauses"
 
 
 def test_annotation_labels_use_backchannels_and_group_following_words():
