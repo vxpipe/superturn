@@ -368,7 +368,7 @@ def register(sub):
         "listening": "sample labelled audio and score human judgments",
         "audit-labels": "audit sampled pauses with independent WebRTC speech activity",
         "check-pitch": "compare pitch and voicing with a YIN speech reference",
-        "check-ami-reference": "compare AMI labels with manual timestamps",
+        "check-ami-reference": "compare AMI labels with the aligned human transcript",
     }
     for name, description in handlers.items():
         parser = sub.add_parser(name, help=description)

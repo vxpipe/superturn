@@ -137,10 +137,10 @@ def audit(root, rows, source_signatures, per_language=REVIEW_SIZE, *, detector="
                 if outcome != "invalid":
                     if detector_vote == "unresolved":
                         outcome = reference_vote
-                        reason = "manual timing and dialogue-act evidence"
+                        reason = "aligned word timing and dialogue-act evidence"
                     elif reference_vote not in {"unresolved", detector_vote}:
                         outcome = "unresolved"
-                        reason = "acoustic and manual timing disagree"
+                        reason = "acoustic and aligned word timing disagree"
             if not key.startswith("ami-"):
                 by_language[row.language][outcome] += 1
             by_method[row.method][outcome] += 1

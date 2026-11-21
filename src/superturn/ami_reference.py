@@ -1,4 +1,4 @@
-"""Compare AMI's VAD labels with manually timestamped word intervals."""
+"""Compare AMI VAD labels with the aligned human transcript and dialogue acts."""
 
 from bisect import bisect_left
 from collections import Counter, defaultdict
@@ -63,7 +63,7 @@ def check_ami_reference(root, tolerance_ms=200):
                             stats["agreed"] += nearest[1] == row.label
                 meter.advance(1)
         report = {
-            "reference": "AMI manual word timestamps",
+            "reference": "word timestamps from AMI's force-aligned human transcripts",
             "tolerance_ms": tolerance_ms,
             "groups": {
                 group: {**stats, "agreement_on_matched": stats["agreed"] / stats["matched"] if stats["matched"] else None}

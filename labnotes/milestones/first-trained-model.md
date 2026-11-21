@@ -58,6 +58,8 @@ Last updated 2026-11-21.
   was 253 ms at the caller's speech end and 50 ms at the next speech onset.
   Widening both windows from 200/250 to 300/375 ms confirmed 45 more training
   labels and exposed 830 additional conflicts.
+  AMI uses human transcripts and dialogue-act labels with automatically
+  aligned word timestamps. [AMI transcription](https://groups.inf.ed.ac.uk/ami/corpus/transcription.shtml)
 - The user approved full training with verified AMI training cases, original
   validation and frozen test splits, and a disclosed review limitation.
   The timing check supported 862 AMI training labels before the existing

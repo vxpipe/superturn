@@ -77,3 +77,6 @@ speaker order and put the next speech onset at or after the 300 ms query.
 The measured pause begins at the Silero boundary and the time match
 allows for differences between that boundary and annotated speech end.
 The benchmark uses the same validation-selected threshold as the full test.
+AMI's transcripts and dialogue-act tags were produced by people. AMI
+obtained the word timestamps by automatically aligning those transcripts
+to the audio. [Transcription process](https://groups.inf.ed.ac.uk/ami/corpus/transcription.shtml) [Dialogue-act annotations](https://groups.inf.ed.ac.uk/ami/corpus/annotation.shtml)
