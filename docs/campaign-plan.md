@@ -157,6 +157,15 @@ The pretraining samples come from existing non-AMI train and validation
 shards. The transfer probe uses the calibration pilot's unchanged AMI
 cohorts. The reports and checkpoints are under `ami-transfer/`.
 
+The AMI learning curve and augmentation comparison use the same calibration
+pilot ID.
+
+```sh
+bin/vast-run -n ami-learning 'uv run --no-sync python -m superturn.ami_learning bed0ba3de027429f && bin/sync push exports reports && bin/sync verify exports reports'
+```
+
+The reports and checkpoints are under `ami-learning/`.
+
 ## Later campaigns
 
 A later campaign runs `bin/sync pull` after bootstrap and starts from the

@@ -188,8 +188,8 @@ def match_training(current, annotation):
     return paired
 
 
-def _render(root, destination, rows, split):
-    """Write G.711 examples in the training reader's normal shard layout."""
+def _render(root, destination, rows, split, channel="telephone"):
+    """Write rendered examples in the training reader's normal shard layout."""
     folder = destination / "shards" / split / "clean"
     folder.parent.mkdir(parents=True, exist_ok=True)
     revised = sorted(rows, key=lambda row: (row.audio, row.pause_start))
@@ -200,11 +200,11 @@ def _render(root, destination, rows, split):
         for index in range(0, len(revised), SHARD_ROWS):
             records = []
             for row in revised[index:index + SHARD_ROWS]:
-                pcm = condition(clip(row, cached(root / row.audio)), "telephone", 0).tobytes()
+                pcm = condition(clip(row, cached(root / row.audio)), channel, 0).tobytes()
                 metadata = asdict(row)
                 digest.update(json.dumps(metadata, sort_keys=True).encode())
                 digest.update(pcm)
-                records.append({**metadata, "condition": "telephone", "pcm": pcm})
+                records.append({**metadata, "condition": channel, "pcm": pcm})
             path = Path(staging) / f"{index // SHARD_ROWS:06d}.parquet"
             pq.write_table(pa.Table.from_pylist(records), path, compression="zstd")
         for path in folder.glob("*.parquet"):

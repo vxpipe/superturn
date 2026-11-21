@@ -7,6 +7,7 @@ import pytest
 
 from superturn import ami_mixture
 from superturn.ami_calibration import development_splits
+from superturn.ami_learning import select_speakers
 from superturn.ami_transfer import partial_auc
 from superturn.ami_pilot import acoustic_status, annotated_pauses, group_words, match_training
 from superturn.labels import Label, Speech
@@ -94,3 +95,19 @@ def test_partial_auc_handles_tied_scores_at_the_right_edge():
     assert partial_auc([0.9, 0.8, 0.2, 0.1], truth) == 1
     assert partial_auc([0.1, 0.2, 0.8, 0.9], truth) == 0
     assert partial_auc([0.5] * 4, truth) == pytest.approx(0.05)
+
+
+def test_learning_curve_is_nested_and_keeps_whole_speakers():
+    rows = [Label("ami", "en", f"{group}-{voice}", group, group, "train",
+                  pause, 4800, "hold", "annotation", "fixture.wav")
+            for group in ("a", "b") for voice in range(8) for pause in (6400, 20000)]
+    quarter = select_speakers(rows, 0.25)
+    half = select_speakers(rows, 0.5)
+    assert len(quarter) == 8
+    assert len(half) == 16
+    assert set(quarter) < set(half) < set(rows)
+    assert set(quarter) == set(select_speakers(list(reversed(rows)), 0.25))
+    for group in ("a", "b"):
+        assert {row.pause_start for row in quarter if row.group == group} == {6400, 20000}
+    for speaker in {row.speaker for row in quarter}:
+        assert sum(row.speaker == speaker for row in quarter) == 2
