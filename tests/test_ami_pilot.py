@@ -6,6 +6,7 @@ import pyarrow.parquet as pq
 import pytest
 
 from superturn import ami_mixture
+from superturn.ami_activity import anchors
 from superturn.ami_calibration import development_splits
 from superturn.ami_learning import select_speakers
 from superturn.ami_transfer import partial_auc
@@ -111,3 +112,17 @@ def test_learning_curve_is_nested_and_keeps_whole_speakers():
         assert {row.pause_start for row in quarter if row.group == group} == {6400, 20000}
     for speaker in {row.speaker for row in quarter}:
         assert sum(row.speaker == speaker for row in quarter) == 2
+
+
+def test_activity_anchor_depends_on_past_frames_and_uses_disjoint_future_bins():
+    activity = np.zeros((2, 60), dtype=bool)
+    activity[0, 27] = True
+    activity[1, 31] = True
+    activity[0, 34] = True
+    observed = {frame: (gap, target) for frame, gap, target in anchors(activity, 0)}
+    assert observed[30] == (200, (0, 1, 0, 0, 1, 0, 0, 0))
+    activity[:, 30:] = False
+    silent_future = {frame: (gap, target) for frame, gap, target in anchors(activity, 0)}
+    assert silent_future[30] == (200, (0,) * 8)
+    activity[1, 29] = True
+    assert 30 not in {frame for frame, _, _ in anchors(activity, 0)}

@@ -166,6 +166,15 @@ bin/vast-run -n ami-learning 'uv run --no-sync python -m superturn.ami_learning 
 
 The reports and checkpoints are under `ami-learning/`.
 
+The supervised future-speech pilot uses the same AMI calibration pilot.
+
+```sh
+bin/vast-run -n ami-activity 'uv run --no-sync python -m superturn.ami_activity bed0ba3de027429f && bin/sync push exports reports && bin/sync verify exports reports'
+```
+
+This uses existing AMI word timings and speaker headsets from training
+meetings. Find its reports and checkpoints under `ami-activity/`.
+
 ## Later campaigns
 
 A later campaign runs `bin/sync pull` after bootstrap and starts from the

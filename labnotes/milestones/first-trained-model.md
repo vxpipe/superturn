@@ -134,6 +134,11 @@ Last updated 2026-11-21.
   Full G.711 training averaged 8.13% recall at 3.38% false completes.
   Augmentation improved the clean-headset baseline, with cross-check
   AUC 0.545 and recall 7.50% at 3.38% false completes. Frozen test was unused.
+- Future-speech pretraining used 9,328 G.711 prefixes from 111 training
+  voices. Five-seed recall averaged 6.25% at 2.54% false completes,
+  versus 8.13% at 3.38% from scratch. Cross-check partial AUC improved
+  while ranking across all thresholds and the smaller assessment view
+  gave no consistent advantage. Frozen test was unused.
 
 ### Next step
 
@@ -141,11 +146,11 @@ Use the new speaker-disjoint AMI development cohorts to test changes that
 improve ranking and recall at 300 ms on held-out voices, with calibration
 and model selection on separate recordings. The scratch pilots have
 weak recall at the operating target even with independent calibration.
-Test dense, supervised future-speech prediction using the word timings
-from the 99 existing training-cohort meetings. Fine-tune the same
-audio-only model and compare with scratch and shuffled targets on the
-fixed evaluation cohorts. The learning curve supports using more
-training evidence from those recordings.
+Run connected-meeting-group cross-validation within the AMI development
+pool before comparing G.711 architecture, window and augmentation
+choices. Compare folds pairwise and reserve the original assessment
+views and frozen test. Use scratch as the reference after the
+future-activity pilot's mixed results.
 Preserve the original test shards and record the mixture decision before
 resuming the staged experiment matrix. Measure selected artifacts on the frozen test set,
 including the AMI reference diagnostic and telephone speech level and
@@ -167,6 +172,7 @@ destroy it unless the user asks to keep it.
 - [AMI telephone calibration](../20261121-0645-ami-calibration-pilot.md)
 - [AMI transfer probe](../20261121-0653-ami-transfer-probe.md)
 - [AMI learning curve](../20261121-0704-ami-learning-curve.md)
+- [AMI future-activity pretraining](../20261121-0712-ami-activity-pretraining.md)
 - [Local turn pipeline](../20261121-0112-local-turn-pipeline.md)
 - [Dataset sizes and scaffold](../20261120-1600-dataset-sizes-and-scaffold.md)
 - [Campaign runbook](../../docs/campaign-plan.md)
