@@ -24,6 +24,8 @@ from .turn1_mini_probe import english_rows
 REPORT = "own-student-smart-turn-benchmark"
 REFERENCES = {"smart-turn-3s": 48_000, "smart-turn-8s": 128_000}
 FEATURES_SHA256 = "139b047d10dee42ad5b4894489012e515a882d8f5e2bffe8ad27b30728fc9968"
+LEGACY = "smart-turn-3s-legacy-right-padding"
+NATIVE_SMART_TURN_SAMPLES = 128_000
 
 
 def reference_history(rows, truth, values):
@@ -69,13 +71,17 @@ def run(root):
     turns = [row[3] for row in rows]
     agree(archive, labels, turns, "en")
     truth = np.asarray(labels, dtype=bool)
-    values = {name: [] for name in REFERENCES}
+    values = {name: [] for name in (*REFERENCES, LEGACY)}
     meter = Progress(REPORT, len(rows), "pauses")
     try:
         for pcm, edge, _, _ in rows:
             clip = decision_audio(pcm, edge, "telephone")
+            if len(clip) != NATIVE_SMART_TURN_SAMPLES:
+                raise ValueError("the 8-second benchmark clip does not already have the native fixed length")
             for name, size in REFERENCES.items():
-                values[name].append(score(clip[-size:]))
+                audio = np.pad(clip[-size:], (NATIVE_SMART_TURN_SAMPLES - size, 0))
+                values[name].append(score(audio))
+            values[LEGACY].append(score(clip[-REFERENCES["smart-turn-3s"]:]))
             meter.advance(1)
     except BaseException:
         meter.finish("failed")
@@ -91,7 +97,7 @@ def run(root):
 
     points = {name: at_budget(name) for name in scores}
     if (len(rows) != 932 or int(truth.sum()) != 400
-            or points["smart-turn-3s"]["shift_recall"] != .2525 or points["smart-turn-8s"]["shift_recall"] != .355):
+            or points[LEGACY]["shift_recall"] != .2525 or points["smart-turn-8s"]["shift_recall"] != .355):
         raise ValueError("the historical reference operating points did not reproduce")
     paired = {"en": {"labels": labels, "turn_ordinals": turns, "scores": scores}}
     effects = {name: paired_seed_turns(paired, candidate, (name,) * len(candidate)) for name in REFERENCES}
@@ -101,8 +107,10 @@ def run(root):
                "student_receipt_sha256": students_sha, "smart_turn_receipt_sha256": benchmark_sha,
                "smart_turn_frontend_sha256": FEATURES_SHA256,
                "smart_turn_checkpoint_sha256": model_sha, "by_model": points,
+               "reference_padding": "3s re-aligned at the end of the model's 8s input; legacy right-pad for reproduction",
                "epoch20_mean_recall": float(np.mean([points[name]["shift_recall"] for name in candidate])),
-               "epoch20_minus_smart_turn": effects, "smart_turn_history_strata": reference_history(rows, truth, values)}
+               "epoch20_minus_smart_turn": effects,
+               "smart_turn_history_strata": reference_history(rows, truth, {name: values[name] for name in REFERENCES})}
     _write_json(root / "reports" / f"{REPORT}.json", results)
     print(json.dumps({key: results[key] for key in ("epoch20_mean_recall", "epoch20_minus_smart_turn",
                                                     "smart_turn_history_strata")}, indent=2))
