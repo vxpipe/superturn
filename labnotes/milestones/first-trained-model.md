@@ -99,6 +99,10 @@ Last updated 2026-11-21.
   19m04s, versus 29m29s for the threaded seed. The first 1M GRU seed
   completed in 19m07s, with 5.11% recall at 4.79% false completes on AMI
   telephone validation. The server suite passed 54 tests.
+- All six GRU Stage 1 runs finished. Best AMI telephone recall is 5.84%
+  at 4.79% false completes. The Conformer runs are next. A validation
+  probe with identical digital silence in every pause showed that most
+  read-speech ranking survives removal of the original pause audio.
 
 ### Next step
 
