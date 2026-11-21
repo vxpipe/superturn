@@ -74,3 +74,32 @@ def test_audit_places_nonzero_channel_offsets_on_one_timeline(tmp_path):
     assert audit_call(tmp_path, "example", detect) == {
         "audited_calls": 1, "candidate_shift": 1, "supported_shift": 1, "fixed_window_supported_shift": 1,
     }
+
+
+def test_agent_clock_recovers_only_when_both_segment_halves_agree(tmp_path):
+    filename = tmp_path / "data" / "transcript" / "example.json"
+    filename.parent.mkdir(parents=True)
+
+    def segment(role, start, offset, words):
+        return {"speaker_role": role, "start_ms": start, "offset_ms": offset,
+                "word_offsets_ms": words, "word_durations_ms": [100] * len(words)}
+
+    segments = [
+        segment("caller", 0, 0, [0, 100, 200, 300]),
+        segment("agent", 1000, 3000, [0, 100, 200, 300]),
+        segment("agent", 4000, 6000, [0, 100, 200, 300]),
+    ]
+    filename.write_text(json.dumps(segments))
+    for role, duration in (("caller", 7), ("agent", 8)):
+        write_wave(tmp_path / "data" / "audio" / role / "example.wav", np.zeros(duration * RATE, dtype=np.int16))
+
+    def detect(pcm):
+        return [(0, 8000)] if len(pcm) == 7 * RATE else [(16000, 36000), (64000, 84000)]
+
+    assert audit_call(tmp_path, "example", detect)["low_audio_word_overlap"] == 1
+    recovered = audit_call(tmp_path, "example", detect, recover_clock=True)
+    assert recovered["agent_clock_recovered"] == recovered["audited_calls"] == 1
+
+    segments[2] = segment("agent", 5000, 7000, [0, 100, 200, 300])
+    filename.write_text(json.dumps(segments))
+    assert audit_call(tmp_path, "example", detect, recover_clock=True)["agent_clock_recovered"] == 0
