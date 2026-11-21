@@ -46,7 +46,7 @@ are weaker than one-to-one calls.
 | Source | Licence | Languages | Notes |
 |---|---|---|---|
 | AMI Meeting Corpus | CC BY 4.0 per the current Edinburgh download page; older releases were under a modified NC-SA licence, so use only the current release | English | ~100 h, individual headset microphones. Selected (4-minute window per meeting). |
-| ICSI Meeting Corpus | CC BY 4.0 per its Edinburgh licence page | English | ~70 h, close-talk microphones. Not selected: files are compressed and only downloadable whole (34 GB). |
+| ICSI Meeting Corpus | CC BY 4.0 for signals and transcription | English | ~70 h, close-talk microphones. Edinburgh serves individual headset files. Embedded Shorten prevents direct PCM ranges. |
 | NOTSOFAR-1 recorded meetings | [CC BY 4.0](https://huggingface.co/datasets/microsoft/NOTSOFAR#data-license) | English | Close-talk audio and timed transcripts. The publisher reports speaker overlap between training and Dev 1. Any new development split needs verified identities. |
 | otoSpeech task-oriented releases | [CC BY 4.0](https://huggingface.co/datasets/otoearth/otoSpeech-full-duplex-task-oriented-v2#licensing-information) | English | Separate speaker channels and stable pseudonymous IDs. The current Hugging Face credential has no access. |
 
@@ -163,9 +163,20 @@ channels, transcripts and the metadata used for the split. The default
 staging scope is train and validation. Audit timing and label agreement
 before using the pilot for training. [Publisher source](https://github.com/cricketclub/gridspace-stanford-harper-valley)
 
-Not downloaded: ICSI, whose files are shorten-compressed and can only be
-fetched whole; whole Common Voice locales (947 GB for all 295); whole FLEURS
-(878 GB); Emilia beyond one partial archive per language (2.1 TB).
+ICSI is an unstaged option for English speaker breadth. The publisher's
+chooser returned individual headset URLs and estimated 356 MB for
+`Bdb001`. A 1 KiB range probe on Vast confirmed 16 kHz mono NIST SPHERE
+with embedded Shorten. HTTP ranges work on the compressed bytes.
+An exact decoded sample window needs a decoding pass from the beginning
+or a seek index. For a pilot, select only channels needed by the
+core word timings, pin the compressed object hashes, and record the
+decoder and decoded sample intervals. Verify speaker-channel mapping
+and timing before accepting any hold or shift label.
+[Official ICSI download and licence](https://groups.inf.ed.ac.uk/ami/icsi/download/)
+
+Other unstaged full downloads include Common Voice locales (947 GB for
+all 295), FLEURS (878 GB) and Emilia beyond one partial archive per
+language (2.1 TB).
 
 Partial streams and how their risks are handled:
 

@@ -37,19 +37,24 @@ DATA = {
 WINDOWS = {"smart-turn-3s": SAMPLES, "smart-turn-8s": 8 * RATE}
 
 
+def pause_spans(row, pcm, language):
+    if row["language"] != language or row["cohort"] != "general":
+        raise ValueError("unexpected language or cohort among benchmark turns")
+    for ordinal, span in enumerate(row["silence_spans"]):
+        edge = round(span["start"] * RATE)
+        end = min(len(pcm), round(span["end"] * RATE))
+        if not 0 <= edge <= end or end - edge < GAP:
+            continue
+        if span["label"] not in {"eot", "hold"}:
+            raise ValueError("unexpected benchmark pause annotation")
+        yield ordinal, edge, int(span["label"] == "eot")
+
+
 def clips_and_labels(rows, language):
     for row in rows:
-        if row["language"] != language or row["cohort"] != "general":
-            raise ValueError("unexpected language or cohort among benchmark turns")
         pcm = read_audio(row["audio"]["bytes"])
-        for span in row["silence_spans"]:
-            edge = round(span["start"] * RATE)
-            end = min(len(pcm), round(span["end"] * RATE))
-            if not 0 <= edge <= end or end - edge < GAP:
-                continue
-            if span["label"] not in {"eot", "hold"}:
-                raise ValueError("unexpected benchmark pause annotation")
-            yield decision_audio(pcm, edge, "telephone"), int(span["label"] == "eot")
+        for _, edge, label in pause_spans(row, pcm, language):
+            yield decision_audio(pcm, edge, "telephone"), label
 
 
 def run(root, device):
