@@ -17,12 +17,13 @@ from .ami_pilot import _peak, acoustic_status
 from .audio import RATE, silero
 from .labels import Speech, turns
 from .progress import Progress
-from .sources import data_root
+from .sources import data_root, load_sources
 
 BASE = "https://groups.inf.ed.ac.uk/maptask/signals/dialogues/"
 FILES = ("q1ec1.mix.wav", "q5nc1.mix.wav")
 SECONDS = 90
 MAX_TOTAL_BYTES = 20_000_000
+SOURCE = "maptask-audio"
 
 
 def read_range(url, start, count):
@@ -94,7 +95,9 @@ def analyze(signal, detect):
 def run(root):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("Map Task media stays on Vast")
-    folder = root / "raw" / "maptask-audio" / "probe"
+    source = load_sources()[SOURCE]
+    raw = root / "raw" / SOURCE
+    folder = raw / "probe"
     folder.mkdir(parents=True, exist_ok=True)
     detect, records = silero(), {}
     meter = Progress("maptask-audio-probe", len(FILES), "dialogues")
@@ -106,6 +109,12 @@ def run(root):
             meter.advance(1)
         report = {"method": "preliminary single-timing-source acoustic screen", "deadline_ms": 300,
                   "roles": "left and right; giver/follower mapping unverified", "files": records}
+        _write_json(raw / "MANIFEST.json", {
+            "source": SOURCE, "licence": source.licence, "attribution": source.attribution, "role": source.role,
+            "files": [{"path": f"probe/{name}", "url": BASE + name, "bytes": info["bytes"],
+                       "sha256": info["sha256"], "start_s": 0, "length_s": info["seconds"]}
+                      for name, info in records.items()],
+        })
         _write_json(root / "reports" / "maptask-audio-probe.json", report)
     except BaseException:
         meter.finish("failed")
