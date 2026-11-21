@@ -47,6 +47,19 @@ role = "metadata"
 urls = ["https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip"]
 order = 1
 
+[sources.livekit_eot_diagnostic]
+kind = "hf_files"
+repo = "livekit/eot-bench-data"
+revision = "ae834af9e9bddf73d1f550c190aaeb99bf31f523"
+licence = "CC BY 4.0"
+attribution = "LiveKit End-of-Turn Benchmark data, LiveKit (CC BY 4.0)"
+role = "test"
+# General English task-oriented turns, evaluated separately from the frozen suite.
+files = ["data/en/validation-00000-of-00002.parquet"]
+max_total_bytes = 109936364
+opt_in = true
+order = 3
+
 [sources.indic_diarbench]
 kind = "hf_rowgroups"
 repo = "sarvamai/indic-diarbench"

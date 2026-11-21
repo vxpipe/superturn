@@ -132,6 +132,12 @@ Measured on 2026-11-21 by `bin/plan-downloads`:
 
 The smoke-test sample (`--sample`) is 0.9 GB.
 
+For the standalone LiveKit EoT Benchmark diagnostic, select
+`--only livekit_eot_diagnostic` on the campaign server. The registered CC BY
+4.0 English general shard is pinned to 109,936,364 bytes. It adds about
+0.11 GB to the existing campaign selection and stays outside the frozen
+suite. [Dataset card](https://huggingface.co/datasets/livekit/eot-bench-data)
+
 Not downloaded: ICSI, whose files are shorten-compressed and can only be
 fetched whole; whole Common Voice locales (947 GB for all 295); whole FLEURS
 (878 GB); Emilia beyond one partial archive per language (2.1 TB).

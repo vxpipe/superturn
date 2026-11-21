@@ -86,7 +86,7 @@ def load_sources(path: Path = CONFIG) -> dict[str, Source]:
 
 def select(sources: dict[str, Source], only: list[str] | None) -> list[Source]:
     if not only:
-        return list(sources.values())
+        return [source for source in sources.values() if not source.get("opt_in", False)]
     unknown = [n for n in only if n not in sources]
     if unknown:
         raise SystemExit(f"unknown source(s): {', '.join(unknown)}")

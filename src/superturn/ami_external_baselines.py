@@ -45,12 +45,12 @@ def load_detectors(root):
     defaults = {"livekit-v1.1-mini": float(EOT_THRESHOLDS["en"]),
                 "smart-turn-v3.2": float(np.nextafter(np.float32(0.5), np.float32(1)))}
 
-    def predict(row, gap, audio):
+    def predict(row, gap, audio, *, turn_samples=None):
         pcm = (audio * 32768).astype(np.int16)
         valid_samples = min(len(pcm), row["pause_start"] + gap * 16)
         recent = np.ascontiguousarray(pcm[-min(valid_samples, EOT_MAX_SAMPLES):])
         # The archived, causal history approximates turn length in the meeting clips.
-        mini_score = mini.predict(recent, turn_samples=valid_samples)
+        mini_score = mini.predict(recent, turn_samples=valid_samples if turn_samples is None else turn_samples)
         return {"livekit-v1.1-mini": float(mini_score), "smart-turn-v3.2": smart_turn(audio)}
 
     return predict, defaults, checkpoint_sha256
