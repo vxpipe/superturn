@@ -88,7 +88,9 @@ def plan():
                              "align": align, "people": ids})
     fixed_bytes = conv_bytes + person_bytes + len(listing) + HEADER_BYTES * len(selected)
     per_second = len(WINDOWS_PERCENT) * sum(row["rate"] * row["align"] for row in selected)
-    seconds = min(50, (MAX_BYTES - 2 * fixed_bytes) // per_second)
+    separation = min((row["channel_sample_count"] * (WINDOWS_PERCENT[1] - WINDOWS_PERCENT[0]) // 100)
+                     // row["rate"] for row in selected)
+    seconds = min(120, separation, (MAX_BYTES - 2 * fixed_bytes) // per_second)
     if seconds < 30:
         raise ValueError("pilot cap cannot support the predeclared two interior windows")
     for row in selected:
