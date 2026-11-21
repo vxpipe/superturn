@@ -107,8 +107,15 @@ full runbook.
   data, cap examples per speaker, and report metrics on unseen voices only.
 - Never commit audio, transcripts, shards, checkpoints or recordings from real
   customer calls. Use customer calls only for local evaluation.
-- Never commit secrets. Tokens and keys go in `.env` (git-ignored); see
-  `env.sample`.
+- This is a public GitHub repository: everything committed, including git
+  history, labnotes and docs, is visible to anyone. Never commit secrets:
+  tokens, API keys, passwords, private keys, the R2 account ID, endpoint or
+  bucket name, or vast.ai instance addresses. They go in `.env`
+  (git-ignored; see `env.sample`, which holds placeholders only). Refer to
+  them by variable name in docs and labnotes, never by value. Check
+  `git diff --cached` before every commit; if a secret is ever committed,
+  tell the user at once so it can be revoked, since rewriting history does
+  not unpublish it.
 - Report results per language and per audio condition (wideband, telephone,
   noisy). The headline metric is the false "complete" rate at a fixed pause
   length: how often the model ends a turn the caller had not finished.

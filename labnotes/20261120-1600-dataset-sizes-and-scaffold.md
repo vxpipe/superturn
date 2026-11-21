@@ -86,15 +86,45 @@ parameter turn model needs. Every source now fetches only the bytes it uses:
 
 - No downloads locally (user instruction); code is tested with generated
   fixtures, and the first real data is the smoke test on the campaign machine.
-- Process each source into shards and delete its raw files after syncing, so
-  ~1 TB of disk is enough. `disk_space>=1600` matched only 3 datacenter offers;
+- Superseded 2026-11-21: process each source into shards and delete its raw
+  files, so ~1 TB of disk is enough. Now raw files are kept (20 GB on a 200 GB
+  disk) and stored in R2 with the derived data. `disk_space>=1600` matched only 3 datacenter offers;
   `>=1000` with 24+ vCPUs and 500 Mb/s matched 13, from $0.74/h.
 - Splits: per dataset, 80/10/10 by hash of source and group; groups merged
   across shared speakers (union-find); test-role sources test only.
-- Datacenter vast.ai hosts only, because the Basis licence requires
-  confidentiality terms for cloud compute and storage.
+- Superseded 2026-11-20: datacenter vast.ai hosts only (needed for the
+  Basis licence). With Basis dropped, verified community hosts are allowed.
 - `uvx vastai` needs `--python 3.12`; under Python 3.15 it tries to build
   Pillow from source and fails.
+
+## 2026-11-21: credentials, storage and tooling
+
+- `.env`: `HF_TOKEN` checked with `HfApi.whoami` and a file listing of each
+  Hugging Face source (all five ok, nothing downloaded). `bin/plan-downloads`:
+  18.1 GB total after the Common Voice switch.
+- Persistent storage: a private Cloudflare R2 bucket, possibly shared with
+  other work. Listed read-only with boto3 (rclone is not installed locally):
+  reachable, empty. User decisions: keep raw downloads as well as derived
+  data, so later campaigns skip download and labelling; keep everything under
+  `<bucket>/superturn/`; sync only between vast.ai and R2, never locally.
+- `bin/sync` enforces both (fixed `superturn/` directory, `store:<bucket>`
+  only, plain directory names, copy never sync, refuses without the
+  `.campaign-machine` marker that `bin/vast-bootstrap` writes). Checked with a
+  stub rclone in a scratch directory: pushes and pulls land in
+  `<bucket>/superturn/<dir>`; a path in the remote, `../x`, `/etc` and an
+  unmarked machine are refused with no rclone call.
+- `bin/vast-up` pulls stored data after bootstrap; `bin/vast-down` pushes
+  before destroying; `bin/vast-fetch` also brings back labels.
+- Expected derived size (estimate, to be measured): labels 10-50 MB, shards
+  10-35 GB (11 s clips while windows up to 8 s are tested), test copies
+  2-5 GB.
+- Progress: `superturn.progress.Progress` measures pace from work done
+  (resumed work excluded), prints done/total, pace and time left every 30 s,
+  and writes `$SUPERTURN_DATA/progress/<step>.json`; `bin/vast-progress`
+  shows them. Wired into `superturn download` (bytes counted live through
+  `_request`, parquet row groups credited on completion). Unit tests only.
+- RTX 5090 offers on vast.ai (2026-11-21): 29 offers, $0.49-1.67/h, nine
+  meeting the campaign filters at $0.53-0.75/h.
 
 ## Not yet verified
 
@@ -104,5 +134,5 @@ parameter turn model needs. Every source now fetches only the bytes it uses:
 
 ## Evidence
 
-- `uv run pytest`: 9 passed.
+- `uv run pytest`: 23 passed (2026-11-21).
 - `bin/vast-offers` returns offers with the committed query.

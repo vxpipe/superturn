@@ -1,35 +1,75 @@
 # First trained turn model
 
-Status: in progress (checkpoint A). Last updated 2026-11-20.
+Status: in progress (checkpoint A). Last updated 2026-11-21.
 
 ## Handover: current state and next step
 
-Read this section first when picking up the work.
+Read this section first when picking up the work, then `AGENTS.md` (working
+rules, and how to drive and check the campaign machine).
 
-- Done: data sources chosen and licences read; the download selection is
-  codified and priced (18.3 GB under a 20 GB budget, fetching only the parts
-  used); downloads, licence check, reproducible
-  speaker-disjoint splits and the vast.ai campaign scripts are written; unit
-  tests pass (`uv run pytest`).
-- Basis Conversations 1500 access was not granted (2026-11-20). The model is
-  trained without it: real conversation labels are English only (AMI);
-  other languages rely on read and spontaneous speech, and non-English
-  conversation is measured on Indic DiarBench.
-- Emilia access: granted to the user's Hugging Face account (2026-11-20).
-- Common Voice comes from a Hugging Face copy of release 17.0 with separate
-  metadata TSVs, so no Mozilla account, API key or per-language terms are
-  needed (user agreed 2026-11-20).
-- `.env` filled in (2026-11-21): `HF_TOKEN` reaches all five Hugging Face
-  sources (file listing only); `SUPERTURN_SSH_KEY` set; persistent storage is
-  a private Cloudflare R2 bucket, reachable and empty (listed with boto3;
-  rclone not installed locally). Raw downloads, labels, shards and results
-  are all kept there between campaigns (user, 2026-11-21).
-- Waiting on the user: nothing.
-- Next step: checkpoint A, "Labelling", starting with the per-track labeller
-  tested on generated fixtures. Then shard writer, augmentation, features,
-  models, export, benchmark, experiment queue, and one smoke command.
-- Evidence and decisions so far:
-  [labnotes/20261120-1600-dataset-sizes-and-scaffold.md](../20261120-1600-dataset-sizes-and-scaffold.md).
+### Done
+
+- Data sources chosen and licences recorded (`configs/sources.toml`,
+  `docs/data-options.md`). The selection fetches only the parts used:
+  18.1 GB under the 20 GB budget, 0.9 GB smoke sample (`bin/plan-downloads`,
+  2026-11-21). Basis was not granted (2026-11-20), so real conversation
+  training labels are English only (AMI); non-English conversation is
+  measured on Indic DiarBench. Emilia access granted. Common Voice comes from
+  a Hugging Face copy of release 17.0 (CC0), so no Mozilla account is needed.
+- Written and unit-tested: partial downloads with a licence check;
+  reproducible, speaker-disjoint splits; the vast.ai scripts (`bin/vast-*`);
+  persistent storage on a private Cloudflare R2 bucket, all under
+  `<bucket>/superturn/`, synced only between the campaign machine and R2
+  (`bin/sync` refuses to run locally; the user's connection is slow);
+  progress and time-left reporting for long steps (`superturn.progress`,
+  `bin/vast-progress`), used by the download so far. `uv run pytest`: 23
+  passed.
+- `.env` is complete (2026-11-21): `HF_TOKEN` reaches all five Hugging Face
+  sources (file listing only), `SUPERTURN_SSH_KEY` set, R2 lines set
+  including `NO_CHECK_BUCKET=true`; the bucket is reachable and empty
+  (listed with boto3). The vast.ai API key is in `~/.config/vastai/`.
+
+### Never run for real yet
+
+- The campaign scripts from `bin/vast-up` onwards against a live machine.
+- A write to R2 (`bin/sync push`); only a read-only listing was done.
+- The download and its progress meter on real data.
+All three are first exercised by the smoke test on the rented machine.
+
+### Waiting on the user
+
+- Nothing blocks checkpoint A. Open decisions, none urgent:
+  - Listening check scope: 50 clips per language (about 1,500) as written,
+    or 50 for AMI plus a few spot-check languages (proposed, not approved).
+  - Keep `configs/campaign.env` or fold it into `bin/_lib.sh` (proposed).
+  - GPU: the offer query allows any 24 GB GPU (from about $0.12/h); the user
+    asked about RTX 5090 (about $0.53-0.65/h for offers meeting the filters,
+    2026-11-21). Not decided; models are small and prep is CPU-bound.
+- Before renting: the user confirms the offer. The design review (below)
+  happens before checkpoint A closes.
+
+### Next step
+
+Checkpoint A, "Labelling", starting with the per-track labeller for AMI,
+tested on generated two-track fixtures. Its first sub-task is a gap in the
+download selection: only AMI headset audio is fetched, but the labeller,
+the speaker-disjoint split and the backchannel check need the AMI manual
+annotations (`ami_public_manual_1.6.2.zip`, CC BY 4.0: `corpusResources/
+meetings.xml` maps each headset to a global speaker ID; the dialogue-act
+files mark backchannels). Add them to `configs/sources.toml` (check size
+against the budget with `bin/plan-downloads`), then the labeller. After it:
+the Indic DiarBench labeller; read speech (needs a permissively licensed
+multilingual forced aligner, not yet chosen); spontaneous speech; speaker
+counts and caps; shard writer; augmentation; test copies; features; models;
+export and benchmark; experiment queue; smoke command. Every long step uses
+`superturn.progress.Progress`, and the user is told its estimate once the
+pace is measured.
+
+### Evidence
+
+- [labnotes/20261120-1600-dataset-sizes-and-scaffold.md](../20261120-1600-dataset-sizes-and-scaffold.md):
+  source sizes, budget, Basis decision, storage and tooling (2026-11-21
+  section).
 
 ## Outcome
 
