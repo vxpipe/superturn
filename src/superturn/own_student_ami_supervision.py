@@ -65,7 +65,8 @@ def schedules(fit, rows, clean, seed):
     return replay, matched
 
 
-def train(root, parent, arm, seed, replay, ami, order):
+def train(root, parent, arm, seed, replay, supplement, order, *, supplement_weight=None,
+          progress_name="ami-supervision"):
     weights = torch.load(read_verified(root, parent), map_location="cpu", weights_only=True)
     model = build(weights["config"]).to(DEVICE)
     if model.features.hop != HOP or sum(p.numel() for p in model.parameters()) != 972795:
@@ -74,10 +75,14 @@ def train(root, parent, arm, seed, replay, ami, order):
     torch.manual_seed(seed)
     optimizer = torch.optim.AdamW(model.parameters(), lr=LR)
     replay_pcm, replay_target = replay
-    audio, targets = ami
+    audio, targets = supplement
     replay_rows, supplements = order
     elapsed = torch.full((BATCH, 1), float(DEADLINE), device=DEVICE)
-    meter = Progress(f"ami-supervision-{arm}-{seed}", STEPS, "updates")
+    loss_weights = None
+    if supplement_weight is not None:
+        loss_weights = torch.full((BATCH,), (1 - supplement_weight) / (BATCH - REPLACEMENTS), device=DEVICE)
+        loss_weights[-REPLACEMENTS:] = supplement_weight / REPLACEMENTS
+    meter = Progress(f"{progress_name}-{arm}-{seed}", STEPS, "updates")
     try:
         for step, rows in enumerate(replay_rows):
             clip_batch = replay_pcm[rows, 0].astype(np.float32) / 32768
@@ -89,7 +94,11 @@ def train(root, parent, arm, seed, replay, ami, order):
             x = torch.as_tensor(clip_batch, device=DEVICE)
             y = torch.as_tensor(y, device=DEVICE)
             optimizer.zero_grad(set_to_none=True)
-            loss = F.binary_cross_entropy_with_logits(model.logits(x, elapsed).flatten(), y)
+            logits = model.logits(x, elapsed).flatten()
+            if loss_weights is None:
+                loss = F.binary_cross_entropy_with_logits(logits, y)
+            else:
+                loss = F.binary_cross_entropy_with_logits(logits, y, weight=loss_weights, reduction="sum")
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5, error_if_nonfinite=True)
             optimizer.step()
@@ -102,14 +111,14 @@ def train(root, parent, arm, seed, replay, ami, order):
         "parent": parent, "last_loss": float(loss.detach())}
 
 
-def summarize(rows):
+def summarize(rows, *, arm_names=ARMS, contrasts=CONTRASTS):
     rng = np.random.default_rng(29062)
     individual, draws = {}, {}
-    paired = [(ARMS.index(arm), ARMS.index(ref)) for arm, ref in CONTRASTS]
+    paired = [(arm_names.index(arm), arm_names.index(ref)) for arm, ref in contrasts]
     for language, row in rows.items():
         truth = np.asarray(row["labels"], dtype=bool)
         groups = np.asarray(row["turn_ordinals"])
-        values = [np.asarray([row["scores"][f"{arm}-{seed}"] for seed in SEEDS]) for arm in ARMS]
+        values = [np.asarray([row["scores"][f"{arm}-{seed}"] for seed in SEEDS]) for arm in arm_names]
 
         def metrics(idx):
             return np.asarray([recall_metrics(arm[:, idx], truth[idx]) for arm in values])
@@ -125,7 +134,7 @@ def summarize(rows):
     def limits(values):
         return np.quantile(values, [.025, .975], axis=0).transpose(1, 2, 0).tolist()
 
-    return {"arm_order": ARMS, "contrast_order": CONTRASTS,
+    return {"arm_order": arm_names, "contrast_order": contrasts,
             "metrics_order": ["mean_recall_2.5_5_7.5pct", "matched_5pct_recall", "normalized_pauc_10pct"],
             "macro": np.mean(list(individual.values()), axis=0).tolist(), "by_language": individual,
             "paired_macro_95": limits(np.mean(list(draws.values()), axis=0)), "paired_english_95": limits(draws["en"])}
