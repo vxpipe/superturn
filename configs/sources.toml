@@ -89,6 +89,15 @@ max_total_bytes = 1389421846
 opt_in = true
 order = 3
 
+[sources.maptask-audio]
+kind = "http"
+licence = "CC BY 4.0"
+attribution = "HCRC Map Task Corpus audio, University of Edinburgh and University of Glasgow (CC BY 4.0)"
+role = "train-conversation"
+opt_in = true
+selection_command = "python -m superturn.maptask_probe"
+order = 3
+
 [sources.indic_diarbench]
 kind = "hf_rowgroups"
 repo = "sarvamai/indic-diarbench"

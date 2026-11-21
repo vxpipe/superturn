@@ -146,6 +146,12 @@ diagnostic by language. The shards stay outside fitting and the frozen
 suite. This release has no global speaker IDs. CC BY 4.0 is recorded on
 the pinned dataset card. [Dataset card](https://huggingface.co/datasets/livekit/eot-bench-data/blob/ae834af9e9bddf73d1f550c190aaeb99bf31f523/README.md)
 
+HCRC Map Task dialogue WAVs have a separate CC BY 4.0 licence.
+The opt-in `maptask-audio` probe fetches two ninety-second stereo
+slices and measures channel separation and preliminary pause yield.
+The probe uses only the dialogue audio. The publisher's NXT annotation
+archive uses a separate CC BY-SA licence. [Audio directory licence](https://groups.inf.ed.ac.uk/maptask/signals/dialogues/00LICENSE.html) · [Published design](https://groups.inf.ed.ac.uk/maptask/maptask-description.html)
+
 HarperValleyBank is a separate, opt-in English conversation pilot under
 CC BY 4.0. `python -m superturn.harper_valley_plan` pins a speaker-disjoint
 file list, and `python -m superturn.harper_valley_acquire` stages that list
