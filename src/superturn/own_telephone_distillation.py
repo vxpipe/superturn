@@ -1,5 +1,6 @@
 """Continue the compact student on matched, participant-purged telephone targets."""
 
+import argparse
 from collections import defaultdict
 from hashlib import sha256
 import json
@@ -14,15 +15,16 @@ from .dense_teacher import file_digest
 from .language_failure_audit import read_receipt, read_verified
 from .model import build
 from .multilingual_teacher_probe import score_languages
-from .own_head_distillation import student_scores
+from .own_head_distillation import predictions, student_scores
 from .own_student_ami_supervision import BATCH, LR, REPLACEMENTS, STEPS, schedules, summarize, train
 from .own_student_width_probe import model_name
 from .own_teacher_feature_student import DEVICE, SEEDS, compare, read_inputs
+from .own_teacher_targets import teacher
 from .own_telephone_targets import HISTORY_BINS, render
 from .shards import seed_for
 from .sources import data_root
-from .turn1_mini_probe import english_rows
-from .wav2vec_harper_probe import pause_rows
+from .turn1_mini_probe import english_rows, harper_rows
+from .wav2vec_harper_probe import extract, pause_rows, rates
 
 ARMS = ("replay", "caller", "emilia", "shuffle", "emilia-rank")
 CONTRASTS = (("caller", "replay"), ("caller", "emilia"), ("caller", "shuffle"), ("caller", "emilia-rank"))
@@ -137,6 +139,74 @@ def run(root):
     return report
 
 
+def held_fidelity(root):
+    if not (root / ".campaign-machine").is_file():
+        raise ValueError("the teacher fidelity replay uses staged Vast audio")
+    candidate, candidate_hash = read_receipt(root, "own-telephone-distillation")
+    targets, target_hash = read_receipt(root, "own-telephone-targets")
+    selection, selection_hash = read_receipt(root, "own-teacher-language-selection")
+    if (candidate["target_report_sha256"] != target_hash or targets["selection_sha256"] != selection_hash):
+        raise ValueError("the held teacher selection changed")
+    _, _, encoder, heads, _ = teacher(root, selection)
+    clips, truth, _ = zip(*pause_rows(harper_rows(root, native_prefix=True)), strict=True)
+    audio, truth = np.stack(clips), np.asarray(truth)
+    values = predictions(extract("telephone-fidelity-held", encoder, audio), heads)
+    del encoder
+    if rates(values, truth) != targets["original_teacher_harper"]:
+        raise ValueError("the archived Harper teacher metrics changed")
+    results = {}
+    for name, fit in candidate["fits"].items():
+        state = torch.load(read_verified(root, fit["checkpoint"]), map_location="cpu", weights_only=True)
+        model = build(state["config"]).to(DEVICE).eval()
+        model.load_state_dict(state["state"])
+        scores = student_scores(model, audio)
+        if rates(scores, truth)["recalls_at_2_5_5_7_5pct"] != candidate["metrics"]["harper"][name]["recalls_at_2_5_5_7_5pct"]:
+            raise ValueError("the archived student ranking did not reproduce")
+        results[name] = float(spearmanr(scores, values).statistic)
+    report = {"scope": "Harper validation fidelity to the original learned-layer teacher",
+              "training_report_sha256": candidate_hash, "pauses": len(truth),
+              "parent_fidelity": targets["width_harper_spearman"], "student_fidelity": results}
+    _write_json(root / "reports/own-telephone-held-fidelity.json", report)
+    print(json.dumps(report, indent=2))
+
+
+def fit_fidelity(root):
+    if not (root / ".campaign-machine").is_file():
+        raise ValueError("the teacher fidelity replay uses staged Vast audio")
+    candidate, candidate_hash = read_receipt(root, "own-telephone-distillation")
+    targets, target_hash = read_receipt(root, "own-telephone-targets")
+    if candidate["target_report_sha256"] != target_hash:
+        raise ValueError("the telephone target report changed")
+    rows = json.loads(read_verified(root, targets["rows"]).read_text())
+    audio = render(root, rows)
+    if sha256(audio.tobytes()).hexdigest() != targets["render_sha256"]:
+        raise ValueError("the caller training render changed")
+    with np.load(read_verified(root, targets["scores"]), allow_pickle=False) as stored:
+        values = stored["harper"]
+    results = {}
+    for name, fit in candidate["fits"].items():
+        state = torch.load(read_verified(root, fit["checkpoint"]), map_location="cpu", weights_only=True)
+        model = build(state["config"]).to(DEVICE).eval()
+        model.load_state_dict(state["state"])
+        scores = student_scores(model, audio)
+        results[name] = {"spearman": float(spearmanr(scores, values).statistic),
+                         "mean_abs_error": float(np.mean(abs(scores - values)))}
+    report = {"scope": "training fidelity to the participant-purged caller targets",
+              "training_report_sha256": candidate_hash, "pauses": len(values), "models": results}
+    _write_json(root / "reports/own-telephone-fit-fidelity.json", report)
+    print(json.dumps(report, indent=2))
+
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--held-fidelity", action="store_true")
+    mode.add_argument("--fit-fidelity", action="store_true")
+    args = parser.parse_args()
     torch.set_num_threads(2)
-    print(json.dumps(run(data_root())["summary"], indent=2))
+    if args.held_fidelity:
+        held_fidelity(data_root())
+    elif args.fit_fidelity:
+        fit_fidelity(data_root())
+    else:
+        print(json.dumps(run(data_root())["summary"], indent=2))
