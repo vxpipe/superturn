@@ -123,6 +123,9 @@ def targets_for_features(cache, digests, sources, roles, output, *, reuse_pca=Fa
         centered = values - origin
         eigenvalues, vectors = torch.linalg.eigh(centered.T @ centered / len(values))
         basis = vectors[:, -PCA_SIZE:]
+        columns = torch.arange(PCA_SIZE, device=DEVICE)
+        pivots = basis[basis.abs().argmax(dim=0), columns]
+        basis = basis * torch.where(pivots < 0, -1., 1.)
         scale = eigenvalues[-PCA_SIZE:].clamp_min(1e-6).sqrt()
         projected, valid = project_features(cache, digests, len(roles), origin, basis, scale, meter)
         torch.save({"origin": origin.cpu(), "basis": basis.cpu(), "scale": scale.cpu(),
