@@ -1,10 +1,11 @@
-"""Command line: `superturn plan|download|check-licences|inspect-archive|refresh-url-lists`."""
+"""Command line: `superturn plan|download|progress|check-licences|inspect-archive|refresh-url-lists`."""
 
 from __future__ import annotations
 
 import argparse
 import sys
 
+from .progress import Progress, read_all as read_progress, table as progress_table
 from .acquire import _hf_auth, check_licences, download, inspect_archive, plan_source
 from .sources import budget_bytes, load_sources, select
 
@@ -51,17 +52,25 @@ def cmd_download(args) -> int:
     if _over_budget(plans, args):
         return 2
     failed = []
+    meter = Progress("download-sample" if args.sample else "download", sum(p.size for p in plans), "B")
     for plan in plans:
         name = plan.source.name
         print(f"== {name}: {len(plan.files)} files, up to {_gb(plan.size).strip()}", flush=True)
         try:
-            download(plan, workers=args.workers)
+            download(plan, workers=args.workers, meter=meter)
         except (Exception, SystemExit) as error:  # keep going; report at the end
             print(f"!! {name} failed: {error}", file=sys.stderr, flush=True)
             failed.append(name)
+        meter.report()
+    meter.finish("failed" if failed else "done")
     if failed:
         print(f"failed: {', '.join(failed)}", file=sys.stderr)
         return 1
+    return 0
+
+
+def cmd_progress(args) -> int:
+    print(progress_table(read_progress()))
     return 0
 
 
@@ -117,6 +126,9 @@ def main(argv: list[str] | None = None) -> int:
         p.set_defaults(func=func)
         if name == "download":
             p.add_argument("--workers", type=int, default=8)
+
+    p = sub.add_parser("progress", help="show each long step's progress and estimated time left")
+    p.set_defaults(func=cmd_progress)
 
     p = sub.add_parser("check-licences", help="fail on raw data without a configured licence")
     p.set_defaults(func=cmd_check_licences)

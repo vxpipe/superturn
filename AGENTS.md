@@ -40,7 +40,48 @@ The current milestone, with a handover section on where work stands, is in
 - Datasets, shards, checkpoints and reports live under `$SUPERTURN_DATA`
   (default `data/`, git-ignored), never in git.
 
+## Campaign machine and storage
+
+Real data is only ever handled on a rented vast.ai machine. The local
+computer drives it with these scripts; read `docs/campaign-plan.md` for the
+full runbook.
+
+- Credentials are in `.env` (see `env.sample`): `HF_TOKEN`,
+  `SUPERTURN_SSH_KEY`, and the R2 storage lines. The vast.ai API key is in
+  `~/.config/vastai/`. Call the vast CLI as `uvx --python 3.12 vastai ...`
+  (newer Pythons fail to build its dependencies); `bin/_lib.sh` wraps it.
+- The current machine's instance ID is in `.campaign/instance`
+  (git-ignored). If it is missing, no campaign machine is recorded; check
+  `uvx --python 3.12 vastai show instances` before renting another.
+- Check on a running campaign:
+  - `bin/vast-progress`: every long step's progress, measured pace and
+    estimated time left, plus running jobs and disk use. Start here.
+  - `bin/vast-ssh [command]`: a shell or one command on the machine, e.g.
+    `bin/vast-ssh tail -f /workspace/data/logs/<job>.log`.
+  - `bin/vast-fetch`: copy results here (reports, logs, metrics, model files,
+    labels; no audio) to `data/campaigns/<instance>/`.
+- Run work there with `bin/vast-run -n NAME 'command'` (tmux, survives
+  disconnects, logs to `/workspace/data/logs/NAME.log`), after
+  `bin/vast-push` for code changes.
+- Lifecycle: `bin/vast-offers` → `bin/vast-up OFFER_ID` (rents, pushes,
+  bootstraps, pulls stored data) → work → `bin/vast-down --yes` (fetches
+  results, pushes to storage, then destroys the machine). Renting and
+  destroying cost money: confirm with the user first.
+- Persistent storage is a private Cloudflare R2 bucket that may be shared
+  with other work. Everything this project stores goes under
+  `<bucket>/superturn/` (`raw`, `labels`, `shards`, `tests`, `runs`,
+  `reports`, `logs`, `manifests`). `bin/sync push|pull` copies (never
+  deletes) and runs only on the campaign machine, never locally: the local
+  connection is slow, and data moves only between vast.ai and R2.
+
 ## Working rules
+
+- Every long step (download, labelling, sharding, training, benchmarks)
+  counts its work with `superturn.progress.Progress`, so its log and
+  `bin/vast-progress` show done/total, the pace measured from the work done
+  so far, and the time left. When starting such a step, tell the user the
+  estimate once the pace is measured, and record estimate against actual in
+  the labnotes.
 
 - Anything that will be run more than once is a script in `bin/` or a
   `superturn` subcommand, committed to the repo: setup, downloads, campaign

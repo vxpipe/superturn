@@ -76,7 +76,8 @@ but not redistribution.
 5. Prepare, experiment, export and benchmark: the commands the milestone adds
    for each stage, each started with `bin/vast-run` so it survives
    disconnects and logs to `$REMOTE_DATA/logs/`.
-6. `bin/vast-ssh` to inspect; `bin/vast-fetch` copies results here at any
+6. `bin/vast-progress` shows each long step's progress, measured pace and
+   estimated time left (from `$REMOTE_DATA/progress/<step>.json`); `bin/vast-ssh` to inspect; `bin/vast-fetch` copies results here at any
    time.
 7. `bin/vast-down --yes` fetches results (and pushes raw downloads, labels
    and shards if a storage remote is set), then destroys the machine only if that succeeded.

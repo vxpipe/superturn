@@ -13,6 +13,7 @@ import json
 import os
 import struct
 import tarfile
+import threading
 import time
 import urllib.request
 from collections import defaultdict
@@ -47,9 +48,46 @@ class Plan:
 
 def _request(url: str, method: str = "GET", headers: dict | None = None, data: bytes | None = None):
     all_headers = {"User-Agent": USER_AGENT, **(headers or {})}
-    return urllib.request.urlopen(
+    response = urllib.request.urlopen(
         urllib.request.Request(url, data=data, method=method, headers=all_headers), timeout=120
     )
+    counter = getattr(_local, "counter", None)
+    return _Counted(response, counter) if counter else response
+
+
+# Bytes read by the file each download thread is fetching, for progress.
+_local = threading.local()
+
+
+class _FileCounter:
+    def __init__(self, meter):
+        self.meter = meter
+        self.count = 0
+
+    def add(self, n: int) -> None:
+        self.count += n
+        self.meter.advance(n)
+
+
+class _Counted:
+    """An HTTP response whose reads are counted towards the download's progress."""
+
+    def __init__(self, response, counter: _FileCounter):
+        self._response, self._counter = response, counter
+
+    def read(self, n: int = -1) -> bytes:
+        chunk = self._response.read(n)
+        self._counter.add(len(chunk))
+        return chunk
+
+    def __getattr__(self, name):
+        return getattr(self._response, name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return self._response.__exit__(*exc)
 
 
 def _head_size(url: str) -> int:
@@ -270,7 +308,10 @@ def inspect_archive(url: str, max_bytes: int, headers: dict | None = None) -> li
 # ------------------------------------------------------------- downloading
 
 
-def download(plan: Plan, workers: int = 8) -> None:
+def download(plan: Plan, workers: int = 8, meter=None) -> None:
+    """Fetch every planned file. `meter` (a progress.Progress in bytes) is
+    advanced as bytes arrive, or on completion where reads are not counted
+    (parquet row groups), and credited without pacing for files already done."""
     target = raw_dir(plan.source)
     target.mkdir(parents=True, exist_ok=True)
     fetch = {
@@ -282,7 +323,7 @@ def download(plan: Plan, workers: int = 8) -> None:
     }[plan.source.kind]
     results = {}
     with cf.ThreadPoolExecutor(workers) as pool:
-        futures = {pool.submit(fetch, plan, f, target): f.path for f in plan.files}
+        futures = {pool.submit(fetch, plan, f, target, meter): f.path for f in plan.files}
         for future in cf.as_completed(futures):
             results[futures[future]] = future.result()
     _write_manifest(plan, target, results)
@@ -295,11 +336,20 @@ def _done(target: Path, path: str) -> Path:
 def _once(fetch):
     """Skip files already fetched; record each file's result for the manifest."""
 
-    def wrapper(plan: Plan, f: PlannedFile, target: Path):
+    def wrapper(plan: Plan, f: PlannedFile, target: Path, meter=None):
         marker = _done(target, f.path)
         if marker.exists():
+            if meter:
+                meter.skip(f.size)
             return json.loads(marker.read_text())
-        result = fetch(plan, f, target) or {}
+        counter = _FileCounter(meter) if meter else None
+        _local.counter = counter
+        try:
+            result = fetch(plan, f, target) or {}
+        finally:
+            _local.counter = None
+        if meter:  # credit what was not counted live; streams stop near f.size
+            meter.advance(max(0, f.size - counter.count))
         marker.parent.mkdir(parents=True, exist_ok=True)
         marker.write_text(json.dumps(result))
         return result

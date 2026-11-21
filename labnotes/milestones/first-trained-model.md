@@ -133,6 +133,18 @@ Implemented in `src/superturn/splits.py`, tested in `tests/test_splits.py`.
   (`SUPERTURN_REMOTE`, Cloudflare R2, all under `<bucket>/superturn/`) before the machine is released, so a
   later campaign pulls them instead of downloading and labelling again.
 
+### Progress and time estimates
+
+- Every long step (download, labelling, sharding, test copies, each training
+  run, the experiment queue, benchmarks) counts its work with
+  `superturn.progress.Progress` against a total known up front (bytes,
+  recordings, clips, training steps). Its log line and
+  `$SUPERTURN_DATA/progress/<step>.json` give done/total, the pace measured
+  from the work done so far (resumed work excluded) and the time left;
+  `bin/vast-progress` shows them all from the local computer.
+- The user is told each step's estimate once its pace is measured, and the
+  campaign labnotes record estimate against actual per step.
+
 ## Checkpoints
 
 ### A. Local build-out (no downloads)
