@@ -1,0 +1,13 @@
+{
+  "architecture": "a",
+  "parameters": 10000000,
+  "width": 872,
+  "window": 3,
+  "seed": 29,
+  "epochs": 5,
+  "batch_size": 64,
+  "lr": 0.001,
+  "augmentation": true,
+  "ami_verified_training": true,
+  "augmentation_workers": 8
+}

@@ -8,6 +8,7 @@ from statistics import mean
 import numpy as np
 
 from .ami_calibration import _write_json
+from .ami_deadline import retrospective_limits
 from .ami_external_baselines import load_detectors
 from .ami_text_signal import CROSSVAL
 from .ami_transfer import partial_auc
@@ -53,7 +54,7 @@ def load_grus(root):
     return models
 
 
-def load_stage_one(root):
+def load_validated_models(root, names):
     import torch
 
     from .model import build
@@ -62,43 +63,43 @@ def load_stage_one(root):
     validation_hash = manifest["sha256_by_split"]["validation"]
     models = []
     checkpoints = {}
-    for architecture in ("a", "b"):
-        for size in (150000, 500000, 1000000):
-            for seed in (17, 29):
-                name = f"s1-{architecture}-{size}-{seed}"
-                report = root / "reports" / f"{name}-float-ami-validation" / "metrics.json"
-                record = json.loads(report.read_text())
-                checkpoint = root / "runs" / name / "best.pt"
-                with checkpoint.open("rb") as handle:
-                    checkpoint_hash = hashlib.file_digest(handle, "sha256").hexdigest()
-                expected = {"name": name, "checkpoint_sha256": checkpoint_hash, "split": "validation",
-                            "source": "ami", "condition": "telephone", "validation_sha256": validation_hash,
-                            "decision_ms": DECISION_MS}
-                if any(record[key] != value for key, value in expected.items()):
-                    raise ValueError(f"{name} does not match its 300 ms validation report")
-                saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
-                model = build(saved["config"]).eval()
-                model.load_state_dict(saved["state"])
-                threshold = next(point["threshold"] for point in record["thresholds"]
-                                 if point["origin"] == "ami_telephone_validation_fit")
-                models.append((name, model, threshold))
-                checkpoints[name] = {"sha256": checkpoint_hash, "threshold": threshold}
+    for name in names:
+        report = root / "reports" / f"{name}-float-ami-validation" / "metrics.json"
+        record = json.loads(report.read_text())
+        checkpoint = root / "runs" / name / "best.pt"
+        with checkpoint.open("rb") as handle:
+            checkpoint_hash = hashlib.file_digest(handle, "sha256").hexdigest()
+        expected = {"name": name, "checkpoint_sha256": checkpoint_hash, "split": "validation",
+                    "source": "ami", "condition": "telephone", "validation_sha256": validation_hash,
+                    "decision_ms": DECISION_MS}
+        if any(record[key] != value for key, value in expected.items()):
+            raise ValueError(f"{name} does not match its 300 ms validation report")
+        saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
+        model = build(saved["config"]).eval()
+        model.load_state_dict(saved["state"])
+        threshold = next(point["threshold"] for point in record["thresholds"]
+                         if point["origin"] == "ami_telephone_validation_fit")
+        models.append((name, model, threshold))
+        checkpoints[name] = {"sha256": checkpoint_hash, "threshold": threshold, "parameters": saved["parameters"]}
     return models, {"validation_sha256": validation_hash, "checkpoints": checkpoints}
 
 
-def summarize(scores, truth, thresholds):
+def summarize(scores, truth, thresholds, *, roc_limits=False):
     from .train import _stats
 
     points = [_stats(scores, truth, threshold) for threshold in thresholds]
-    return {
+    metrics = {
         "auc": points[0]["auc"],
         "partial_auc_to_5pct": partial_auc(scores, truth, max_fpr=0.05),
         "recall": mean(point["recall"] for point in points),
         "false_complete": mean(point["false_complete"] for point in points),
     }
+    if roc_limits:
+        metrics["retrospective_roc_limits"] = retrospective_limits(scores, truth)
+    return metrics
 
 
-def run(root, *, stage_one=False):
+def run(root, *, stage_one=False, checkpoint_name=None):
     import pyarrow.parquet as pq
     import torch
 
@@ -115,7 +116,9 @@ def run(root, *, stage_one=False):
         raise ValueError("expected the 400-turn English general benchmark shard")
     reference_report = root / "reports" / "livekit-eot-domain-probe.json"
     if stage_one:
-        models, provenance = load_stage_one(root)
+        names = [f"s1-{arch}-{size}-{seed}" for arch in ("a", "b")
+                 for size in (150000, 500000, 1000000) for seed in (17, 29)]
+        models, provenance = load_validated_models(root, names)
         reference_bytes = reference_report.read_bytes()
         reference = json.loads(reference_bytes)
         if (reference["dataset_sha256"], reference["decision_ms"]) != (digest, DECISION_MS):
@@ -123,7 +126,10 @@ def run(root, *, stage_one=False):
         predict, defaults, smart_hash = None, {}, reference["smart_turn_sha256"]
         thresholds = {}
     else:
-        models = load_grus(root)
+        if checkpoint_name:
+            models, provenance = load_validated_models(root, [checkpoint_name])
+        else:
+            models = load_grus(root)
         predict, defaults, smart_hash = load_detectors(root)
         external = json.loads((root / "reports" / "ami-external-turn-baselines.json").read_text())
         if external["smart_turn_sha256"] != smart_hash:
@@ -136,8 +142,12 @@ def run(root, *, stage_one=False):
         result["threshold_source"] = "original AMI telephone validation"
         result["reference_report_sha256"] = hashlib.sha256(reference_bytes).hexdigest()
         result["stage_one_provenance"] = provenance
+    if checkpoint_name:
+        result["threshold_source"] = "original AMI telephone validation"
+        result["checkpoint_provenance"] = provenance
     conditions = ("clean", "telephone")
-    job = "stage1-eot-domain-probe" if stage_one else "livekit-eot-domain-probe"
+    job = ("stage1-eot-domain-probe" if stage_one else
+           f"{checkpoint_name}-eot-domain-probe" if checkpoint_name else "livekit-eot-domain-probe")
     meter = Progress(job, source.metadata.num_rows * len(conditions), "turns")
     try:
         for audio_condition in conditions:
@@ -173,7 +183,7 @@ def run(root, *, stage_one=False):
                         for scores, (_, model, _) in zip(student, models, strict=True):
                             scores.extend(model(audio[:, -model.samples:], elapsed).flatten().tolist())
                 meter.advance(batch.num_rows)
-            own = {name: summarize(scores, truth, [threshold])
+            own = {name: summarize(scores, truth, [threshold], roc_limits=bool(checkpoint_name))
                    for scores, (name, _, threshold) in zip(student, models, strict=True)}
             counts = {"holds": len(truth) - sum(truth), "shifts": sum(truth)}
             if stage_one:
@@ -184,8 +194,12 @@ def run(root, *, stage_one=False):
             else:
                 result["conditions"][audio_condition] = {
                     **counts,
-                    "superturn-6s": {key: mean(fit[key] for fit in own.values()) for key in next(iter(own.values()))},
-                    **{name: {"calibrated": summarize(scores, truth, thresholds[name]),
+                    **(own if checkpoint_name else {
+                        "superturn-6s": {key: mean(fit[key] for fit in own.values())
+                                         for key in next(iter(own.values()))},
+                    }),
+                    **{name: {"calibrated": summarize(scores, truth, thresholds[name],
+                                                       roc_limits=bool(checkpoint_name)),
                               "default": summarize(scores, truth, [defaults[name]])}
                        for name, scores in current.items()},
                 }
