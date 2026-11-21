@@ -1,5 +1,6 @@
 """Compare score and frame-feature training for the compact own-teacher student."""
 
+import argparse
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -14,6 +15,7 @@ from .dense_teacher_train import BATCH, EPOCHS, batch, evaluate_fidelity, shuffl
 from .elapsed_turn_probe import paired_intervals
 from .eot_domain_probe import load_validated_models
 from .model import FRAME, HOP, build
+from .multilingual_teacher_probe import DATA, score_languages
 from .own_head_distillation import (
     BASELINE, DEADLINE, calibration_rows, pause_rows, pool_rows, rates, student_scores,
 )
@@ -292,7 +294,43 @@ def run(root):
     return report
 
 
+def multilingual(root):
+    report_path = root / "reports/own-teacher-feature-student.json"
+    report = json.loads(report_path.read_text())
+    models, thresholds = {}, {}
+    for arm in ARMS:
+        name = f"{arm}-{SEEDS[0]}"
+        selected = report["fits"][name]["selected"]
+        if selected is None:
+            continue
+        artifact = report["fits"][name]["checkpoint"]
+        path = root / artifact["path"]
+        if file_digest(path) != artifact["sha256"]:
+            raise ValueError(f"fidelity-locked checkpoint changed: {name}")
+        payload = torch.load(path, map_location=DEVICE, weights_only=True)
+        model = build(payload["config"]).to(DEVICE).eval()
+        model.load_state_dict(payload["state"])
+        models[name] = model
+        thresholds[name] = report["metrics"]["english"][name]["threshold"]
+    if not models:
+        raise ValueError("no primary-seed checkpoint cleared the fidelity gate")
+    rows = {}
+    results = score_languages(root, models, DEVICE, fixed_thresholds=thresholds,
+                              paired_rows=rows, progress_name="own-feature-multilingual")
+    output = root / "runs/own-teacher-feature-student" / report["target_report_sha256"][:12] / "language-scores.json"
+    _write_json(output, rows)
+    result = {"scope": "locked primary-seed development comparison",
+              "fit_report_sha256": file_digest(report_path), "dataset_sha256": DATA,
+              "fixed_ami_thresholds": thresholds, "languages": results,
+              "paired_scores_sha256": file_digest(output)}
+    _write_json(root / "reports/own-teacher-feature-languages.json", result)
+    return result
+
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--multilingual", action="store_true")
+    args = parser.parse_args()
     torch.set_num_threads(2)
-    report = run(data_root())
-    print(json.dumps(report["metrics"], indent=2))
+    report = multilingual(data_root()) if args.multilingual else run(data_root())
+    print(json.dumps(report["languages"] if args.multilingual else report["metrics"], indent=2))
