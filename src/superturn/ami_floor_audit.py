@@ -30,6 +30,20 @@ def floor_vote(row, matches):
     return "agrees" if matches[0][2] == row.label else "opposite label"
 
 
+def reference_context(row, words):
+    """Describe independent annotation flags around an unmatched pause."""
+    start, end = row.pause_start, row.pause_start + row.pause_samples
+    nearby = [word for word in words if word.start < end and word.end > start - 2 * RATE]
+    caller_history = any(word.speaker == row.speaker and word.start < start for word in nearby)
+    inside = [word for word in nearby if word.end > start]
+    return {
+        "no_caller_word_in_preceding_2s": not caller_history,
+        "caller_word_overlaps_pause": any(word.speaker == row.speaker for word in inside),
+        "other_word_overlaps_pause": any(word.speaker != row.speaker for word in inside),
+        "no_annotated_word_overlaps_pause": not inside,
+    }
+
+
 def run(root):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("AMI floor audit uses the training server")
@@ -47,6 +61,7 @@ def run(root):
     by_label = defaultdict(lambda: defaultdict(Counter))
     comparisons = defaultdict(lambda: defaultdict(Counter))
     eligible = defaultdict(lambda: defaultdict(Counter))
+    unmatched_context = defaultdict(Counter)
     meter = Progress("ami-floor-audit", len(grouped), "meetings")
     try:
         with ZipFile(archive_path) as archive:
@@ -62,6 +77,9 @@ def run(root):
                 for row in rows:
                     matches = matched_floor_intervals(row, intervals)
                     result = floor_vote(row, matches)
+                    if not matches:
+                        unmatched_context[row.split].update(
+                            name for name, present in reference_context(row, words).items() if present)
                     if result == "agrees":
                         caller, following, _, _ = matches[0]
                         for elapsed in (100, 200, 300):
@@ -72,20 +90,20 @@ def run(root):
                     by_label[row.split][row.label][result] += 1
                     comparisons[row.split][strict][result] += 1
                 meter.advance(1)
+        report = root / "reports" / "ami-floor-audit.json"
+        report.parent.mkdir(parents=True, exist_ok=True)
+        _write_json(report, {
+            "scope": "original AMI train and validation labels; positive overlap with one reference pause from the same caller",
+            "inputs": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+                       for path in (label_file, manifest, archive_path)},
+            "floor_votes": totals, "by_proposed_label": by_label, "strict_timing_comparison": comparisons,
+            "eligible_at_reference_boundary_ms": eligible, "unmatched_reference_context": unmatched_context,
+        })
     except BaseException:
         meter.finish("failed")
         raise
     else:
         meter.finish()
-    report = root / "reports" / "ami-floor-audit.json"
-    report.parent.mkdir(parents=True, exist_ok=True)
-    _write_json(report, {
-        "scope": "original AMI train and validation labels; positive overlap with one reference pause from the same caller",
-        "inputs": {path.name: hashlib.sha256(path.read_bytes()).hexdigest()
-                   for path in (label_file, manifest, archive_path)},
-        "floor_votes": totals, "by_proposed_label": by_label, "strict_timing_comparison": comparisons,
-        "eligible_at_reference_boundary_ms": eligible,
-    })
     return report
 
 

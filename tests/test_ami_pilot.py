@@ -9,7 +9,7 @@ from superturn import ami_mixture
 from superturn.ami_activity import anchors
 from superturn.ami_calibration import development_splits
 from superturn.ami_crossval import assign_folds
-from superturn.ami_floor_audit import floor_vote, matched_floor_intervals
+from superturn.ami_floor_audit import floor_vote, matched_floor_intervals, reference_context
 from superturn.ami_deadline import retrospective_limits
 from superturn.ami_learning import select_speakers
 from superturn.ami_more_turns import extra_turns
@@ -42,6 +42,18 @@ def test_floor_audit_matches_short_overlapping_pause_without_fixed_time():
     assert floor_vote(row, matched_floor_intervals(replace(row, pause_start=7600), intervals)) == "no matching reference pause"
     ambiguous = intervals + [(Speech("a", 9000, 9900), Speech("a", 12000, 15000), "hold", False)]
     assert floor_vote(row, matched_floor_intervals(row, ambiguous)) == "multiple matching reference pauses"
+
+
+def test_unmatched_floor_context_keeps_history_and_overlap_separate():
+    row = Label("ami", "en", "a", "meeting", "group", "train", 40000, 4800,
+                "hold", "fixture", "fixture.wav")
+    words = [Speech("a", 0, 8000), Speech("b", 41000, 42000), Speech("a", 44800, 45000)]
+    assert reference_context(row, words) == {
+        "no_caller_word_in_preceding_2s": True,
+        "caller_word_overlaps_pause": False,
+        "other_word_overlaps_pause": True,
+        "no_annotated_word_overlaps_pause": False,
+    }
 
 
 def test_annotation_labels_use_backchannels_and_group_following_words():
