@@ -139,6 +139,12 @@ Last updated 2026-11-21.
   versus 8.13% at 3.38% from scratch. Cross-check partial AUC improved
   while ranking across all thresholds and the smaller assessment view
   gave no consistent advantage. Frozen test was unused.
+- Five speaker-disjoint AMI folds scored 440 pauses from 89 speakers
+  across 26 meeting groups. The 50-run comparison found highest overall
+  AUC with the 6 s GRU (0.553), with 10.26% recall at 8.37% false
+  completes. All five configurations exceeded 5% false completes at
+  independently fitted thresholds. The original assessment and test
+  remained unused.
 
 ### Next step
 
@@ -146,11 +152,11 @@ Use the new speaker-disjoint AMI development cohorts to test changes that
 improve ranking and recall at 300 ms on held-out voices, with calibration
 and model selection on separate recordings. The scratch pilots have
 weak recall at the operating target even with independent calibration.
-Run connected-meeting-group cross-validation within the AMI development
-pool before comparing G.711 architecture, window and augmentation
-choices. Compare folds pairwise and reserve the original assessment
-views and frozen test. Use scratch as the reference after the
-future-activity pilot's mixed results.
+Use the same AMI folds to test direct annotation-derived turns from the
+existing recordings. Keep the training voices, optimizer steps, and
+evaluation folds fixed while varying the additional turn evidence.
+The larger validation check found weak ranking at low false-positive
+rates across windows and architectures.
 Preserve the original test shards and record the mixture decision before
 resuming the staged experiment matrix. Measure selected artifacts on the frozen test set,
 including the AMI reference diagnostic and telephone speech level and
@@ -173,6 +179,7 @@ destroy it unless the user asks to keep it.
 - [AMI transfer probe](../20261121-0653-ami-transfer-probe.md)
 - [AMI learning curve](../20261121-0704-ami-learning-curve.md)
 - [AMI future-activity pretraining](../20261121-0712-ami-activity-pretraining.md)
+- [AMI meeting-group cross-validation](../20261121-0720-ami-group-crossvalidation.md)
 - [Local turn pipeline](../20261121-0112-local-turn-pipeline.md)
 - [Dataset sizes and scaffold](../20261120-1600-dataset-sizes-and-scaffold.md)
 - [Campaign runbook](../../docs/campaign-plan.md)

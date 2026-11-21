@@ -71,3 +71,41 @@ This was a source review. The experiments still use the existing data.
   [TurnBench](https://www.sesame.com/journal/turnbench)
   · [SpokenWOZ](https://spokenwoz.github.io/)
   · [DUEL corpus paper](https://aclanthology.org/L16-1281.pdf)
+
+## Results
+
+Report `reports/ami-crossval/6dbe4ae7e8bdfd90.json`. All 50 fits finished
+in 9m48s after the 3 s preparation. At 6/50 the reported estimate was
+7m20s remaining. There are 245 holds and 195 shifts across the outer folds.
+The decision rates pool two calibrated fits per fold at 300 ms.
+The job exited 0 after 63 server tests passed. R2 matched 443 exports
+and 43 reports with zero differences.
+
+| G.711 training | Mean fold AUC | Partial AUC up to 10% | False completes | Complete recall |
+|---|---:|---:|---:|---:|
+| GRU, 3 s | 0.479 | 0.054 | 12.45% | 13.85% |
+| GRU, 1 s | 0.507 | 0.061 | 8.78% | 11.54% |
+| GRU, 6 s | 0.553 | 0.052 | 8.37% | 10.26% |
+| Conformer, 3 s | 0.414 | 0.042 | 8.16% | 7.95% |
+| GRU, 3 s with augmentation | 0.524 | 0.071 | 14.29% | 17.18% |
+
+- The 6 s model improved overall AUC by 0.074 versus the 3 s GRU.
+  The paired descriptive interval was +0.039 to +0.113. Partial AUC
+  was effectively flat. The tested augmentation increased recall and
+  false completes together. No arm transferred below 5% false completes.
+- A one-off 15-feature logistic baseline on the same folds scored 0.552
+  mean AUC and 0.089 mean partial AUC. Its features were 20 ms frame
+  log-RMS over the pre-pause 2.7 s, 90th-percentile signal level,
+  dispersion and duration fraction, and relative level, spread, fraction
+  and slope over the final 160/480/1,000 ms. Standardize using fit rows,
+  run 250 gradient updates with learning rate 0.1 and L2 weight 0.05,
+  and choose calibration thresholds using the next fold. This is a
+  diagnostic score, not a deployment selection.
+- Rescored both the 3 s and 6 s GRUs on the same held-out clips, comparing
+  only hold/shift pairs from the same speaker or the same connected group.
+  Mean within-speaker AUC was 0.495 and 0.560 respectively, compared with
+  all-pair AUC 0.479 and 0.553. Within-group AUC was 0.486 and 0.553.
+  Speaker score offsets alone cannot explain the weak rankings.
+- These estimates used a larger, different validation set and fixed
+  epochs. They do not directly replicate the earlier 103-case result.
+  Keep the frozen test and original assessment views reserved.
