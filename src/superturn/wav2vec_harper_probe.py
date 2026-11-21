@@ -124,10 +124,16 @@ def extract(name, predict, audio):
     return features
 
 
-def fit(features, truth, training, evaluation, penalty, seed):
+def fit(features, truth, training, evaluation, penalty, seed, *, normalizer=None, sample_weights=None):
     train = torch.as_tensor(features[training]).double()
     target = torch.as_tensor(truth[training]).double()
-    center, scale = train.mean(0), train.std(0, unbiased=False).clamp(min=1e-5)
+    origin = train if normalizer is None else torch.as_tensor(features[normalizer]).double()
+    center, scale = origin.mean(0), origin.std(0, unbiased=False).clamp(min=1e-5)
+    loss_weights = None if sample_weights is None else torch.as_tensor(sample_weights).double()
+    if loss_weights is not None and (loss_weights.shape != target.shape or
+            not torch.isfinite(loss_weights).all() or (loss_weights < 0).any() or not torch.isclose(
+                loss_weights.sum(), torch.tensor(float(len(train)), dtype=torch.float64))):
+        raise ValueError("loss weights must be nonnegative, finite and average one across training rows")
     train = (train - center) / scale
     rng = torch.Generator().manual_seed(seed)
     layer = (torch.randn(train.shape[1], generator=rng, dtype=torch.float64) * .01).requires_grad_()
@@ -140,7 +146,7 @@ def fit(features, truth, training, evaluation, penalty, seed):
 
     def update():
         optimizer.zero_grad()
-        loss = F.binary_cross_entropy_with_logits(logits(train), target)
+        loss = F.binary_cross_entropy_with_logits(logits(train), target, weight=loss_weights)
         loss = loss + penalty * weights.square().sum() / 2 + .001 * layer.square().mean()
         loss.backward()
         return loss
