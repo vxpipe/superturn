@@ -19,8 +19,12 @@ Read this section first when picking up the work.
 - Common Voice comes from a Hugging Face copy of release 17.0 with separate
   metadata TSVs, so no Mozilla account, API key or per-language terms are
   needed (user agreed 2026-11-20).
-- Waiting on the user: `.env` filled in (`HF_TOKEN`, `SUPERTURN_SSH_KEY`). Persistent storage is optional and decided
-  after the first campaign.
+- `.env` filled in (2026-11-21): `HF_TOKEN` reaches all five Hugging Face
+  sources (file listing only); `SUPERTURN_SSH_KEY` set; persistent storage is
+  a private Cloudflare R2 bucket, reachable and empty (listed with boto3;
+  rclone not installed locally). Raw downloads, labels, shards and results
+  are all kept there between campaigns (user, 2026-11-21).
+- Waiting on the user: nothing.
 - Next step: checkpoint A, "Labelling", starting with the per-track labeller
   tested on generated fixtures. Then shard writer, augmentation, features,
   models, export, benchmark, experiment queue, and one smoke command.
@@ -124,8 +128,10 @@ Implemented in `src/superturn/splits.py`, tested in `tests/test_splits.py`.
 - Only datasets with a recorded permissive licence; the licence check fails
   otherwise.
 - Never downloaded locally; only on the campaign machine.
-- Each source is processed into shards and its raw files deleted once the
-  shards are written.
+- Raw downloads stay on the campaign machine (20 GB on a 200 GB disk) and,
+  with labels, shards and results, are pushed to private persistent storage
+  (`SUPERTURN_REMOTE`, Cloudflare R2) before the machine is released, so a
+  later campaign pulls them instead of downloading and labelling again.
 
 ## Checkpoints
 
@@ -152,7 +158,7 @@ machine.
 - [x] Reproducible, per-dataset, speaker-disjoint splits with tests.
 - [x] Campaign scripts: `bin/vast-offers`, `vast-up`, `vast-push`,
   `vast-bootstrap`, `vast-run`, `vast-ssh`, `vast-fetch`, `vast-down`, and
-  `bin/sync` for optional persistent storage.
+  `bin/sync` for persistent storage.
 - [ ] Add PyTorch, ONNX, ONNX Runtime, Silero VAD and pyannote to the project
   when the code that needs them lands; pin in the lockfile.
 - [ ] Labelling (rules above), each with fixture tests:
@@ -169,7 +175,7 @@ machine.
   language.
 - [ ] Shard writer: pause-centred clips at 16 kHz (window plus decision
   silence plus a margin) with labels and metadata, compressed, fixed-size
-  shards; deletes a source's raw files once its shards are written.
+  shards.
 - [ ] Augmentation, on the fly, seeded and logged: babble (3-8 other
   speakers from our own training split mixed in); white, pink and brown
   noise, mains hum and line hiss; telephone channel (8 kHz
@@ -201,7 +207,9 @@ Follows the [campaign runbook](../../docs/campaign-plan.md#runbook).
   order from `superturn inspect-archive`.
 - [ ] All sources downloaded, manifests written, licence check passes.
 - [ ] Labels, speaker report, splits, frozen test sets and shards built per
-  source; raw files deleted after shards are written.
+  source.
+- [ ] Raw downloads, labels, shards and test copies pushed to storage
+  (`bin/sync push`) and listed back.
 - [ ] 50 randomly sampled labelled pauses per language listened to and marked
   correct or wrong in labnotes; per-track labels at least 90% correct.
 

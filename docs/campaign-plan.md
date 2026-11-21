@@ -43,12 +43,16 @@ machine for anything that will be repeated; add or fix a script instead.
 `bin/vast-down` first runs `bin/vast-fetch`, which copies reports, logs,
 download manifests, run metrics, checkpoints and ONNX exports to
 `data/campaigns/<instance>/` on the local computer. These are small: a model
-file is 1–4 MB. Raw audio and shards stay on the machine and are lost with it.
+file is 1–4 MB.
 
-Persistent storage (`SUPERTURN_REMOTE`, any rclone remote) is not needed: a
-later campaign re-downloads the 20 GB selection, which takes minutes. It stays
-available in `bin/sync` in case processing ever becomes slow enough to be
-worth keeping shards.
+Raw downloads, labels, shards and test copies are kept in persistent storage
+(`SUPERTURN_REMOTE`, a private Cloudflare R2 bucket via rclone; see
+`env.sample`). `bin/vast-down` pushes them with `bin/sync push` before it
+destroys the machine; a later campaign runs `bin/sync pull` after bootstrap.
+This guards against a source being changed, gated or withdrawn and saves the
+download and labelling hours. Expected size: about 18 GB raw plus 15–40 GB
+derived. The bucket must stay private: some sources' terms (Emilia) allow use
+but not redistribution.
 
 ## Runbook
 
@@ -67,13 +71,15 @@ worth keeping shards.
    disconnects and logs to `$REMOTE_DATA/logs/`.
 6. `bin/vast-ssh` to inspect; `bin/vast-fetch` copies results here at any
    time.
-7. `bin/vast-down --yes` fetches results (and pushes shards if a storage
-   remote is set), then destroys the machine only if that succeeded.
+7. `bin/vast-down --yes` fetches results (and pushes raw downloads, labels
+   and shards if a storage remote is set), then destroys the machine only if that succeeded.
 
 A failed run must not stop the queue; it is logged and the next run starts.
 
 ## Later campaigns
 
-Without persistent storage, a later campaign downloads and processes the data
-again. With it, it starts from the stored shards (`bin/sync pull`) and needs
-the machine for training only.
+A later campaign runs `bin/sync pull` after bootstrap and starts from the
+stored raw downloads, labels and shards. It needs the machine for training
+only, unless the labelling code changed, in which case it relabels from the
+stored raw files without downloading. Without persistent storage it downloads
+and processes everything again.

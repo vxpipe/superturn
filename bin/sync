@@ -1,21 +1,24 @@
 #!/usr/bin/env bash
-# Optional: copy processed data and results between $SUPERTURN_DATA and
-# persistent storage ($SUPERTURN_REMOTE, an rclone remote), so shards survive
-# the campaign machine. Usage: bin/sync push|pull [DIR...]
-# Default directories hold processed data and results, never raw audio.
+# Optional: copy downloads, derived data and results between $SUPERTURN_DATA
+# and persistent storage ($SUPERTURN_REMOTE, an rclone remote, kept private),
+# so a later campaign starts from them instead of downloading and labelling
+# again. Usage: bin/sync push|pull [DIR...]
+# Raw downloads keep their per-file markers, so bin/download skips them after
+# a pull.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 [[ -f .env ]] && { set -a; source .env; set +a; }
 : "${SUPERTURN_DATA:?set SUPERTURN_DATA}"
 : "${SUPERTURN_REMOTE:?set SUPERTURN_REMOTE in .env}"
 direction="${1:?usage: bin/sync push|pull [DIR...]}"; shift
-dirs=("$@"); [[ ${#dirs[@]} -eq 0 ]] && dirs=(shards tests runs reports logs manifests)
+dirs=("$@"); [[ ${#dirs[@]} -eq 0 ]] && dirs=(raw labels shards tests runs reports logs manifests)
 mkdir -p "$SUPERTURN_DATA/manifests"
 cp -f "$SUPERTURN_DATA"/raw/*/MANIFEST.json "$SUPERTURN_DATA/manifests/" 2>/dev/null || true
 for d in "${dirs[@]}"; do
   case "$direction" in
     push) [[ -d "$SUPERTURN_DATA/$d" ]] && rclone copy --transfers 16 "$SUPERTURN_DATA/$d" "$SUPERTURN_REMOTE/$d" ;;
-    pull) rclone copy --transfers 16 "$SUPERTURN_REMOTE/$d" "$SUPERTURN_DATA/$d" ;;
+    pull) rclone lsf --max-depth 1 "$SUPERTURN_REMOTE/$d" >/dev/null 2>&1 || continue
+          rclone copy --transfers 16 "$SUPERTURN_REMOTE/$d" "$SUPERTURN_DATA/$d" ;;
     *) echo "usage: bin/sync push|pull [DIR...]" >&2; exit 2 ;;
   esac
 done
