@@ -39,7 +39,9 @@ def measures(scores, truth):
             **retrospective_limits(scores, truth)}
 
 
-def paired_intervals(scores, labels, turns, pairs):
+def paired_intervals(scores, labels, turns, pairs, *, partial_auc=False):
+    from .harper_history_probe import recall_area
+
     grouped = defaultdict(list)
     for index, turn in enumerate(turns):
         grouped[turn].append(index)
@@ -47,6 +49,7 @@ def paired_intervals(scores, labels, turns, pairs):
     rng = np.random.default_rng(6902)
     auc_deltas = {name: [] for name in pairs}
     recall_deltas = {name: [] for name in pairs}
+    partial_deltas = {name: [] for name in pairs}
     for drawn in rng.integers(len(members), size=(500, len(members))):
         indices = np.concatenate([members[i] for i in drawn])
         result = metrics(scores, labels, indices).get("models")
@@ -56,10 +59,17 @@ def paired_intervals(scores, labels, turns, pairs):
                 auc_deltas[name].append(result[name]["auc"] - reference["auc"])
                 key = "max_recall_at_5pct_false_complete"
                 recall_deltas[name].append(result[name][key] - reference[key])
-    return {name: {"reference": pairs[name], "replicates": len(auc_deltas[name]),
-                   "auc_delta_95": np.quantile(auc_deltas[name], [.025, .975]).tolist(),
-                   "recall_delta_95": np.quantile(recall_deltas[name], [.025, .975]).tolist()}
-            for name in pairs}
+                if partial_auc:
+                    partial_deltas[name].append(recall_area(scores[name][indices], labels[indices])[-1]
+                                                - recall_area(scores[baseline][indices], labels[indices])[-1])
+    intervals = {name: {"reference": pairs[name], "replicates": len(auc_deltas[name]),
+                        "auc_delta_95": np.quantile(auc_deltas[name], [.025, .975]).tolist(),
+                        "recall_delta_95": np.quantile(recall_deltas[name], [.025, .975]).tolist()}
+                 for name in pairs}
+    if partial_auc:
+        for name, interval in intervals.items():
+            interval["partial_auc_delta_95"] = np.quantile(partial_deltas[name], [.025, .975]).tolist()
+    return intervals
 
 
 def crossfit_long(scores, labels, turns):

@@ -222,12 +222,14 @@ def run(root):
     en = results["english"]
     recall = {name: value["recalls_at_2_5_5_7_5pct"][1] for name, value in en.items()}
     comparator = max(("frozen", "head-only"), key=recall.__getitem__)
-    paired = paired_intervals({arm: score[english] for arm, score in averaged.items()}, truth[english],
-                              [row[2] for row in cohorts["english"]], {"adapter": comparator})
+    comparison_scores = {arm: averaged[arm][english] for arm in ("head-only", "frozen")}
+    comparison_scores.update({f"adapter-vs-{arm}": averaged["adapter"][english] for arm in ("head-only", "frozen")})
+    paired = paired_intervals(comparison_scores, truth[english], [row[2] for row in cohorts["english"]],
+                              {f"adapter-vs-{arm}": arm for arm in ("head-only", "frozen")}, partial_auc=True)
     harper = results["harper"]
     gates = {
         "english_recall_gain_at_least_five_points": recall["adapter"] + 1e-12 >= recall[comparator] + .05,
-        "paired_recall_gain": paired["adapter"]["recall_delta_95"][0] > 0,
+        "paired_recall_gain": paired["adapter-vs-head-only"]["recall_delta_95"][0] > 0,
         "english_pauc_within_tolerance": en["adapter"]["partial_auc"] >= en[comparator]["partial_auc"] - .005,
         "shuffle_does_not_improve_reference": recall["shuffle"] <= recall[comparator],
         "harper_pauc_direction": harper["adapter"]["partial_auc"] >= harper["frozen"]["partial_auc"],
