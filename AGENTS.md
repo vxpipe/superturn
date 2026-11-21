@@ -26,6 +26,9 @@ includes the handover.
   sees a pause.
 - Audio in, probability out. Transcripts are not a model input; an application
   may combine the score with transcript rules on its own side.
+- Train and fine-tune Superturn's own turn detector on dataset labels.
+  Third-party turn detectors are benchmark references only. Keep their
+  weights and predictions out of training, initialization and the release.
 - Labelling uses Silero VAD for pause boundaries on per-speaker tracks and
   pyannote for diarization of mixed single-track audio.
 
