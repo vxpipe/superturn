@@ -15,8 +15,9 @@ pausing mid-thought. It must:
 - be released free for commercial and non-commercial use (Apache 2.0), trained
   only on permissively licensed data.
 
-The current milestone, with a handover section on where work stands, is in
-`labnotes/milestones/`. Start there.
+Read `~/AGENTS.md` for the user's shared environment instructions.
+Start with `~/notes/superturn/milestones/index.md`. The active milestone
+includes the handover.
 
 ## Scope
 
@@ -36,7 +37,8 @@ The current milestone, with a handover section on where work stands, is in
 - `src/superturn/`: the package (downloads, splits, and later labelling,
   features, models, training, export, benchmark). `tests/`: unit tests.
 - `bin/`: every operation that is run more than once.
-- `docs/`: decisions and research. `labnotes/`: working notes and milestones.
+- `docs/`: durable project decisions and research. Working labnotes and
+  milestones live in the shared `~/notes` Git repository.
 - Datasets, shards, checkpoints and reports live under `$SUPERTURN_DATA`
   (default `data/`, git-ignored), never in git.
 
@@ -123,8 +125,9 @@ full runbook.
   data, cap examples per speaker, and report metrics on unseen voices only.
 - Never commit audio, transcripts, shards, checkpoints or recordings from real
   customer calls. Use customer calls only for local evaluation.
-- This is a public GitHub repository: everything committed, including git
-  history, labnotes and docs, is visible to anyone. Never commit secrets:
+- This is a public GitHub repository, including its history and docs.
+  Keep secrets out of both the public repository and the shared notes
+  repository:
   tokens, API keys, passwords, private keys, the R2 account ID, endpoint or
   bucket name, or vast.ai instance addresses. They go in `.env`
   (git-ignored; see `env.sample`, which holds placeholders only). Refer to
@@ -145,28 +148,29 @@ full runbook.
 
 ## Handover
 
-- Before ending a session, update the milestone's handover section (done,
-  waiting on, next step) and the current labnotes file, so another agent can
-  continue from the milestone alone.
+- Before ending a session, update the milestone's handover section and
+  the current labnotes file under `~/notes/superturn/`.
 
 ## Labnotes
 
-- For research, data, training and benchmark tasks, create a labnotes file with
-  `bin/create-labnotes` and a two-to-four-word hyphenated task name.
+- Follow `~/notes/AGENTS.md`. Create research, data, training and benchmark
+  notes with `~/notes/bin/create-labnotes superturn TASK-NAME`, using a
+  two-to-four-word task name. Files live in `~/notes/superturn/labnotes/`.
 - Update it as work progresses: what worked, what did not, barriers,
   workarounds, decisions and their rationale, commands run, and the evidence
   (counts, metrics, report paths) behind each claim.
 - Keep labnotes factual and useful to the next person resuming the task. They
   do not replace design documents under `docs/`.
 - Do not create labnotes for simple status checks or read-only inspection.
-- Commit labnotes with the work they document.
+- When committing project work, commit the related labnotes and milestones
+  in `~/notes` as their own checkpoint. Reference the implementation commit
+  where useful. Push both repositories when the user asks for updates to
+  their remotes.
 
 ## Milestones
 
 - Milestone specifications and progress checklists live in
-  `labnotes/milestones/`. Start with `labnotes/milestones/index.md`, whose
-  checklist gives the order. `bin/create-labnotes` files stay at the top level
-  of `labnotes/`.
+  `~/notes/superturn/milestones/`. Its `index.md` defines the order.
 - Milestone filenames and titles are descriptive and unnumbered; only the index
   owns the order.
 - Each milestone states its outcome, design sources, scope, contracts,
