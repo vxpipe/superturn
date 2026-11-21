@@ -1,12 +1,15 @@
 """Compare frozen 973k epoch-20 fits with Smart Turn on the same English pauses."""
 
+import importlib.util
 import json
+from pathlib import Path
 
 import numpy as np
 
 from .ami_calibration import _write_json
 from .ami_external_baselines import load_smart_turn
 from .audio import RATE
+from .dense_teacher import file_digest
 from .eot_domain_probe import DATASET_SHA256, GAP, decision_audio
 from .failure_strata import cutoff_at_budget, decisions
 from .language_failure_audit import read_receipt, read_verified
@@ -20,6 +23,7 @@ from .turn1_mini_probe import english_rows
 
 REPORT = "own-student-smart-turn-benchmark"
 REFERENCES = {"smart-turn-3s": 48_000, "smart-turn-8s": 128_000}
+FEATURES_SHA256 = "139b047d10dee42ad5b4894489012e515a882d8f5e2bffe8ad27b30728fc9968"
 
 
 def reference_history(rows, truth, values):
@@ -53,6 +57,9 @@ def run(root):
     benchmark, benchmark_sha = read_receipt(root, "smart-turn-matched-context")
     if benchmark["dataset_sha256"] != DATASET_SHA256 or benchmark["decision_ms"] != 300:
         raise ValueError("the frozen Smart Turn benchmark uses different timing or input")
+    frontend = importlib.util.find_spec("_whisper_features")
+    if frontend is None or frontend.origin is None or file_digest(Path(frontend.origin)) != FEATURES_SHA256:
+        raise ValueError("set PYTHONPATH to the pinned Smart Turn benchmark frontend cache")
     archive = json.loads(read_verified(root, students["paired_scores"]).read_text())["en"]
     score, model_sha = load_smart_turn(root)
     if model_sha != benchmark["teacher_sha256"]:
@@ -92,6 +99,7 @@ def run(root):
                "decision_ms": 300, "dataset_sha256": DATASET_SHA256, "rows": len(rows),
                "turns": len(set(turns)), "shifts": int(truth.sum()), "holds": int((~truth).sum()),
                "student_receipt_sha256": students_sha, "smart_turn_receipt_sha256": benchmark_sha,
+               "smart_turn_frontend_sha256": FEATURES_SHA256,
                "smart_turn_checkpoint_sha256": model_sha, "by_model": points,
                "epoch20_mean_recall": float(np.mean([points[name]["shift_recall"] for name in candidate])),
                "epoch20_minus_smart_turn": effects, "smart_turn_history_strata": reference_history(rows, truth, values)}

@@ -126,8 +126,8 @@ def match_phrases(source, receiver, edges, source_direct, receiver_direct, *, ma
         else:
             alternatives = np.flatnonzero(score >= best - MIN_MARGIN)
             matches.append({"start": start * HOP, "copy": target * HOP, "correlation": float(best),
-                            "copy_min": (left + alternatives[0]) * HOP,
-                            "copy_max": (left + alternatives[-1]) * HOP,
+                            "copy_min": int(left + alternatives[0]) * HOP,
+                            "copy_max": int(left + alternatives[-1]) * HOP,
                             "margin": float(margin), "relative_copy_db": echo})
     return matches, rejected
 
