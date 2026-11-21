@@ -42,6 +42,9 @@ The current milestone, with a handover section on where work stands, is in
 
 ## Campaign machine and storage
 
+Only select vast.ai offers marked as datacenter machines. Use
+`datacenter=True` when searching for campaign offers.
+
 Real data is only ever handled on a rented vast.ai machine. The local
 computer drives it with these scripts; read `docs/campaign-plan.md` for the
 full runbook.
