@@ -174,25 +174,33 @@ def compare(rows, scores, fixed):
             "censored_holds": int((censored & ~truth).sum()), "scenarios": scenarios}
 
 
-def run(root, replay):
+def run(root, replay, *, extend=False):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("development replay stays on Vast")
-    boundaries = {"english": english(root), "harper": harper(root), **languages(root)}
+    boundaries = {"english": english(root), "harper": harper(root)}
+    if not extend:
+        boundaries.update(languages(root))
     clips, truth, splits, _ = pinned_inputs(root)
     evaluation = np.r_[splits["english"], splits["harper"], splits["calibration"]]
-    result = {"scope": "counterfactual development replay, with optimistic uninterrupted shift response",
-              "reply_times_ms": TIMES, "grace_default_ms": 200, "single_model_query_ms": 300,
-              "fallback_ms": FALLBACK, "models": {}}
-    [(student_name, student, threshold)], _ = load_validated_models(root, [BASELINE])
-    student_views = {}
-    for cohort in ("english", "harper"):
-        idx = splits[cohort]
-        if [r[0] for r in boundaries[cohort]] != truth[idx].tolist():
-            raise ValueError("the student replay label order changed")
-        student_views[cohort] = compare(boundaries[cohort], student_scores(student, clips[idx], device="cpu"), threshold)
-    result["models"][student_name] = student_views
-    _write_json(root / "reports/vxpipe-policy-development.json", result)
+    output = root / "reports/vxpipe-policy-development.json"
+    if extend:
+        result = json.loads(output.read_text())
+    else:
+        result = {"scope": "counterfactual development replay, with optimistic uninterrupted shift response",
+                  "reply_times_ms": TIMES, "grace_default_ms": 200, "single_model_query_ms": 300,
+                  "fallback_ms": FALLBACK, "models": {}}
+        [(student_name, student, threshold)], _ = load_validated_models(root, [BASELINE])
+        student_views = {}
+        for cohort in ("english", "harper"):
+            idx = splits[cohort]
+            if [r[0] for r in boundaries[cohort]] != truth[idx].tolist():
+                raise ValueError("the student replay label order changed")
+            student_views[cohort] = compare(boundaries[cohort], student_scores(student, clips[idx], device="cpu"), threshold)
+        result["models"][student_name] = student_views
+        _write_json(output, result)
     for name, stem in MODELS.items():
+        if extend and name not in replay:
+            continue
         report_path = root / "reports" / f"{stem}.json"
         if not report_path.is_file():
             continue
@@ -207,7 +215,7 @@ def run(root, replay):
         if rows["dataset_sha256"] != DATA:
             raise ValueError("the language score corpus changed")
         fixed = report["metrics"][name]["english"]["ami_threshold"]
-        model = {}
+        model = result["models"].get(name, {})
         if name in replay:
             locked = report["diagnostic_checkpoint"]
             head_path = root / locked["path"]
@@ -226,18 +234,21 @@ def run(root, replay):
                 if [r[0] for r in boundaries[cohort]] != truth[idx].tolist():
                     raise ValueError("the replay label order changed")
                 model[cohort] = compare(boundaries[cohort], values[idx - evaluation[0]], fixed)
-        for lang, row in rows["languages"].items():
-            if [(r[0], r[1]) for r in boundaries[lang]] != list(zip(row["labels"], row["turn_ordinals"])):
-                raise ValueError(f"the timing and scores are misaligned on {lang}")
-            model[lang] = compare(boundaries[lang], np.asarray(row["scores"][name]), fixed)
+        if not extend:
+            for lang, row in rows["languages"].items():
+                if [(r[0], r[1]) for r in boundaries[lang]] != list(zip(row["labels"], row["turn_ordinals"])):
+                    raise ValueError(f"the timing and scores are misaligned on {lang}")
+                model[lang] = compare(boundaries[lang], np.asarray(row["scores"][name]), fixed)
         result["models"][name] = model
-        _write_json(root / "reports/vxpipe-policy-development.json", result)
+        _write_json(output, result)
     return result
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--replay", choices=MODELS, nargs="*", default=list(MODELS))
+    parser.add_argument("--extend", action="store_true", help="add teacher English and HarperValley replays to an existing table")
     torch.set_num_threads(2)
-    summary = run(data_root(), parser.parse_args().replay)
+    args = parser.parse_args()
+    summary = run(data_root(), args.replay, extend=args.extend)
     print(json.dumps({"models": list(summary["models"]), "cohorts": list(next(iter(summary["models"].values()), {}))}))
