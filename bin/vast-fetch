@@ -1,16 +1,23 @@
 #!/usr/bin/env bash
 # Copy campaign results from the machine to this computer, under
 # data/campaigns/<instance>/: reports, logs, download manifests, run metrics,
-# checkpoints, ONNX exports and pause labels (no audio). Small (model files are ~1-4 MB each). Raw
-# audio and shards are not copied. Safe to rerun.
+# checkpoints, ONNX exports and pause labels (no audio). Use --results-only
+# to skip the potentially large pause labels. Safe to rerun.
 source "$(dirname "$0")/_lib.sh"
+dirs=(reports logs manifests runs exports)
+case "${1:-}" in
+  "") dirs+=(labels) ;;
+  --results-only) ;;
+  *) die "usage: bin/vast-fetch [--results-only]" ;;
+esac
+[[ $# -le 1 ]] || die "usage: bin/vast-fetch [--results-only]"
 id="$(instance_id)"
 dest="$ROOT/data/campaigns/$id"
 mkdir -p "$dest"
 ssh_target
 mapfile -t opts < <(ssh_opts)
 remote "cd $REMOTE_REPO && export SUPERTURN_DATA=$REMOTE_DATA && bin/collect-manifests"
-for d in reports logs manifests runs exports labels; do
+for d in "${dirs[@]}"; do
   rsync -az -e "ssh ${opts[*]}" --exclude '*.tar' --exclude '*.flac' --exclude '*.wav' --exclude '*.mp3' --exclude '*.opus' \
     "$SSH_HOST:$REMOTE_DATA/$d" "$dest/" 2>/dev/null || [[ $? -eq 23 ]]
 done

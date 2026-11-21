@@ -85,7 +85,8 @@ Last updated 2026-11-21.
   completes on pooled clean validation. The same threshold on AMI
   telephone validation yielded 12.10% false completes and 5.11% recall.
   Fitting an AMI validation threshold yielded 4.79% false completes and
-  2.92% recall. The second Stage 1 configuration has started.
+  2.92% recall. The first checkpoint was fetched and its SHA-256 checked.
+  The second Stage 1 configuration has started.
 
 ### Next step
 

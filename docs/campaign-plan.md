@@ -101,7 +101,8 @@ but not redistribution.
    three minutes, the watcher reports every quarter from 0% through 100%.
 6. `bin/vast-progress` shows each long step's progress, measured pace and
    estimated time left (from `$REMOTE_DATA/progress/<step>.json`); `bin/vast-ssh` to inspect; `bin/vast-fetch` copies results here at any
-   time.
+   time. Use `bin/vast-fetch --results-only` for reports and model files
+   without the larger pause label files.
    To include the AMI reference diagnostic, freeze its scope with
    `superturn benchmark-ami-reference --prepare` before any selected model
    scores test data. Run `superturn benchmark-ami-reference` on the training
