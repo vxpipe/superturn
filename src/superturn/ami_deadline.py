@@ -5,6 +5,7 @@ from collections import defaultdict
 from dataclasses import fields
 from functools import lru_cache
 import hashlib
+from itertools import groupby
 import json
 
 import numpy as np
@@ -18,6 +19,30 @@ from .shards import CONTEXT, clip
 from .sources import data_root
 
 TIMES = (100, 200, 300)
+
+
+def retrospective_limits(scores, truth):
+    """Describe the empirical ROC envelope, keeping equal scores together."""
+    positions = sorted(zip(scores, truth, strict=True), reverse=True)
+    shifts = sum(truth)
+    holds = len(truth) - shifts
+    if not shifts or not holds:
+        raise ValueError("operating range requires holds and shifts")
+    completed, cutoffs = 0, 0
+    max_recall = 0.0
+    min_false_complete = None
+    for _, tied in groupby(positions, key=lambda row: row[0]):
+        labels = [label for _, label in tied]
+        positives = sum(labels)
+        completed += positives
+        cutoffs += len(labels) - positives
+        recall, false_complete = completed / shifts, cutoffs / holds
+        if false_complete <= 0.05:
+            max_recall = recall
+        if min_false_complete is None and recall >= 0.80:
+            min_false_complete = false_complete
+    return {"max_recall_at_5pct_false_complete": max_recall,
+            "min_false_complete_at_80pct_recall": min_false_complete}
 
 
 def pooled_rates(outcomes, policy):
@@ -112,7 +137,9 @@ def run(root, source, variant):
                 }
                 fixed = _stats(scores["out-of-fold"][-1].tolist(), test_truth, entry["threshold"])
                 outcomes.append({"fold": fold, "seed": entry["seed"], "cumulative": timing, "300_ms_only": fixed,
-                                 "fixed_300_ms_cumulative_policy": fixed_policy})
+                                 "fixed_300_ms_cumulative_policy": fixed_policy,
+                                 "retrospective_limits_300_ms": retrospective_limits(
+                                     scores["out-of-fold"].max(axis=0).tolist(), test_truth)})
                 meter.advance(1)
         result = {
             "crossval": source, "variant": variant, "summary": pooled_rates(outcomes, "cumulative"),

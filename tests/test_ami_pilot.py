@@ -10,11 +10,23 @@ from superturn.ami_activity import anchors
 from superturn.ami_calibration import development_splits
 from superturn.ami_crossval import assign_folds
 from superturn.ami_floor_audit import floor_vote, matched_floor_intervals
+from superturn.ami_deadline import retrospective_limits
 from superturn.ami_learning import select_speakers
 from superturn.ami_more_turns import extra_turns
 from superturn.ami_transfer import partial_auc
 from superturn.ami_pilot import acoustic_status, annotated_pauses, group_words, match_training
 from superturn.labels import Label, Speech
+
+
+def test_retrospective_limits_keep_threshold_ties_together():
+    assert retrospective_limits([.9, .8, .2, .1], [1, 1, 0, 0]) == {
+        "max_recall_at_5pct_false_complete": 1,
+        "min_false_complete_at_80pct_recall": 0,
+    }
+    assert retrospective_limits([.9, .8, .8, .1], [1, 1, 0, 0]) == {
+        "max_recall_at_5pct_false_complete": .5,
+        "min_false_complete_at_80pct_recall": .5,
+    }
 
 
 def test_floor_audit_matches_short_overlapping_pause_without_fixed_time():
