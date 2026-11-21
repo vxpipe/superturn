@@ -31,6 +31,7 @@ class Act:
     identifier: str
     kind: str
     words: tuple
+    terminal_known: bool = True
 
 
 def entries(archive, filename):
@@ -49,15 +50,19 @@ def links(element):
 
 def read_track(archive, meeting, agent, offset, types):
     words, times = [], {}
+    untimed_lexical = set()
     for entry in entries(archive, f"words/{meeting}.{agent}.words.xml"):
         word = identifier(entry)
         if not word:
             continue
         words.append(word)
-        if entry.tag.rsplit("}", 1)[-1] == "w" and {"starttime", "endtime"} <= entry.attrib.keys():
-            start, end = (round(float(entry.get(key)) * RATE) - offset for key in ("starttime", "endtime"))
-            if start < end:
-                times[word] = start, end
+        if entry.tag.rsplit("}", 1)[-1] == "w":
+            if {"starttime", "endtime"} <= entry.attrib.keys():
+                start, end = (round(float(entry.get(key)) * RATE) - offset for key in ("starttime", "endtime"))
+                if start < end:
+                    times[word] = start, end
+            if word not in times and any(char.isalnum() for char in (entry.text or "")):
+                untimed_lexical.add(word)
     positions = {word: i for i, word in enumerate(words)}
     by_word = defaultdict(list)
     for entry in entries(archive, f"dialogueActs/{meeting}.{agent}.dialog-act.xml"):
@@ -67,10 +72,17 @@ def read_track(archive, meeting, agent, offset, types):
         kind = next((types.get(first) for role, first, _ in pointers if role == "da-aspect"), None)
         if not kind:
             continue
-        selected = tuple(word for role, first, last in pointers
-                         if role is None and first in positions and last in positions
-                         for word in words[positions[first]:positions[last] + 1] if word in times)
-        act = Act(identifier(entry), kind, tuple(times[word] for word in selected))
+        ranges = [(first, last) for role, first, last in pointers if role is None]
+        if (len(ranges) != sum(child.tag.rsplit("}", 1)[-1] == "child" for child in entry)
+                or any(first not in positions or last not in positions or positions[first] > positions[last]
+                       for first, last in ranges)):
+            continue
+        span = {word for first, last in ranges for word in words[positions[first]:positions[last] + 1]}
+        selected = sorted(span & times.keys(), key=positions.__getitem__)
+        if not selected:
+            continue
+        terminal_known = all(positions[word] < positions[selected[-1]] for word in span & untimed_lexical)
+        act = Act(identifier(entry), kind, tuple(times[word] for word in selected), terminal_known)
         for word in selected:
             by_word[word].append(act)
     return times, by_word
@@ -85,6 +97,8 @@ def classify(row, tracks, pairs):
         return "uncovered", None
     act, = acts[matches[0]]
     done = max(end for _, end in act.words) == edge
+    if done and not act.terminal_known and act.kind not in INCOMPLETE:
+        return "uncovered", None
     complete = done and act.kind not in INCOMPLETE | {"Backchannel"}
     if row["label"] == "hold":
         if not done or act.kind in INCOMPLETE:
