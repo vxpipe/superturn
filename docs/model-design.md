@@ -1,13 +1,14 @@
 # Model design
 
-Status: combined input contract approved 2026-11-21. Implementation pending.
+Status: parallel audio-only and audio+text experiments approved 2026-11-21.
 
 ## Call contract
 
 The application's VAD reports a pause. The application calls Superturn with
 the last 3 s of the caller's audio through the decision instant, including
-the pause (zero-padded at the start if shorter), the elapsed silence in
-milliseconds and the current live partial transcript bytes. Superturn returns
+the pause (zero-padded at the start if shorter) and the elapsed silence in
+milliseconds. The combined candidate also receives current live partial
+transcript bytes. Each candidate returns
 P(turn complete). The application may call again as the pause grows, for
 example at 200, 300 and 500 ms.
 
@@ -34,8 +35,9 @@ The combined contract uses 48,000 samples (3 seconds) per call.
 
 ## Network
 
-The single artifact has a 2 MB int8 budget and a p99 target of at most 3 ms
-per call for both branches on one CPU core. The audio development track
+The audio-only candidate has a 1 MB int8 budget and a single-core p99
+target below 2 ms. The combined candidate has a 2 MB int8 budget and a
+single-core p99 target of at most 3 ms for both branches. The audio development track
 compared these architectures on the same data:
 
 **A. Recurrent baseline**
@@ -113,7 +115,7 @@ Unicode punctuation and NUL. UTF-8 encode, take the last 128 bytes and
 left-pad with zeros. The graph consumes bytes as integers, including
 truncated UTF-8 sequences at the leading boundary. An absent partial
 becomes 128 zeros. The reference packer is
-`superturn.transcript.pack_partial_transcript`. The planned interface is:
+`superturn.transcript.pack_partial_transcript`. The combined interface is:
 
 | Tensor | Type and shape |
 | --- | --- |
@@ -138,8 +140,9 @@ on verified real labels before using its output.
 - Metrics: false-complete rate at a fixed pause length, accuracy, and median
   pause length needed to reach a confident decision. Compare against a larger
   teacher model and against silence-only timeouts.
-- Measure combined quality, audio-only with text zeroed, and text-only
-  with PCM zeroed. Compare the application policy against silence timers
+- Measure standalone audio-only and combined quality alongside the
+  combined model with each input branch zeroed. Compare LiveKit, Smart Turn
+  and the two candidates against silence timers under the same application policy
   by language at live STT latency and at 150/300/500 ms lag sensitivities.
   Report responsiveness, false starts and wasted drafts. A language
   qualifies when the combined model passes and blank text preserves the

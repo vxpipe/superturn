@@ -2,15 +2,15 @@
 
 ## Goal
 
-Build a small, open end-of-turn model for voice agents. Given the caller's
-recent audio, elapsed silence and available live partial STT transcript, it
-returns the probability that the caller has finished their turn rather than
-pausing mid-thought. It must:
+Build a small, open end-of-turn model for voice agents. It estimates from
+the caller's recent audio and elapsed silence whether they finished
+their turn. Evaluate both candidate interfaces against these requirements.
 
-- run both branches at p99 at most 3 ms per call on one CPU core, as one
-  int8 ONNX file of at most 2 MB;
-- take raw 16 kHz mono PCM and normalized transcript bytes, with acoustic
-  features and byte n-gram hashing inside the model;
+- compare an audio-only int8 ONNX candidate at most 1 MB and a combined
+  audio+text candidate at most 2 MB. The single-core p99 targets are
+  under 2 ms for audio-only and at most 3 ms for the combined candidate;
+- take raw 16 kHz mono PCM, with acoustic features inside the model.
+  The combined experiment also computes byte n-gram hashes in the graph;
 - work across many languages and on telephone audio (8 kHz G.711, line noise);
 - be speaker independent: judged only on voices it never trained on;
 - be released free for commercial and non-commercial use (Apache 2.0), trained
@@ -25,15 +25,17 @@ includes the handover.
 - Turn detection only. Voice activity detection and barge-in belong to the
   calling application, which runs Silero VAD and invokes Superturn when it
   sees a pause.
-- The single model fuses up to 3 s of 16 kHz caller audio, `silence_ms`
-  and `text_bytes`, the last 128 normalized UTF-8 bytes of the current
+- Compare an audio-only candidate with 3 s of 16 kHz caller audio and
+  `silence_ms` against a combined candidate with those same inputs and
+  `text_bytes`, the last 128 normalized UTF-8 bytes of the current
   live partial transcript, right-aligned and zero-padded. Use all zeros
   when STT is missing. No timestamp alignment is required.
-- Report combined, masked audio-only and masked text-only quality by
-  language. Release a language only when combined quality passes and the
-  no-transcript fallback preserves the audio-only quality. Benchmark CPU
-  speed after the quality gate. Teacher-only analysis may use longer
-  causal history.
+- Report standalone audio-only, combined, and masked branch quality by
+  language. If the combined candidate is chosen, require its blank-text
+  fallback to preserve audio-only quality in each release language.
+  Compare both candidates with LiveKit and Smart Turn before choosing
+  the release interface. Benchmark CPU speed after quality. Teacher-only
+  analysis may use longer causal history.
 - Train and fine-tune Superturn's own turn detector. Existing architectures
   and pretrained audio components from other tasks, such as TTS, are
   allowed, including as the basis of a general speech teacher trained on
