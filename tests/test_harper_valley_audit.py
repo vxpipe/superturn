@@ -33,8 +33,16 @@ def test_shared_view_keeps_overlap_from_before_second_channel_started():
 def test_caller_pause_requires_speaker_order_agreement():
     streams = [Speech("caller", 0, 8000), Speech("agent", 14000, 32000)]
     mismatched = [Speech("caller", 0, 8000), Speech("caller", 14000, 32000)]
-    assert label_support(streams, streams, 0, 32000) == {"candidate_shift": 1, "supported_shift": 1}
+    assert label_support(streams, streams, 0, 32000) == {
+        "candidate_shift": 1, "supported_shift": 1, "fixed_window_supported_shift": 1,
+    }
     assert label_support(streams, mismatched, 0, 32000) == {"candidate_shift": 1, "disagreed_shift": 1}
+
+
+def test_boundary_agreement_can_leave_the_fixed_query_window_unsupported():
+    heard = [Speech("caller", 0, 8000), Speech("agent", 14000, 32000)]
+    words = [Speech("caller", 0, 10000), Speech("agent", 16000, 34000)]
+    assert label_support(heard, words, 0, 34000) == {"candidate_shift": 1, "supported_shift": 1}
 
 
 def test_audit_places_nonzero_channel_offsets_on_one_timeline(tmp_path):
@@ -53,5 +61,5 @@ def test_audit_places_nonzero_channel_offsets_on_one_timeline(tmp_path):
         return [(4800, 12800)] if len(pcm) == 3 * RATE else [(9600, 28800)]
 
     assert audit_call(tmp_path, "example", detect) == {
-        "audited_calls": 1, "candidate_shift": 1, "supported_shift": 1,
+        "audited_calls": 1, "candidate_shift": 1, "supported_shift": 1, "fixed_window_supported_shift": 1,
     }

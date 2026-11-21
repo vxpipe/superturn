@@ -60,10 +60,13 @@ def label_support(vad, word_stream, common_start, common_end):
         outcomes[f"candidate_{label}"] += 1
         edge = caller.end
         first = edge + gap
-        matches = [vote for end, onset, vote in reference
+        matches = [(end, onset, vote) for end, onset, vote in reference
                    if abs(end - edge) <= BOUNDARY_TOLERANCE and abs(onset - first) <= BOUNDARY_TOLERANCE]
         if len(matches) == 1:
-            outcome = "supported" if matches[0] == label else "disagreed"
+            (word_end, word_onset, vote), = matches
+            outcome = "supported" if vote == label else "disagreed"
+            if vote == label and word_end <= edge and word_onset >= edge + GAP:
+                outcomes[f"fixed_window_supported_{label}"] += 1
         else:
             outcome = "ambiguous" if matches else "unmatched"
         outcomes[f"{outcome}_{label}"] += 1
@@ -130,16 +133,18 @@ def run(root):
     try:
         for split, cases in calls.items():
             totals = Counter()
-            coverage = {"hold": set(), "shift": set()}
+            coverage = {key: set() for key in (
+                "supported_hold", "supported_shift", "fixed_window_supported_hold", "fixed_window_supported_shift",
+            )}
             for case in cases:
                 counts = audit_call(raw, case["id"], detect)
                 totals.update(counts)
-                for label, voices in coverage.items():
-                    if counts[f"supported_{label}"]:
+                for key, voices in coverage.items():
+                    if counts[key]:
                         voices.add(case["caller"])
                 meter.advance(1)
             results[split] = {"calls": len(cases), "counts": totals,
-                              "caller_speakers_with_support": {label: len(voices) for label, voices in coverage.items()}}
+                              "caller_speakers_with_support": {key: len(voices) for key, voices in coverage.items()}}
         destination = root / "reports" / "harper-valley-label-audit.json"
         _write_json(destination, {"selection_sha256": expected, "decision_ms": 300,
                                   "boundary_tolerance_ms": BOUNDARY_TOLERANCE * 1000 // RATE,
