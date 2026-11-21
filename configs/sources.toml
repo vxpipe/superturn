@@ -60,6 +60,15 @@ max_total_bytes = 109936364
 opt_in = true
 order = 3
 
+[sources.harper-valley]
+kind = "http"
+licence = "CC BY 4.0"
+attribution = "HarperValleyBank, Wu, Nafziger, Scodary and Maas (CC BY 4.0)"
+role = "train-conversation"
+opt_in = true
+selection_command = "python -m superturn.harper_valley_acquire"
+order = 3
+
 [sources.indic_diarbench]
 kind = "hf_rowgroups"
 repo = "sarvamai/indic-diarbench"

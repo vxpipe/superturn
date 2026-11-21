@@ -245,6 +245,8 @@ def _plan_http_tar_stream(source: Source, sample: bool) -> Plan:
 
 
 def _plan_http(source: Source, sample: bool) -> Plan:
+    if command := source.get("selection_command"):
+        raise ValueError(f"{source.name}: use {command} with its pinned selection")
     urls = source.pick("urls", sample, [])
     return Plan(
         source, [PlannedFile(path=u.rsplit("/", 1)[1], size=_head_size(u), url=u) for u in urls]

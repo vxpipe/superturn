@@ -138,6 +138,14 @@ For the standalone LiveKit EoT Benchmark diagnostic, select
 0.11 GB to the existing campaign selection and stays outside the frozen
 suite. [Dataset card](https://huggingface.co/datasets/livekit/eot-bench-data)
 
+HarperValleyBank is a separate, opt-in English conversation pilot under
+CC BY 4.0. `python -m superturn.harper_valley_plan` pins a speaker-disjoint
+file list, and `python -m superturn.harper_valley_acquire` stages that list
+by split on the campaign machine. The proposed 614 MB includes both
+channels, transcripts and the metadata used for the split. The default
+staging scope is train and validation. Audit timing and label agreement
+before using the pilot for training. [Publisher source](https://github.com/cricketclub/gridspace-stanford-harper-valley)
+
 Not downloaded: ICSI, whose files are shorten-compressed and can only be
 fetched whole; whole Common Voice locales (947 GB for all 295); whole FLEURS
 (878 GB); Emilia beyond one partial archive per language (2.1 TB).
