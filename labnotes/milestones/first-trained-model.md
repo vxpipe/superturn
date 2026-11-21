@@ -20,8 +20,8 @@ Last updated 2026-11-21.
   exported both architectures using an existing Python 3.14 Torch environment.
   The 1 s artifacts were 300,447 bytes and 388,961 bytes and matched Torch
   probabilities in the float ONNX parity probe.
-- The previous session verified Hugging Face access, SSH configuration, the
-  Vast.ai API key and a read-only R2 listing. No live campaign has run.
+- The initial machine preflight verified Hugging Face access, SSH
+  configuration, the Vast.ai API key and a read-only R2 listing.
 
 - Rented the approved South Korea datacenter RTX 5090 at $0.5304/hour.
   Fixed the fresh-image uv PATH after the first bootstrap stopped, and
@@ -61,15 +61,19 @@ Last updated 2026-11-21.
 - The user approved full training with verified AMI training cases, original
   validation and frozen test splits, and a disclosed review limitation.
   The timing check supported 862 AMI training labels before the existing
-  speaker cap. The queue uses 532 retained pauses from 132 speakers, with
-  262 holds and 270 shifts. The original 90% review target was not met.
+  speaker cap left 532 candidates. Requiring at least 200 ms of verified
+  silence left 522 training pauses from 132 speakers, with 260 holds and
+  262 shifts. Another 42 got shorter maximum query times. The original
+  90% review target was not met.
 - Started the full staged experiment matrix on the RTX 5090. Verified
   the conditional quantization recovery path on both architectures with
   generated examples, including a forced retry after an int8 AUC drop.
+  Restarted before the first checkpoint under `experiments-verified` to
+  apply the per-case silence limits and the reviewed benchmark changes.
 
 ### Waiting on
 
-- Raw backup and verification, experiment checkpoints and final benchmarks.
+- Experiment checkpoints and final benchmarks.
   A 256-step validation-only pilot measured training pace before the matrix.
 
 ### Next step
@@ -89,7 +93,7 @@ destroy it unless the user asks to keep it.
 
 ### Evidence
 
-- [South Korea campaign](../20261121-0142-south-korea-campaign.md)
+- [RTX 5090 training run](../20261121-0142-rtx-5090-training.md)
 - [Local turn pipeline](../20261121-0112-local-turn-pipeline.md)
 - [Dataset sizes and scaffold](../20261120-1600-dataset-sizes-and-scaffold.md)
 - [Campaign runbook](../../docs/campaign-plan.md)
@@ -284,7 +288,7 @@ Follows the [campaign runbook](../../docs/campaign-plan.md#runbook).
 - [x] All sources downloaded, manifests written, licence check passes.
 - [x] Labels, speaker report, splits, frozen test sets and shards built per
   source.
-- [ ] Raw downloads, labels, shards and test copies pushed to storage
+- [x] Raw downloads, labels, shards and test copies pushed to storage
   (`bin/sync push`) and listed back.
 - [x] Run and report the automated review on 50 sampled pauses per language
   with supported, contradicted and unresolved counts. The original 90%

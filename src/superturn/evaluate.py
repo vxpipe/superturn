@@ -2,6 +2,7 @@
 
 from collections import defaultdict
 import json
+import math
 import os
 from pathlib import Path
 import time
@@ -32,6 +33,15 @@ def _session(path):
 def _predict(session, audio, gaps):
     result, = session.run(["p_complete"], {"audio": audio, "silence_ms": gaps})
     return result.flatten()
+
+
+def _predict_calls(session, audio, gaps):
+    """Score each example as an independent batch-one runtime call."""
+    return np.fromiter(
+        (_predict(session, audio[index:index + 1], gaps[index:index + 1])[0]
+         for index in range(len(audio))),
+        dtype=np.float32, count=len(audio),
+    )
 
 
 def _compact_initializers(path):
@@ -118,11 +128,19 @@ def _summarize(entries, threshold):
         return next((ms for ms, score in zip(DECISIONS, scores) if ms <= gap and score >= threshold), None)
 
     shift_times = [first_decision(entry) for entry in shifts]
-    times = [value if value is not None else 2500
-             for value, entry in zip(shift_times, shifts) if value is not None or entry[0] >= 2500]
+    times = sorted(value if value is not None else 2500
+                   for value, entry in zip(shift_times, shifts)
+                   if value is not None or entry[0] >= 2500)
+
+    def shift_percentile(fraction):
+        # Unresolved shifts are right-censored. Put them last so a small
+        # subset of easy decisions cannot certify the full shift population.
+        rank = math.ceil(fraction * len(shifts)) - 1
+        return times[rank] if 0 <= rank < len(times) else None
+
     summaries["decision_ms"] = {
-        "p50": float(np.percentile(times, 50)) if times else None,
-        "p90": float(np.percentile(times, 90)) if times else None,
+        "p50": shift_percentile(0.50),
+        "p90": shift_percentile(0.90),
         "false_complete": sum(first_decision(entry) is not None or entry[0] >= 2500
                               for entry in holds) / len(holds) if holds else None,
         "unresolved_shifts": len(shifts) - len(times),
@@ -169,9 +187,12 @@ def _acceptance(model_path, report):
     noise_rate = noise["300"]["false_complete"]
     delta = None if clean_rate is None or noise_rate is None else noise_rate - clean_rate
     cumulative = conversation["decision_ms"]["false_complete"]
+    decision_recall = conversation["decision_ms"]["recall"]
     beats_timeout = {
         timeout: decision is not None and cumulative is not None and metrics["false_complete"] is not None
         and decision < metrics["decision_ms"] and cumulative <= metrics["false_complete"]
+        and decision_recall is not None and metrics["recall"] is not None
+        and decision_recall >= metrics["recall"]
         for timeout, metrics in conversation["baselines"].items()
     }
     artifact_bytes = model_path.stat().st_size
@@ -226,7 +247,7 @@ def benchmark(root, model_path, threshold, *, split="test", samples=250, name=No
                     decision_ms = [ms for ms in DECISIONS if ms * 16 <= row["pause_samples"]]
                     audio = np.stack([_input(row, length, ms) for ms in decision_ms]).astype("float32") / 32768
                     gaps = np.asarray(decision_ms, dtype="float32").reshape(-1, 1)
-                    scores = _predict(session, audio, gaps).tolist()
+                    scores = _predict_calls(session, audio, gaps).tolist()
                     if condition == latency_condition and len(latency_inputs) < 16:
                         latency_index = DECISIONS.index(300) if 300 in decision_ms else 0
                         latency_inputs.append((audio[latency_index:latency_index + 1].copy(),
@@ -340,7 +361,7 @@ def quantization_auc(root, model_path, threshold):
                 audio = np.stack([_input(row, length, 300) for row in rows]).astype("float32") / 32768
                 elapsed = np.full((len(rows), 1), 300, dtype="float32")
                 for kind, session in sessions.items():
-                    for row, score in zip(rows, _predict(session, audio, elapsed)):
+                    for row, score in zip(rows, _predict_calls(session, audio, elapsed)):
                         pair = (float(score), int(row["label"] == "shift"))
                         for group in (("all", "all"), (row["source"], "all"),
                                       ("all", row["language"]), (row["source"], row["language"])):

@@ -11,7 +11,7 @@ import numpy as np
 import pyarrow.parquet as pq
 
 from .augment import _bandlimit, _g711, _limit
-from .evaluate import CONVERSATION_SOURCES, _predict, _session
+from .evaluate import CONVERSATION_SOURCES, _predict_calls, _session
 from .progress import Progress
 from .shards import CONTEXT, seed_for
 from .train import _stats, paths
@@ -107,7 +107,7 @@ def benchmark_volume(root, model_path, threshold, *, per_label_language=24):
                     batch = cases[start:start + 16]
                     pcm = np.stack(list(workers.map(render, batch)))
                     elapsed = np.full((len(batch), 1), DECISION_MS, dtype="float32")
-                    for example, score in zip(batch, _predict(session, pcm, elapsed)):
+                    for example, score in zip(batch, _predict_calls(session, pcm, elapsed)):
                         (language, label), *_ = example
                         pair = (float(score), int(label == "shift"))
                         for group in ("all", language):

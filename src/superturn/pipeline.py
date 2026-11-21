@@ -226,6 +226,8 @@ def experiments(root, base, device):
     meter = Progress("experiments", 37, "runs")
     failures = []
     final_models = []
+    destination = root / "reports" / "experiments"
+    destination.mkdir(parents=True, exist_ok=True)
 
     def attempt(name, config):
         reused = False
@@ -283,8 +285,9 @@ def experiments(root, base, device):
         stage([(f"s3b-{fraction}", {**winner, "fraction": fraction}) for fraction in (0.25, 0.5, 1)])
         fourth = stage([(f"s4-{weight}", {**winner, "hold_weight": weight}) for weight in (1, 2, 4)])
         ranked = _rank(fourth + third + second + first, len(fourth + third + second + first))
+        candidates = []
         for name, config, _ in ranked:
-            if len(final_models) == 3:
+            if len(candidates) == 3:
                 break
             try:
                 model = export(root / "runs" / name / "best.pt")
@@ -315,25 +318,37 @@ def experiments(root, base, device):
                 metadata["float_threshold"] = metadata["threshold"]
                 metadata["threshold"] = validation["threshold"]
                 model.with_name("export.json").write_text(json.dumps(metadata, indent=2) + "\n")
-                benchmark(root, model, metadata["threshold"])
+                overall = next(row["300"] for row in validation["groups"]
+                               if row["source"] == "all" and row["language"] == "all")
+                candidates.append({"name": name, "threshold": metadata["threshold"], **overall})
+            except Exception as error:
+                print(f"{name} export failed: {error}", flush=True)
+                failures.append((name, str(error)))
+        if len(candidates) < 3:
+            raise ValueError(f"only {len(candidates)} exports passed validation")
+        candidates.sort(key=lambda item: (item["recall"], item["auc"]), reverse=True)
+        (destination / "selection.json").write_text(
+            json.dumps({"split": "validation", "candidates": candidates}, indent=2) + "\n")
+        for candidate in candidates:
+            name, threshold = candidate["name"], candidate["threshold"]
+            model = root / "runs" / name / "int8.onnx"
+            try:
+                benchmark(root, model, threshold)
                 if (root / ".campaign-machine").is_file():
-                    benchmark_volume(root, model, metadata["threshold"])
+                    benchmark_volume(root, model, threshold)
                 _run_sync(root)
                 final_models.append(name)
-                meter.advance(1)
             except Exception as error:
-                print(f"{name} export or benchmark failed: {error}", flush=True)
+                print(f"{name} benchmark failed: {error}", flush=True)
                 failures.append((name, str(error)))
-        if len(final_models) < 3:
-            raise ValueError(f"only {len(final_models)} exports passed validation")
+            finally:
+                meter.advance(1)
     except BaseException:
         meter.finish("failed")
         raise
     else:
         meter.finish("failed" if failures else "done")
     finally:
-        destination = root / "reports" / "experiments"
-        destination.mkdir(parents=True, exist_ok=True)
         (destination / "queue.json").write_text(json.dumps({"models": final_models, "failures": failures}, indent=2) + "\n")
         _run_sync(root)
     return int(bool(failures))

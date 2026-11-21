@@ -65,7 +65,8 @@ metrics with case counts. FLEURS provides utterance IDs and lacks global
 speaker IDs in the metadata used here. [Dataset options](data-options.md)
 
 The automated label review did not meet the original 90% target on the
-fixed AMI sample. Training uses 532 AMI pauses from 132 speakers after
-annotation checks and speaker capping. Validation and test keep their
+fixed AMI sample. Training uses 522 AMI pauses from 132 speakers after
+annotation checks, speaker capping and a minimum 200 ms of verified silence.
+Training queries stay inside each verified pause. Validation and test keep their
 original split membership and automatically generated labels. Published
 metrics therefore include evaluation labels without manual confirmation.

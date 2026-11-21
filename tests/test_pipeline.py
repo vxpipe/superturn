@@ -112,6 +112,7 @@ def test_quantization_recovery_checkpoint_exports(tmp_path, architecture):
 
 def test_ami_review_filters_training_without_rebuilding_shards(tmp_path, monkeypatch):
     from dataclasses import replace
+    import json
     from superturn import ami_training
     from superturn.labels import write_rows
 
@@ -120,18 +121,55 @@ def test_ami_review_filters_training_without_rebuilding_shards(tmp_path, monkeyp
     manifest = tmp_path / "shards" / "manifest.json"
     before = manifest.read_bytes()
     write_rows(tmp_path / "labels" / "ami.jsonl", rows)
+    references = tmp_path / "raw" / "ami_annotations"
+    references.mkdir(parents=True)
+    (references / "fixture.zip").write_bytes(b"mocked annotations")
 
     def audit(root, offered, **kwargs):
         assert all(row.split == "train" for row in offered)
-        assert kwargs == {"end_ms": 300, "onset_ms": 375}
+        assert kwargs["end_ms"] == 300 and kwargs["onset_ms"] == 375
+        kwargs["pause_limits"].update((row, 4000) for row in offered if row.label == "hold")
         return {row: "supported" if row.label == "hold" else "contradicted" for row in offered}
 
     monkeypatch.setattr(ami_training, "audit_sample", audit)
     summary = ami_training.prepare(tmp_path)
     assert summary["sharded_labels"] == {"hold": 1}
     accepted = next(row for row in rows if row.split == "train" and row.label == "hold")
-    assert ami_training.load_selection(tmp_path) == {(accepted.audio, accepted.pause_start, "hold")}
+    assert summary["shorter_usable_pause"] == 1
+    assert ami_training.load_selection(tmp_path) == {(accepted.audio, accepted.pause_start, "hold"): 4000}
     assert manifest.read_bytes() == before
+    stale = json.loads(before)
+    stale["sha256_by_split"]["train"] = "stale"
+    manifest.write_text(json.dumps(stale))
+    with pytest.raises(ValueError, match="different training shard set"):
+        ami_training.load_selection(tmp_path)
+
+
+def test_ami_training_retains_only_reviewed_pauses():
+    pytest.importorskip("torch")
+    from superturn.train import eligible
+
+    kept = {("fixture.wav", 16000, "hold"): 4000}
+    row = {"source": "ami", "audio": "fixture.wav", "pause_start": 16000, "label": "hold"}
+    assert eligible(row, {}, kept)
+    assert not eligible({**row, "label": "shift"}, {}, kept)
+    assert eligible({**row, "source": "common_voice"}, {}, kept)
+
+
+def test_decision_percentiles_include_censored_shifts():
+    pytest.importorskip("torch")
+    pytest.importorskip("onnx")
+    pytest.importorskip("onnxruntime")
+    from superturn.evaluate import _summarize
+
+    report = _summarize([(400, 1, [.7, .1, .1]), (400, 1, [.1] * 3),
+                         (400, 1, [.1] * 3), (400, 1, [.1] * 3),
+                         (500, 0, [.1] * 4)], threshold=.5)
+    assert report["decision_ms"]["recall"] == .25
+    assert report["decision_ms"]["unresolved_shifts"] == 3
+    assert report["decision_ms"]["p50"] is None
+    assert report["decision_ms"]["p90"] is None
+
 
 def test_pitch_on_known_reference_tone():
     torch = pytest.importorskip("torch")
@@ -176,7 +214,11 @@ def test_experiment_queue_continues_after_failed_run(tmp_path, monkeypatch):
     def quantization_auc(root, path, threshold):
         destination = root / "reports" / f"{path.parent.name}-int8-validation"
         destination.mkdir(parents=True)
-        (destination / "metrics.json").write_text(json.dumps({"threshold": .61}))
+        recall = .92 if path.parent.name == "s4-2" else .8
+        (destination / "metrics.json").write_text(json.dumps({
+            "threshold": .61, "groups": [{"source": "all", "language": "all",
+                                         "300": {"recall": recall, "auc": .895}}],
+        }))
         return .90, .87 if path.parent.name == "s4-1" else .895
 
     monkeypatch.setattr(trainer, "train", train)
@@ -189,6 +231,7 @@ def test_experiment_queue_continues_after_failed_run(tmp_path, monkeypatch):
     assert runs["s4-1-qat"]["quantization_aware"]
     report = json.loads((tmp_path / "reports" / "experiments" / "queue.json").read_text())
     assert len(report["models"]) == 3
+    assert report["models"][0] == "s4-2"
     assert report["failures"] == [["s1-a-150000-17", "fixture training failure"]]
 
 

@@ -81,7 +81,7 @@ def check_ami_reference(root, tolerance_ms=200):
     return destination
 
 
-def _manual_vote(row, spans, annotated, end_tolerance, onset_tolerance, errors):
+def _manual_vote(row, spans, annotated, end_tolerance, onset_tolerance, errors, pause_limits):
     edge = row.pause_start
     caller_end = min((span.end for span in spans if span.speaker == row.speaker),
                      key=lambda end: abs(end - edge), default=None)
@@ -122,11 +122,14 @@ def _manual_vote(row, spans, annotated, end_tolerance, onset_tolerance, errors):
         else:
             expected = "shift"
     if expected == row.label:
+        if pause_limits is not None:
+            pause_limits[row] = min(row.pause_samples, first.start - edge)
         return "supported", "timing and speaker order agree"
     return "contradicted", f"manual speaker order implies {expected} for {row.label} label"
 
 
-def audit_sample(root, rows, *, explain=False, end_ms=200, onset_ms=250, errors=None):
+def audit_sample(root, rows, *, explain=False, end_ms=200, onset_ms=250, errors=None,
+                 pause_limits=None):
     """Check every sampled AMI label against raw words and dialogue acts."""
     from .labels import ami_backchannels
 
@@ -149,6 +152,7 @@ def audit_sample(root, rows, *, explain=False, end_ms=200, onset_ms=250, errors=
             annotated = {speaker: ami_backchannels(archive, meeting, agent, offset)
                          for speaker, agent in tracks.values()}
             for row in examples:
-                verdict = _manual_vote(row, spans, annotated, end_ms * 16, onset_ms * 16, errors)
+                verdict = _manual_vote(row, spans, annotated, end_ms * 16, onset_ms * 16,
+                                       errors, pause_limits)
                 results[row] = verdict if explain else verdict[0]
     return results

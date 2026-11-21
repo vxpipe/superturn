@@ -105,7 +105,7 @@ def _validation(model, files, device):
     return _stats(scores, truth, threshold), threshold
 
 
-def _assets(root, samples, verified_ami=None):
+def _assets(root, samples, config, verified_ami=None):
     from zipfile import ZipFile
     from .audio import read_audio, write_wave
 
@@ -122,7 +122,7 @@ def _assets(root, samples, verified_ami=None):
     voices = {}
     for batch in records(paths(root, "train")):
         for row in batch:
-            if not eligible(row, {}, verified_ami):
+            if not eligible(row, config, verified_ami):
                 continue
             key = (row["source"], row["speaker"])
             if key not in voices:
@@ -146,7 +146,7 @@ def _run_signature(root, config, device):
     if not shard_manifest.is_file():
         return None
     source = hashlib.sha256()
-    for name in ("train.py", "model.py", "augment.py", "audio.py", "quant_aware.py"):
+    for name in ("train.py", "model.py", "augment.py", "audio.py", "quant_aware.py", "ami_training.py"):
         source.update(Path(__file__).with_name(name).read_bytes())
     assets = {}
     if config.get("augmentation", True):
@@ -233,7 +233,7 @@ def train(root, name, config, device):
 
     language_normalizer = sum(count ** 0.7 for count in counts.values()) / sum(counts.values())
     augmentation = config.get("augmentation", True)
-    noise, impulse, voices = _assets(root, model.samples, verified_ami) if augmentation else ([], [], {})
+    noise, impulse, voices = _assets(root, model.samples, config, verified_ami) if augmentation else ([], [], {})
     epochs = config.get("epochs", 5)
     steps = min(config.get("max_steps", train_batches * epochs), train_batches * epochs)
     meter = Progress(f"train-{name}", steps, "steps")
@@ -254,7 +254,10 @@ def train(root, name, config, device):
                 audio, jobs, gaps, truth, weights = [], [], [], [], []
                 for index in rng.permutation(len(selected)):
                     row = selected[index]
-                    gap_ms = rng.choice([v for v in PAUSES if v * 16 <= row["pause_samples"]])
+                    pause_samples = row["pause_samples"]
+                    if verified_ami is not None and row["source"] == "ami":
+                        pause_samples = min(pause_samples, verified_ami[row["audio"], row["pause_start"], row["label"]])
+                    gap_ms = rng.choice([v for v in PAUSES if v * 16 <= pause_samples])
                     pcm = _input(row, model.samples, gap_ms)
                     if augmenter is not None:
                         other = [value for key, value in voices.items() if key != (row["source"], row["speaker"])]

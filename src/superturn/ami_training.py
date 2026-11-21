@@ -3,6 +3,7 @@
 from collections import Counter
 import hashlib
 import json
+from pathlib import Path
 
 import pyarrow.parquet as pq
 
@@ -28,16 +29,18 @@ def load_selection(root):
     report = json.loads(_path(root).read_text())
     if report["train_sha256"] != _train_fingerprint(root):
         raise ValueError("AMI verification applies to a different training shard set")
-    keys = {tuple(key) for key in report["keys"]}
-    if not keys or len(keys) != report["sharded_examples"]:
+    limits = {tuple(key): limit for key, limit in report["pause_limits"]}
+    if not limits or len(limits) != report["sharded_examples"] or min(limits.values()) < 3200:
         raise ValueError("AMI training selection is empty or has inconsistent counts")
-    return keys
+    return limits
 
 
 def prepare(root):
-    rows = [row for row in read_rows(root / "labels" / "ami.jsonl") if row.split == "train"]
-    votes = audit_sample(root, rows, end_ms=300, onset_ms=375)
-    supported = {(row.audio, row.pause_start, row.label): row.speaker
+    label_path = root / "labels" / "ami.jsonl"
+    rows = [row for row in read_rows(label_path) if row.split == "train"]
+    pause_limits = {}
+    votes = audit_sample(root, rows, end_ms=300, onset_ms=375, pause_limits=pause_limits)
+    supported = {(row.audio, row.pause_start, row.label): row
                  for row, vote in votes.items() if vote == "supported"}
     available = set()
     for path in sorted((root / "shards" / "train" / "clean").glob("*.parquet")):
@@ -45,7 +48,8 @@ def prepare(root):
                 columns=["source", "audio", "pause_start", "label"]):
             available.update((row["audio"], row["pause_start"], row["label"])
                              for row in batch.to_pylist() if row["source"] == "ami")
-    keys = sorted(available & supported.keys())
+    matched = available & supported.keys()
+    keys = sorted(key for key in matched if pause_limits[supported[key]] >= 3200)
     if not keys:
         raise ValueError("no AMI training shards passed review")
     summary = {
@@ -55,17 +59,32 @@ def prepare(root):
         "tolerances_ms": {"caller_end": 300, "next_onset": 375},
         "sharded_examples": len(keys),
         "sharded_labels": dict(Counter(key[2] for key in keys)),
-        "sharded_speakers": len({supported[key] for key in keys}),
+        "sharded_speakers": len({supported[key].speaker for key in keys}),
+        "shorter_usable_pause": sum(
+            any(pause_limits[supported[key]] < ms * 16 <= supported[key].pause_samples
+                for ms in (300, 500)) for key in keys
+        ),
+        "excluded_under_200_ms": len(matched) - len(keys),
         "original_ami_training_shards": len(available),
         "evaluation": "original validation and frozen test splits",
     }
     target = _path(root)
     tmp = target.with_suffix(".tmp")
-    tmp.write_text(json.dumps({**summary, "keys": keys}, indent=2) + "\n")
+    tmp.write_text(json.dumps({
+        **summary, "pause_limits": [(key, pause_limits[supported[key]]) for key in keys],
+    }, indent=2) + "\n")
     tmp.replace(target)
     report = root / "reports" / "ami-verified-training.json"
     report.parent.mkdir(parents=True, exist_ok=True)
-    report.write_text(json.dumps({**summary, "selection_sha256": selection_hash(root)}, indent=2) + "\n")
+    annotation, = (root / "raw" / "ami_annotations").glob("*.zip")
+    verifier = Path(__file__).with_name("ami_reference.py")
+    report.write_text(json.dumps({
+        **summary,
+        "selection_sha256": selection_hash(root),
+        "ami_labels_sha256": hashlib.sha256(label_path.read_bytes()).hexdigest(),
+        "annotations_sha256": hashlib.sha256(annotation.read_bytes()).hexdigest(),
+        "verifier_sha256": hashlib.sha256(verifier.read_bytes()).hexdigest(),
+    }, indent=2) + "\n")
     return summary
 
 
