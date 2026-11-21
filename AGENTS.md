@@ -173,6 +173,11 @@ full runbook.
   per language before slicing. Report English seed mean and range at the
   2.5%, 5% and 7.5% hold budgets and apply a one-point non-regression guard
   to the mean recall across these budgets.
+- For new model comparison claims, use at least five paired seeds across
+  arms where initialization can be matched. Resample paired seeds once
+  across languages, then whole turns within each language, keeping the
+  resample shared across arms and recalculating the cutoffs. A confirmed
+  improvement requires a positive joint-bootstrap lower bound.
 - Do not use reversed audio or preset-voice TTS as training data.
 - Use `uv` for Python environments (Python 3.12) and run shell commands
   through an interactive zsh that sources `~/.zshrc`.
