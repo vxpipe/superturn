@@ -98,6 +98,18 @@ opt_in = true
 selection_command = "python -m superturn.maptask_probe"
 order = 3
 
+[sources.nsc-part6-pilot]
+kind = "http"
+repo = "recursal/reprocessed_singapore_national_speech_corpus"
+revision = "5e8294c3fb5f2634fd1d7004f7c0264969fe6687"
+licence = "Singapore Open Data Licence v1.0"
+attribution = "Contains information from the IMDA National Speech Corpus Part 6, accessed on 21 November 2026 from the Recursal mirror, made available under the Singapore Open Data Licence version 1.0 (https://data.gov.sg/open-data-licence)."
+role = "test"
+opt_in = true
+selection_command = "python -m superturn.nsc_part6_recording_pilot"
+max_total_bytes = 40_000_000
+order = 3
+
 [sources.dral-original-pilot]
 kind = "http"
 licence = "CC0-1.0"

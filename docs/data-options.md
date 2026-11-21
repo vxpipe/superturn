@@ -245,6 +245,25 @@ filtered speech (around 400 Hz) keeps the pitch contour and removes most words.
 It is worth trying as an augmentation, and as a test that the model relies on
 prosody rather than words.
 
+### Singapore National Speech Corpus Part 6
+
+The opt-in `nsc-part6-pilot` selection uses four original phone
+tracks and their timed annotations from two provisional dyads in
+two service designs. It checks audio and timing feasibility before
+any dataset expansion or use in fitting. The pinned Recursal mirror
+supplies FLAC and paired JSONL files. Verified tar member ranges
+account for 38,003,262 payload bytes.
+
+IMDA's corpus distribution form specifies the Singapore Open Data
+Licence version 1.0, which permits commercial derived applications
+and requires conspicuous attribution. The grant excludes personal
+data and unlicensed third-party rights. Cite IMDA, the corpus version,
+the date of access and the licence in any derivative product. Source
+recordings and transcripts stay on campaign storage. [IMDA corpus
+distribution and licence](https://docs.google.com/forms/d/e/1FAIpQLSd3k8wFF4GQP4yo_lDAXKjCltfYk-dE-yYpegTnCB20kr7log/viewform)
+· [Singapore Open Data Licence](https://data.gov.sg/open-data-licence)
+· [Pinned Recursal mirror](https://huggingface.co/datasets/recursal/reprocessed_singapore_national_speech_corpus/tree/5e8294c3fb5f2634fd1d7004f7c0264969fe6687)
+
 ### AMI manual annotations
 
 The University of Edinburgh's [manual annotations v1.6.2](https://groups.inf.ed.ac.uk/ami/download/)

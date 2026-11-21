@@ -45,9 +45,11 @@ def inventory():
 
 
 class RangeReader:
-    def __init__(self, parts):
+    def __init__(self, parts, *, byte_limit=BYTES, request_limit=REQUESTS):
         self.parts = parts
         self.ends = tuple(accumulate(size for _, size, _ in parts))
+        self.byte_limit = byte_limit
+        self.request_limit = request_limit
         self.bytes = 0
         self.requests = 0
 
@@ -61,8 +63,8 @@ class RangeReader:
             start = position - (self.ends[index - 1] if index else 0)
             length = min(count, size - start)
             end = start + length - 1
-            if self.bytes + length + 1 > BYTES or self.requests >= REQUESTS:
-                raise ValueError("the header scan exceeded its transport budget")
+            if self.bytes + length + 1 > self.byte_limit or self.requests >= self.request_limit:
+                raise ValueError("the archive read exceeded its transport budget")
             self.requests += 1
             path = quote(name, safe="/")
             url = f"https://huggingface.co/datasets/{REPO}/resolve/{REVISION}/{path}?download=true&offset={start}"
