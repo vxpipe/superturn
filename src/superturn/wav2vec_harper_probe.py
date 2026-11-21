@@ -124,7 +124,7 @@ def extract(name, predict, audio):
     return features
 
 
-def fit(features, truth, training, evaluation, penalty, seed, *, normalizer=None, sample_weights=None):
+def fit_head(features, truth, training, penalty, seed, *, normalizer=None, sample_weights=None):
     train = torch.as_tensor(features[training]).double()
     target = torch.as_tensor(truth[training]).double()
     origin = train if normalizer is None else torch.as_tensor(features[normalizer]).double()
@@ -141,20 +141,27 @@ def fit(features, truth, training, evaluation, penalty, seed, *, normalizer=None
     bias = torch.zeros((), dtype=torch.float64, requires_grad=True)
     optimizer = torch.optim.LBFGS((layer, weights, bias), max_iter=80, line_search_fn="strong_wolfe")
 
-    def logits(values):
-        return (values.transpose(1, 2) @ layer.softmax(0)) @ weights + bias
-
     def update():
         optimizer.zero_grad()
-        loss = F.binary_cross_entropy_with_logits(logits(train), target, weight=loss_weights)
+        loss = F.binary_cross_entropy_with_logits(head_logits(train, layer, weights, bias), target, weight=loss_weights)
         loss = loss + penalty * weights.square().sum() / 2 + .001 * layer.square().mean()
         loss.backward()
         return loss
 
     optimizer.step(update)
+    return center, scale, layer.detach(), weights.detach(), bias.detach()
+
+
+def head_logits(values, layer, weights, bias):
+    return (values.transpose(1, 2) @ layer.softmax(0)) @ weights + bias
+
+
+def fit(features, truth, training, evaluation, penalty, seed, *, normalizer=None, sample_weights=None):
+    center, scale, layer, weights, bias = fit_head(
+        features, truth, training, penalty, seed, normalizer=normalizer, sample_weights=sample_weights)
     with torch.no_grad():
         other = torch.as_tensor(features[evaluation]).double()
-        return logits((other - center) / scale).numpy(), layer.softmax(0).tolist()
+        return head_logits((other - center) / scale, layer, weights, bias).numpy(), layer.softmax(0).tolist()
 
 
 def fit_arm(features, truth, splits, caller_folds, meter):
