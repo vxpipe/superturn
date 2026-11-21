@@ -128,7 +128,7 @@ def final_lexical_tone(words, edge):
     return f"tone-{next(iter(tones))}" if len(tones) == 1 else "ambiguous"
 
 
-def scan(source, language, models, noise, meter):
+def scan(source, language, models, noise, meter, *, original_scores=None):
     members, groups, truth = [], [], []
     features = defaultdict(list)
     predictions, noise_predictions = defaultdict(list), defaultdict(list)
@@ -178,7 +178,13 @@ def scan(source, language, models, noise, meter):
             for clip, length in zip(padded, padding, strict=True):
                 clip[:length] = noise[:length]
             for name, model in models.items():
-                clean = student_scores(model, inputs)
+                if original_scores is not None and name in original_scores:
+                    start = len(truth) - len(clips)
+                    clean = np.asarray(original_scores[name][start:len(truth)])
+                    if len(clean) != len(inputs):
+                        raise ValueError(f"missing archived scores for {language}/{name}")
+                else:
+                    clean = student_scores(model, inputs)
                 changed = clean.copy()
                 short = np.asarray(padding) > 0
                 if short.any():

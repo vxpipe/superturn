@@ -84,8 +84,21 @@ def tail_shards(cache, digests, count):
         yield start, stop, features[:, tail].copy(), mask[:, tail].copy()
 
 
-def targets_for_features(cache, digests, sources, roles, output):
+def targets_for_features(cache, digests, sources, roles, output, *, reuse_pca=False):
     fit = roles == "fit"
+    if reuse_pca:
+        pca = torch.load(output, map_location=DEVICE, weights_only=True)
+        selected = pca["fit_row_ordinals"].cpu().numpy()
+        if not fit[selected].all():
+            raise ValueError("the archived PCA includes a non-fit row")
+        meter = Progress("own-distill-replay-pca", len(roles), "pauses")
+        try:
+            projected = project_features(cache, digests, len(roles), pca["origin"], pca["basis"], pca["scale"], meter)
+        except BaseException:
+            meter.finish("failed")
+            raise
+        meter.finish()
+        return projected
     rng = np.random.default_rng(60217)
     active = np.unique(sources)
     count = min(512, *(np.sum(fit & (sources == source)) for source in active))
@@ -111,22 +124,27 @@ def targets_for_features(cache, digests, sources, roles, output):
         eigenvalues, vectors = torch.linalg.eigh(centered.T @ centered / len(values))
         basis = vectors[:, -PCA_SIZE:]
         scale = eigenvalues[-PCA_SIZE:].clamp_min(1e-6).sqrt()
-        projected = np.empty((len(roles), TAIL_FRAMES, PCA_SIZE), dtype=np.float32)
-        valid = np.empty(projected.shape[:2], dtype=bool)
-        for start, stop, matrix, mask in tail_shards(cache, digests, len(roles)):
-            data = torch.as_tensor(matrix, dtype=torch.float32, device=DEVICE)
-            reduced = ((data - origin) @ basis / scale).cpu().numpy()
-            reduced[~mask] = 0
-            projected[start:stop], valid[start:stop] = reduced, mask
-            meter.advance(stop - start)
-        if not valid.any(axis=1).all() or not np.isfinite(projected).all():
-            raise ValueError("projected targets contain empty or nonfinite rows")
+        projected, valid = project_features(cache, digests, len(roles), origin, basis, scale, meter)
         torch.save({"origin": origin.cpu(), "basis": basis.cpu(), "scale": scale.cpu(),
                     "fit_row_ordinals": torch.from_numpy(np.flatnonzero(selected))}, output)
     except BaseException:
         meter.finish("failed")
         raise
     meter.finish()
+    return projected, valid
+
+
+def project_features(cache, digests, count, origin, basis, scale, meter):
+    projected = np.empty((count, TAIL_FRAMES, PCA_SIZE), dtype=np.float32)
+    valid = np.empty(projected.shape[:2], dtype=bool)
+    for start, stop, matrix, mask in tail_shards(cache, digests, count):
+        data = torch.as_tensor(matrix, dtype=torch.float32, device=DEVICE)
+        reduced = ((data - origin) @ basis / scale).cpu().numpy()
+        reduced[~mask] = 0
+        projected[start:stop], valid[start:stop] = reduced, mask
+        meter.advance(stop - start)
+    if not valid.any(axis=1).all() or not np.isfinite(projected).all():
+        raise ValueError("projected targets contain empty or nonfinite rows")
     return projected, valid
 
 
@@ -144,8 +162,16 @@ def stable_scores(metrics):
                for data, sample in zip(probes, metrics.values(), strict=True))
 
 
-def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active, arm, seed, *, shuffle_features=False):
+def replace_history(audio, prefix, noise):
+    positions = torch.arange(audio.shape[-1], device=audio.device)
+    return torch.where(positions < prefix[:, None], noise, audio)
+
+
+def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active, arm, seed, *,
+            shuffle_features=False, active_stats=False, score_history=None):
     config = {"architecture": "a", "window": 3, "parameters": 150000}
+    if active_stats:
+        config["active_stats"] = True
     torch.manual_seed(seed)
     model = build(config).to(DEVICE)
     projection = torch.nn.Linear(model.sequence.hidden_size, PCA_SIZE, device=DEVICE)
@@ -164,6 +190,11 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
                                    rtol=0, atol=0)
     history, winner, best_state = [], None, None
     name = f"{arm}-{seed}" + ("-shuffled-features" if shuffle_features else "")
+    if active_stats:
+        name += "-active-stats"
+    if score_history is not None:
+        prefix, noise, history_scores = score_history
+        name += "-history"
     meter = Progress(f"own-feature-{name}", EPOCHS * ((len(fit) + BATCH - 1) // BATCH), "updates")
     try:
         for epoch in range(1, EPOCHS + 1):
@@ -177,11 +208,17 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
             for start in range(0, len(order), BATCH):
                 rows = order[start:start + BATCH]
                 audio, elapsed = batch(pcm, rows, j[:len(rows)], DEVICE, DEADLINES)
+                truth = scores[rows, 0]
+                if use_scores and score_history is not None:
+                    replaces = ((rows + epoch) % 2 == 0) & (prefix[rows] > 0)
+                    lengths = torch.as_tensor(np.where(replaces, prefix[rows], 0), device=DEVICE)
+                    audio = replace_history(audio, lengths, noise[rows % len(noise)])
+                    truth = np.where(replaces, history_scores[rows], truth)
                 weight = torch.as_tensor(row_weights[rows], device=DEVICE)
                 logits, states = score_features(model, audio, elapsed)
                 losses = []
                 if use_scores:
-                    y = torch.as_tensor(scores[rows, 0], device=DEVICE)
+                    y = torch.as_tensor(truth, device=DEVICE)
                     score_loss = F.binary_cross_entropy_with_logits(logits, y, weight=weight)
                     losses.append(score_loss)
                     score_losses.append(score_loss.detach())

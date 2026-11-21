@@ -12,8 +12,9 @@ HOP = 160
 
 
 class AcousticFeatures(nn.Module):
-    def __init__(self):
+    def __init__(self, active_stats=False):
         super().__init__()
+        self.active_stats = active_stats
         frequency = torch.arange(129) * (16000 / FFT)
         def mel(hz):
             return 2595 * torch.log10(1 + hz / 700)
@@ -24,6 +25,13 @@ class AcousticFeatures(nn.Module):
                                 (edges[2:] - bins) / (edges[2:] - edges[1:-1])).clamp_min(0)
         self.register_buffer("mel", filters, persistent=False)
         self.register_buffer("window", torch.hann_window(FRAME), persistent=False)
+        if active_stats:
+            self.activity_floor = 10 ** (-75 / 10)
+            # Unnormalized, one-sided STFT power for the retained band.
+            power_floor = self.activity_floor * (FFT / 2) * (3 * FRAME / 8)
+            self.register_buffer("energy_floor", torch.tensor(power_floor), persistent=False)
+            self.register_buffer("mel_floor", (power_floor * filters.sum(dim=0) / len(frequency)).clamp_min(1e-8),
+                                 persistent=False)
         self.register_buffer("bins", torch.arange(129, dtype=torch.float32), persistent=False)
         self.register_buffer("lags", torch.arange(40, 230, dtype=torch.float32), persistent=False)
         padded = F.pad(self.window, (0, FFT - FRAME))
@@ -56,6 +64,8 @@ class AcousticFeatures(nn.Module):
 
     def forward(self, audio):
         power = self.power_spectrum(audio)
+        if self.active_stats:
+            return self.active_features(audio, power)
         mel = (power @ self.mel).clamp_min(1e-8).log()
         energy = power.sum(dim=-1, keepdim=True).clamp_min(1e-8).log()
         pitch, voicing = self.pitch_features(power)
@@ -67,6 +77,27 @@ class AcousticFeatures(nn.Module):
         pitch = pitch / (pitch.square().mean(dim=1, keepdim=True) + 1e-4).sqrt()
         energy = energy - energy.mean(dim=1, keepdim=True)
         energy = energy / (energy.square().mean(dim=1, keepdim=True) + 1e-4).sqrt()
+        return torch.cat((mel, pitch, voicing, energy), dim=-1)
+
+    @staticmethod
+    def normalize_active(values, active):
+        count = active.sum(dim=1, keepdim=True).clamp_min(1)
+        centered = (values - (values * active).sum(dim=1, keepdim=True) / count) * active
+        variance = centered.square().sum(dim=1, keepdim=True) / count
+        return centered / (variance + 1e-4).sqrt()
+
+    def active_features(self, audio, power):
+        framed = audio.unsqueeze(1)
+        mean = F.avg_pool1d(framed, FRAME, HOP)
+        variance = F.avg_pool1d(framed.square(), FRAME, HOP) - mean.square()
+        active = (variance.transpose(1, 2) > self.activity_floor).to(power.dtype)
+        # Base activity on the native frames before whole-window centering.
+        power = power * active
+        mel = torch.maximum(power @ self.mel, self.mel_floor).log()
+        spectral_energy = power.sum(dim=-1, keepdim=True)
+        energy = self.normalize_active(torch.maximum(spectral_energy, self.energy_floor).log(), active)
+        pitch, voicing = self.pitch_features(power)
+        pitch = self.normalize_active(pitch.log(), (voicing >= 0.35).to(power.dtype))
         return torch.cat((mel, pitch, voicing, energy), dim=-1)
 
 
@@ -100,11 +131,11 @@ class ConformerBlock(nn.Module):
 
 
 class TurnModel(nn.Module):
-    def __init__(self, architecture, width, window, layers=None, gru_hidden_size=None):
+    def __init__(self, architecture, width, window, layers=None, gru_hidden_size=None, *, active_stats=False):
         super().__init__()
         self.architecture = architecture
         self.samples = round(window * 16000)
-        self.features = AcousticFeatures()
+        self.features = AcousticFeatures(active_stats=active_stats)
         self.stem = nn.Sequential(StemBlock(43, width // 2), StemBlock(width // 2, width))
         output_width = width
         if architecture == "a":
@@ -154,7 +185,8 @@ def build(config):
                  for value in range(32, 433, 4)}
         width = min((value for value, size in sizes.items() if size <= 1_000_000),
                     key=lambda value: abs(sizes[value] - target))
-    return TurnModel(config["architecture"], width, config["window"], config.get("layers"), gru_hidden_size)
+    return TurnModel(config["architecture"], width, config["window"], config.get("layers"), gru_hidden_size,
+                     active_stats=config.get("active_stats", False))
 
 
 def parameter_count(architecture, width, window, layers=None):

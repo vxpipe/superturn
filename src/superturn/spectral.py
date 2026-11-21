@@ -11,8 +11,8 @@ from .model import AcousticFeatures, FFT, FRAME, HOP
 class ConvolutionSpectrum(AcousticFeatures):
     """Compute the original first 129 windowed DFT bins with stride-160 convolution."""
 
-    def __init__(self):
-        super().__init__()
+    def __init__(self, active_stats=False):
+        super().__init__(active_stats=active_stats)
         phase = (-2 * math.pi / FFT) * torch.arange(129, dtype=torch.float64)[:, None] * torch.arange(FRAME)
         kernels = torch.stack((phase.cos(), phase.sin()), dim=1).reshape(-1, 1, FRAME)
         kernels = (kernels * self.window).float()
