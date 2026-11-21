@@ -19,17 +19,28 @@ from .sources import data_root
 SMART_TURN_REVISION = "f766f81d3cfdf7737ac64aad813d91bbfd56bf93"
 
 
-def load_detectors(root):
+def load_smart_turn(root):
     import onnxruntime as ort
     from _whisper_features import compute_whisper_log_mel_features
-    from livekit.local_inference import EOT, EOT_MAX_SAMPLES, EOT_THRESHOLDS
 
-    if EOT_MAX_SAMPLES != 2 * RATE:
-        raise ValueError("expected the LiveKit v1.1-mini two-second audio window")
     smart_path = root / "cache" / "eot-competitors" / "smart-turn-v3.2-cpu.onnx"
     options = ort.SessionOptions()
     options.intra_op_num_threads = 2
     smart_turn = ort.InferenceSession(str(smart_path), sess_options=options, providers=["CPUExecutionProvider"])
+
+    def predict(audio):
+        features = compute_whisper_log_mel_features(audio, do_normalize=True)[None]
+        return float(smart_turn.run(None, {"input_features": features})[0].item())
+
+    return predict, hashlib.sha256(smart_path.read_bytes()).hexdigest()
+
+
+def load_detectors(root):
+    from livekit.local_inference import EOT, EOT_MAX_SAMPLES, EOT_THRESHOLDS
+
+    if EOT_MAX_SAMPLES != 2 * RATE:
+        raise ValueError("expected the LiveKit v1.1-mini two-second audio window")
+    smart_turn, checkpoint_sha256 = load_smart_turn(root)
     mini = EOT()
     defaults = {"livekit-v1.1-mini": float(EOT_THRESHOLDS["en"]),
                 "smart-turn-v3.2": float(np.nextafter(np.float32(0.5), np.float32(1)))}
@@ -40,11 +51,9 @@ def load_detectors(root):
         recent = np.ascontiguousarray(pcm[-min(valid_samples, EOT_MAX_SAMPLES):])
         # The archived, causal history approximates turn length in the meeting clips.
         mini_score = mini.predict(recent, turn_samples=valid_samples)
-        features = compute_whisper_log_mel_features(audio, do_normalize=True)[None]
-        smart_score = smart_turn.run(None, {"input_features": features})[0].item()
-        return {"livekit-v1.1-mini": float(mini_score), "smart-turn-v3.2": float(smart_score)}
+        return {"livekit-v1.1-mini": float(mini_score), "smart-turn-v3.2": smart_turn(audio)}
 
-    return predict, defaults, hashlib.sha256(smart_path.read_bytes()).hexdigest()
+    return predict, defaults, checkpoint_sha256
 
 
 def run(root):

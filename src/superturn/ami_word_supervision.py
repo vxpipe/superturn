@@ -16,7 +16,6 @@ from .progress import Progress
 from .shards import seed_for
 from .sources import data_root
 
-ARMS = ("audio", "word-targets", "shuffled-targets")
 AUXILIARY_WEIGHT = 0.5
 
 
@@ -55,47 +54,43 @@ def prepare(folder, source, rows, targets, validation_hash):
     return train_hash
 
 
-def run(root, device):
+def run_supervision(root, device, experiment, target_arm, targets_for_fold, assets):
     from .train import _stats, _threshold, paths, records
 
     if not (root / ".campaign-machine").is_file():
-        raise ValueError("AMI word supervision uses the training server")
+        raise ValueError("AMI auxiliary supervision uses the training server")
     folds = root / "shards" / "ami-crossval" / CROSSVAL
     reference = root / "reports" / "ami-crossval" / f"{CROSSVAL}.json"
     original = json.loads(reference.read_text())
     base = {**BASE, "window": 6}
-    files = {
-        "reference": reference,
-        "raw_manifest": root / "raw" / "ami" / "MANIFEST.json",
-        "annotations": next((root / "raw" / "ami_annotations").glob("*.zip")),
-    }
+    files = {"reference": reference, **assets}
     modules = ("ami_word_supervision", "ami_text_signal", "ami_crossval", "ami_pilot", "ami_transfer",
                "train", "model", "shards", "audio")
     files.update({module: Path(__file__).with_name(f"{module}.py") for module in modules})
-    protocol = {"crossval": CROSSVAL, "config": base, "arms": ARMS, "seeds": SEEDS,
+    arms = ("audio", target_arm, "shuffled-targets")
+    protocol = {"crossval": CROSSVAL, "config": base, "arms": arms, "seeds": SEEDS,
                 "auxiliary_weight": AUXILIARY_WEIGHT,
                 "hashes": {name: hashlib.sha256(path.read_bytes()).hexdigest() for name, path in files.items()}}
     key = hashlib.sha256(json.dumps(protocol, sort_keys=True).encode()).hexdigest()[:16]
-    staging = root / "shards" / "ami-word-supervision" / key
-    exports = root / "exports" / "ami-word-supervision" / key
-    report = root / "reports" / "ami-word-supervision" / f"{key}.json"
+    staging = root / "shards" / experiment / key
+    exports = root / "exports" / experiment / key
+    report = root / "reports" / experiment / f"{key}.json"
     report.parent.mkdir(parents=True, exist_ok=True)
     predictions, meta = {}, {}
     result = {**protocol, "folds": [], "runs": []}
-    meter = Progress("ami-word-supervision", original["folds"] * len(ARMS) * len(SEEDS), "runs")
+    meter = Progress(experiment, original["folds"] * len(arms) * len(SEEDS), "runs")
     try:
         for fold, info in enumerate(original["splits"]):
             source = folds / f"fold-{fold}"
             rows = [row for batch in records(paths(source, "train")) for row in batch]
             groups = [row["group"] for batch in records(paths(source, "out-of-fold"), columns=["group"])
                       for row in batch]
-            words = read_words(root, {row["recording"] for row in rows})
-            targets = targets_for(rows, words)
+            targets = targets_for_fold(rows)
             shuffled = shuffle_targets(rows, targets, fold)
-            arm_folders = {arm: staging / f"fold-{fold}" / arm for arm in ARMS[1:]}
+            arm_folders = {arm: staging / f"fold-{fold}" / arm for arm in arms[1:]}
             train_hashes = {
                 arm: prepare(arm_folders[arm], source, rows, values, info["validation"]["sha256"])
-                for arm, values in zip(ARMS[1:], (targets, shuffled), strict=True)
+                for arm, values in zip(arms[1:], (targets, shuffled), strict=True)
             }
             control = staging / f"fold-{fold}" / "audio"
             control.mkdir(parents=True, exist_ok=True)
@@ -105,11 +100,11 @@ def run(root, device):
             result["folds"].append({"fold": fold, "train_rows": len(rows), "train_hashes": train_hashes,
                                     "shuffled_rows_changed": sum(a != b for a, b in zip(targets, shuffled))})
             for seed in SEEDS:
-                for arm in ARMS:
+                for arm in arms:
                     config = {**base, "seed": seed}
                     if arm != "audio":
                         config.update(auxiliary_size=len(targets[0]), auxiliary_weight=AUXILIARY_WEIGHT)
-                    name = f"word-supervision-{fold}-{arm}-{seed}"
+                    name = f"{experiment}-{fold}-{arm}-{seed}"
                     checkpoint, scores = fit_and_score(arm_folders[arm], name, config, source,
                                                        ("validation", "out-of-fold"), exports / name, device)
                     for split, (_, labels) in scores.items():
@@ -131,16 +126,16 @@ def run(root, device):
                     _write_json(report, result)
                     meter.advance(1)
         result["summary"] = {}
-        for arm in ARMS:
+        for arm in arms:
             runs = [row for row in result["runs"] if row["arm"] == arm]
             result["summary"][arm] = {
                 **summarize_runs(runs),
                 "partial_auc_to_5pct": float(np.mean([row["evaluation"]["partial_auc_to_5pct"] for row in runs])),
             }
         result["paired_bootstrap_vs_audio"] = paired_deltas(
-            predictions, meta, variants=ARMS, baseline="audio", max_fpr=0.05)
+            predictions, meta, variants=arms, baseline="audio", max_fpr=0.05)
         result["paired_bootstrap_vs_shuffled"] = paired_deltas(
-            predictions, meta, variants=ARMS[1:], baseline="shuffled-targets", max_fpr=0.05)
+            predictions, meta, variants=arms[1:], baseline="shuffled-targets", max_fpr=0.05)
         result["paired_bootstrap_max_fpr"] = 0.05
         _write_json(report, result)
     except BaseException:
@@ -149,6 +144,17 @@ def run(root, device):
     else:
         meter.finish()
     return report
+
+
+def run(root, device):
+    def make_targets(rows):
+        words = read_words(root, {row["recording"] for row in rows})
+        return targets_for(rows, words)
+
+    return run_supervision(root, device, "ami-word-supervision", "word-targets", make_targets, {
+        "raw_manifest": root / "raw" / "ami" / "MANIFEST.json",
+        "annotations": next((root / "raw" / "ami_annotations").glob("*.zip")),
+    })
 
 
 if __name__ == "__main__":
