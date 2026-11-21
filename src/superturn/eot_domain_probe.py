@@ -61,6 +61,7 @@ def load_stage_one(root):
     manifest = json.loads((root / "shards" / "manifest.json").read_text())
     validation_hash = manifest["sha256_by_split"]["validation"]
     models = []
+    checkpoints = {}
     for architecture in ("a", "b"):
         for size in (150000, 500000, 1000000):
             for seed in (17, 29):
@@ -81,7 +82,8 @@ def load_stage_one(root):
                 threshold = next(point["threshold"] for point in record["thresholds"]
                                  if point["origin"] == "ami_telephone_validation_fit")
                 models.append((name, model, threshold))
-    return models
+                checkpoints[name] = {"sha256": checkpoint_hash, "threshold": threshold}
+    return models, {"validation_sha256": validation_hash, "checkpoints": checkpoints}
 
 
 def summarize(scores, truth, thresholds):
@@ -113,8 +115,9 @@ def run(root, *, stage_one=False):
         raise ValueError("expected the 400-turn English general benchmark shard")
     reference_report = root / "reports" / "livekit-eot-domain-probe.json"
     if stage_one:
-        models = load_stage_one(root)
-        reference = json.loads(reference_report.read_text())
+        models, provenance = load_stage_one(root)
+        reference_bytes = reference_report.read_bytes()
+        reference = json.loads(reference_bytes)
         if (reference["dataset_sha256"], reference["decision_ms"]) != (digest, DECISION_MS):
             raise ValueError("held-out reference scores use a different benchmark")
         predict, defaults, smart_hash = None, {}, reference["smart_turn_sha256"]
@@ -129,6 +132,10 @@ def run(root, *, stage_one=False):
                       for name in defaults}
     result = {"turns": source.metadata.num_rows, "decision_ms": DECISION_MS, "dataset_sha256": DATASET_SHA256,
               "threshold_source": "AMI calibration groups", "smart_turn_sha256": smart_hash, "conditions": {}}
+    if stage_one:
+        result["threshold_source"] = "original AMI telephone validation"
+        result["reference_report_sha256"] = hashlib.sha256(reference_bytes).hexdigest()
+        result["stage_one_provenance"] = provenance
     conditions = ("clean", "telephone")
     job = "stage1-eot-domain-probe" if stage_one else "livekit-eot-domain-probe"
     meter = Progress(job, source.metadata.num_rows * len(conditions), "turns")
