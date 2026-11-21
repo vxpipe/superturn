@@ -45,6 +45,17 @@ def test_boundary_agreement_can_leave_the_fixed_query_window_unsupported():
     assert label_support(heard, words, 0, 34000) == {"candidate_shift": 1, "supported_shift": 1}
 
 
+def test_missing_word_timings_cannot_certify_a_silent_query():
+    heard = [Speech("caller", 0, 8000), Speech("agent", 14000, 32000)]
+    segments = [{"offset_ms": 560, "duration_ms": 120, "word_offsets_ms": [0], "word_durations_ms": []}]
+    missing = []
+    assert not list(transcript_words(segments, "caller", 32000, 0, omissions=missing))
+    assert missing == [Speech("caller", 8960, 10880)]
+    assert label_support(heard, heard, 0, 32000, omissions=missing) == {
+        "candidate_shift": 1, "incomplete_timing_shift": 1,
+    }
+
+
 def test_audit_places_nonzero_channel_offsets_on_one_timeline(tmp_path):
     filename = tmp_path / "data" / "transcript" / "example.json"
     filename.parent.mkdir(parents=True)

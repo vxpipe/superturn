@@ -27,21 +27,30 @@ def recording_origin(segments):
     return round(median(offsets) * RATE / 1000)
 
 
-def transcript_words(segments, role, channel_length, origin):
+def transcript_words(segments, role, channel_length, origin, *, omissions=None):
     for utterance in segments:
         offsets = utterance.get("word_offsets_ms") or []
         durations = utterance.get("word_durations_ms") or []
-        if len(offsets) != len(durations):
-            continue
-        for offset, duration in zip(offsets, durations, strict=True):
-            start_ms = float(utterance["offset_ms"]) + float(offset)
+        segment_start_ms = float(utterance["offset_ms"])
+        incomplete = not offsets or len(offsets) != len(durations)
+        for offset, duration in zip(offsets, durations):
+            start_ms = segment_start_ms + float(offset)
             start = round(start_ms * RATE / 1000)
             end = round((start_ms + float(duration)) * RATE / 1000)
             if 0 <= start < end <= channel_length:
                 yield Speech(role, start + origin, end + origin)
+            else:
+                incomplete = True
+        if incomplete and omissions is not None:
+            length_ms = float(utterance.get("duration_ms") or 0)
+            start = max(0, round(segment_start_ms * RATE / 1000))
+            end = min(channel_length, round((segment_start_ms + length_ms) * RATE / 1000))
+            if not 0 <= start < end <= channel_length:
+                start, end = 0, channel_length
+            omissions.append(Speech(role, start + origin, end + origin))
 
 
-def label_support(vad, word_stream, common_start, common_end):
+def label_support(vad, word_stream, common_start, common_end, *, omissions=()):
     """Compare aligned two-party VAD and word-timing labels inside shared audio."""
     def crop(spans):
         for span in spans:
@@ -60,6 +69,10 @@ def label_support(vad, word_stream, common_start, common_end):
         outcomes[f"candidate_{label}"] += 1
         edge = caller.end
         first = edge + gap
+        if any(span.start < first + BOUNDARY_TOLERANCE and span.end > edge - BOUNDARY_TOLERANCE
+               for span in omissions):
+            outcomes[f"incomplete_timing_{label}"] += 1
+            continue
         matches = [(end, onset, vote) for end, onset, vote in reference
                    if abs(end - edge) <= BOUNDARY_TOLERANCE and abs(onset - first) <= BOUNDARY_TOLERANCE]
         if len(matches) == 1:
@@ -93,21 +106,25 @@ def audit_call(directory, identifier, detect):
         return Counter(insufficient_shared_audio=1)
     vad = [Speech(role, start + origins[role], end + origins[role]) for role in ROLES
            for start, end in detect(audio[role])]
-    words = [word for role in ROLES
-             for word in transcript_words(segments[role], role, len(audio[role]), origins[role])]
+    omissions = []
+    words = [word for role in ROLES for word in transcript_words(
+        segments[role], role, len(audio[role]), origins[role], omissions=omissions)]
+    counts = Counter()
+    if omissions:
+        counts["segments_with_incomplete_word_timing"] = len(omissions)
     # Presence of timed words and their overlap with detected speech is a check
     # on recording-local timestamps before either stream proposes boundaries.
     timed = {role: [span for span in words if span.speaker == role] for role in ROLES}
     if any(not spans for spans in timed.values()):
-        return Counter(missing_word_timing=1)
+        return counts + Counter(missing_word_timing=1)
     support = {}
     for role in ROLES:
         intervals = [span for span in vad if span.speaker == role]
         support[role] = sum(any(word.start < span.end and span.start < word.end for span in intervals)
                             for word in timed[role]) / len(timed[role])
     if min(support.values()) < 0.8:
-        return Counter(low_audio_word_overlap=1)
-    return Counter(audited_calls=1) + label_support(vad, words, common_start, common_end)
+        return counts + Counter(low_audio_word_overlap=1)
+    return counts + Counter(audited_calls=1) + label_support(vad, words, common_start, common_end, omissions=omissions)
 
 
 def run(root):
@@ -133,7 +150,7 @@ def run(root):
     try:
         for split, cases in calls.items():
             totals = Counter()
-            coverage = {key: set() for key in (
+            coverage = {key: Counter() for key in (
                 "supported_hold", "supported_shift", "fixed_window_supported_hold", "fixed_window_supported_shift",
             )}
             for case in cases:
@@ -141,10 +158,14 @@ def run(root):
                 totals.update(counts)
                 for key, voices in coverage.items():
                     if counts[key]:
-                        voices.add(case["caller"])
+                        voices[case["caller"]] += counts[key]
                 meter.advance(1)
             results[split] = {"calls": len(cases), "counts": totals,
-                              "caller_speakers_with_support": {key: len(voices) for key, voices in coverage.items()}}
+                              "caller_speakers_with_support": {key: len(voices) for key, voices in coverage.items()},
+                              "supported_pauses_per_caller": {
+                                  key: {"median": median(voices.values()), "maximum": max(voices.values())}
+                                  for key, voices in coverage.items() if voices
+                              }}
         destination = root / "reports" / "harper-valley-label-audit.json"
         _write_json(destination, {"selection_sha256": expected, "decision_ms": 300,
                                   "boundary_tolerance_ms": BOUNDARY_TOLERANCE * 1000 // RATE,
