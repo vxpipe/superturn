@@ -22,6 +22,8 @@ from .splits import assign, speaker_groups
 SOURCE = "nsc-part4-native-pilot"
 KIND = "SameRooms"
 HEADERS = 384
+PREFIX_SECONDS = 120
+PREFIX_MEMBER_CAP = 28_000_000
 MEMBER = re.compile(r"SE([0-9]+)-SP([0-9]+)\.(flac|jsonl)")
 
 
@@ -38,8 +40,13 @@ def inventory():
     return parts, len(encoded)
 
 
-def choose(pairs, groups, cap):
-    sizes = {session: sum(member["bytes"] for paths in people.values() for member in paths.values())
+def payload_size(member, fmt, prefixes):
+    return min(member["bytes"], PREFIX_MEMBER_CAP) if prefixes and fmt == "flac" else member["bytes"]
+
+
+def choose(pairs, groups, cap, prefixes):
+    sizes = {session: sum(payload_size(member, fmt, prefixes)
+                          for paths in people.values() for fmt, member in paths.items())
              for session, people in pairs.items()}
     rank = sorted((session for session in pairs if assign(SOURCE, groups[session], "train-conversation") == "train"),
                   key=lambda session: (seed_for(SOURCE, session), session))
@@ -47,7 +54,7 @@ def choose(pairs, groups, cap):
                  if groups[left] != groups[right] and sizes[left] + sizes[right] + (1 << 20) <= cap), ()), sizes
 
 
-def scan(fragments, roster, reciprocated, groups, headers, cap):
+def scan(fragments, roster, reciprocated, groups, headers, cap, prefixes):
     reader = RangeReader(fragments, byte_limit=512 * 1024, request_limit=2 * headers)
     found = defaultdict(lambda: defaultdict(dict))
     complete = {}
@@ -71,7 +78,7 @@ def scan(fragments, roster, reciprocated, groups, headers, cap):
             pair = found[session]
             if set(pair) == roster[session] and all(set(paths) == {"flac", "jsonl"} for paths in pair.values()):
                 complete[session] = dict(pair)
-                if choose(complete, groups, cap)[0]:
+                if choose(complete, groups, cap, prefixes)[0]:
                     break
     except BaseException:
         meter.finish("failed")
@@ -81,7 +88,7 @@ def scan(fragments, roster, reciprocated, groups, headers, cap):
     return reader, complete, len(found), parsed
 
 
-def run(root, headers=HEADERS):
+def run(root, headers=HEADERS, *, prefixes=False):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("run the original recording check on Vast")
     census, census_sha = read_receipt(root, REPORT)
@@ -98,23 +105,28 @@ def run(root, headers=HEADERS):
     groups = speaker_groups((session, part4[session]) for session in reciprocated)
     fragments, listing_bytes = inventory()
     transport_cap = source.get("max_total_bytes")
-    reader, pairs, mentioned, parsed = scan(fragments, part4, reciprocated, groups, headers, transport_cap)
-    chosen, sizes = choose(pairs, groups, transport_cap)
+    reader, pairs, mentioned, parsed = scan(fragments, part4, reciprocated, groups, headers, transport_cap, prefixes)
+    chosen, sizes = choose(pairs, groups, transport_cap, prefixes)
     inventory_bytes = listing_bytes + reader.bytes
     raw_used = sum(path.stat().st_size for path in (root / "raw").rglob("*") if path.is_file())
     selected = []
     for session in chosen:
         people = pairs[session]
         for paths in people.values():
+            for fmt, member in paths.items():
+                member["read_bytes"] = payload_size(member, fmt, prefixes)
             item = paths["flac"]
             format_data = reader.read(item["offset"], 42)
             item["format"] = flac_streaminfo(format_data)
             rate, channels, bits, samples, _ = item["format"]
             if rate <= 0 or channels != 1 or bits != 16 or samples <= 0:
                 raise ValueError("the selected original track cannot verify a native mono clock")
+            if prefixes and (rate > 96000 or samples < PREFIX_SECONDS * rate):
+                raise ValueError("the selected track cannot verify the fixed 120-second window")
         selected.append({"session": session, "people": people, "pair_bytes": sizes[session]})
     result = {
         "scope": "native same-room headers and stream information only",
+        "sample_prefix_seconds": PREFIX_SECONDS if prefixes else None,
         "roster_census_sha256": census_sha, "repository": REPO, "revision": REVISION,
         "archive_fragments": fragments, "headers_budget": headers, "headers_checked": parsed,
         "range_requests": reader.requests,
@@ -124,7 +136,8 @@ def run(root, headers=HEADERS):
         "raw_bytes_before_audio": raw_used, "global_budget_bytes": budget_bytes(),
         "payload_allowed": bool(selected) and raw_used + transport_cap <= budget_bytes(),
     }
-    _write_json(root / "reports" / f"{SOURCE}.json", result)
+    receipt = f"{SOURCE}-prefix" if prefixes else SOURCE
+    _write_json(root / "reports" / f"{receipt}.json", result)
     print(json.dumps({key: result[key] for key in ("complete_reciprocal_pairs", "inspected_metadata_bytes", "payload_allowed")},
                      indent=2))
     print("selected_pair_sizes", [row["pair_bytes"] for row in selected])
@@ -133,7 +146,8 @@ def run(root, headers=HEADERS):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--headers", type=int, default=HEADERS)
+    parser.add_argument("--prefixes", action="store_true", help="plan only the fixed 120-second opening")
     args = parser.parse_args()
     if not 1 <= args.headers <= 896:
         parser.error("header budget must be between 1 and 896")
-    run(data_root(), args.headers)
+    run(data_root(), args.headers, prefixes=args.prefixes)
