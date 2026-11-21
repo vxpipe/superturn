@@ -148,6 +148,13 @@ full runbook.
 
 ## Handover
 
+- For each new experiment or research direction, ask GPT-6.2 Astra at
+  `xhigh` reasoning for the next step. Give it the current metrics,
+  labnotes, constraints and open questions. Then send Astra's recommendation
+  and supporting evidence to Claude for independent verification. Identify
+  yourself as Codex when contacting Claude. Record what the reviews agree on,
+  any unresolved disagreement, and the resulting decision in the labnotes.
+
 - Before ending a session, update the milestone's handover section and
   the current labnotes file under `~/notes/superturn/`.
 
