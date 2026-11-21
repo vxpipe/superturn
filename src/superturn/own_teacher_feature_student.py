@@ -18,8 +18,9 @@ from .own_head_distillation import (
     BASELINE, DEADLINE, calibration_rows, pause_rows, pool_rows, rates, student_scores,
 )
 from .own_teacher_pool_pcm import recover
+from .own_teacher_targets import SHARD_ROWS
 from .progress import Progress
-from .shards import SHARD_ROWS, seed_for
+from .shards import seed_for
 from .sources import data_root
 from .train import _stats, _threshold
 from .turn1_mini_probe import english_rows, harper_rows
