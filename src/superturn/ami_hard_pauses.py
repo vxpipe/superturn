@@ -4,6 +4,7 @@ import argparse
 from collections import Counter, defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
+import hashlib
 import json
 import struct
 from zipfile import ZipFile
@@ -131,11 +132,16 @@ def exact_range(url, total, start, end):
     return data
 
 
-def get_track(root, tile, speaker, item):
+def get_track(root, tile, speaker, item, pinned):
     if not speaker or "/" in speaker or "\\" in speaker or speaker in (".", ".."):
         raise ValueError("invalid AMI speaker identifier")
     relative = f"{tile['recording']}/{tile['start']}/{speaker}.wav"
     path = root / "raw" / SOURCE / relative
+    expected = pinned.get(relative)
+    if path.is_file() and expected is not None:
+        if path.stat().st_size != expected["bytes"] or file_digest(path) != expected["sha256"]:
+            raise ValueError("previously staged AMI audio disagrees with its reconstruction receipt")
+        return path
     header = exact_range(item["url"], item["size"], 0, 4095)
     fmt, begin = parse_wav_header(header)
     if struct.unpack("<HHIIHH", fmt[:16]) != (1, 1, RATE, RATE * 2, 2, 16):
@@ -143,6 +149,9 @@ def get_track(root, tile, speaker, item):
     start = begin + 2 * tile["start"]
     samples = exact_range(item["url"], item["size"], start, start + 2 * tile["frames"] - 1)
     payload = wav_bytes(fmt, samples)
+    if expected is not None and (len(payload), hashlib.sha256(payload).hexdigest()) != (
+            expected["bytes"], expected["sha256"]):
+        raise ValueError("AMI mirror sample content changed since this dataset was locked")
     if path.is_file():
         if path.read_bytes() != payload:
             raise ValueError("previously staged source bytes changed")
@@ -156,6 +165,13 @@ def get_track(root, tile, speaker, item):
 
 def stage(root, plan, archive_path, receipt):
     folder = root / "raw" / SOURCE
+    manifest_path = folder / "MANIFEST.json"
+    manifests = (manifest_path, root / "manifests" / f"{SOURCE}.json")
+    pinned_receipts = [json.loads(path.read_text()) for path in manifests if path.is_file()]
+    if pinned_receipts and any(record["selection_sha256"] != file_digest(receipt)
+                               or record != pinned_receipts[0] for record in pinned_receipts):
+        raise ValueError("AMI reconstruction receipts disagree")
+    pinned = {row["path"]: row for row in pinned_receipts[0]["files"]} if pinned_receipts else {}
     raw_bytes = sum(path.stat().st_size for path in (root / "raw").rglob("*") if path.is_file())
     reserve = sum(len(tile["tracks"]) * (2 * tile["frames"] + 4096 + 64) for tile in plan["tiles"])
     if reserve > load_sources()[SOURCE].get("max_total_bytes") or raw_bytes + reserve > budget_bytes():
@@ -168,7 +184,7 @@ def stage(root, plan, archive_path, receipt):
             for tile in plan["tiles"]:
                 meeting = tile["recording"]
                 assets = list(sorted(tile["tracks"].items()))
-                jobs = [workers.submit(get_track, root, tile, speaker, item) for speaker, item in assets]
+                jobs = [workers.submit(get_track, root, tile, speaker, item, pinned) for speaker, item in assets]
                 tracks = {speaker: job.result() for (speaker, _), job in zip(assets, jobs, strict=True)}
                 audio = {speaker: read_audio(path) for speaker, path in tracks.items()}
                 for path in tracks.values():
@@ -195,8 +211,6 @@ def stage(root, plan, archive_path, receipt):
             meter.finish("failed")
             raise
     meter.finish()
-    manifest_path = folder / "MANIFEST.json"
-    manifests = (manifest_path, root / "manifests" / f"{SOURCE}.json")
     manifest = {"source": SOURCE, "selection_sha256": file_digest(receipt), "files": fetches}
     for prior in manifests:
         if prior.is_file() and json.loads(prior.read_text()) != manifest:

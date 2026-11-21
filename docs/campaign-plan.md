@@ -226,3 +226,31 @@ the approved ONNX and completed model card under the user's Hugging Face model
 repository `HashNuke/superturn`. Pin that repository's release commit as a Git
 submodule after it exists. Keep the repository's normal code and benchmark
 evidence in GitHub, with the model release in the Hugging Face repository.
+
+## Rebuild selected conversation data
+
+Keep the selection receipt with each training run. It records the source
+revision or original index, the source byte ranges, timing and speaker
+group assignments, input hashes and the project commit that generated it.
+Store the receipt and derived files only where their source terms allow.
+A source with restricted redistribution can be fetched again from its
+publisher using the same access grant.
+
+For the AMI hard-pause pilot, restore the original AMI selection, its word
+annotations and the verified AMI development cohorts. On the campaign
+machine, restore the pinned receipts from approved private storage and
+run:
+
+```sh
+uv run --no-sync python -m superturn.ami_hard_pauses --plan-only
+uv run --no-sync python -m superturn.ami_hard_pauses
+```
+
+The plan under `reports/ami-hard-pauses-plan.json` pins every selected
+recording, channel, sample range and candidate pause. The raw manifest,
+also copied to `manifests/ami-hard-pauses.json` by `bin/sync`, pins
+the audio hashes. The regenerated label manifest under
+`labels/ami-hard-pauses.json` pins pause IDs and labels. A rebuild
+must reproduce these receipts. Keep the old receipt with the old run
+when deliberately choosing a different cohort. This pilot draws from
+existing AMI training identities and leaves all held-out roles fixed.
