@@ -244,6 +244,7 @@ run:
 ```sh
 uv run --no-sync python -m superturn.ami_hard_pauses --plan-only
 uv run --no-sync python -m superturn.ami_hard_pauses
+uv run --no-sync python -m superturn.own_student_targeted_pauses --dataset-only
 ```
 
 The plan under `reports/ami-hard-pauses-plan.json` pins every selected
@@ -251,6 +252,8 @@ recording, channel, sample range and candidate pause. The raw manifest,
 also copied to `manifests/ami-hard-pauses.json` by `bin/sync`, pins
 the audio hashes. The regenerated label manifest under
 `labels/ami-hard-pauses.json` pins pause IDs and labels. A rebuild
-must reproduce these receipts. Keep the old receipt with the old run
+must also reproduce `reports/ami-targeted-training-dataset.json`.
+That training receipt binds each new item to the original item it
+replaces, retaining the speaker and label counts. Keep the old receipt with the old run
 when deliberately choosing a different cohort. This pilot draws from
 existing AMI training identities and leaves all held-out roles fixed.
