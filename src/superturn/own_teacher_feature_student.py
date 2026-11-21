@@ -168,8 +168,8 @@ def replace_history(audio, prefix, noise):
 
 
 def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active, arm, seed, *,
-            shuffle_features=False, active_stats=False, score_history=None):
-    config = {"architecture": "a", "window": 3, "parameters": 150000}
+            shuffle_features=False, active_stats=False, score_history=None, parameters=150000):
+    config = {"architecture": "a", "window": 3, "parameters": parameters}
     if active_stats:
         config["active_stats"] = True
     torch.manual_seed(seed)
@@ -195,6 +195,8 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
     if score_history is not None:
         prefix, noise, history_scores = score_history
         name += "-history"
+    if parameters != 150000:
+        name += f"-{parameters}"
     meter = Progress(f"own-feature-{name}", EPOCHS * ((len(fit) + BATCH - 1) // BATCH), "updates")
     try:
         for epoch in range(1, EPOCHS + 1):
@@ -261,7 +263,7 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
                                 "feature_moved_fraction": float(np.mean(target_ordinals[fit] != fit))}
 
 
-def compare(root, output, fits):
+def compare(root, output, fits, *, peers=None):
     views = {"english": list(pause_rows(english_rows(root))),
              "harper": list(pause_rows(harper_rows(root, native_prefix=True))),
              "calibration": list(calibration_rows(root))}
@@ -274,11 +276,12 @@ def compare(root, output, fits):
     for name, (config, state, report) in fits.items():
         if state is None:
             continue
-        path = output / f"{name}.pt"
-        temporary = path.with_suffix(".part")
-        torch.save({"config": config, "state": state}, temporary)
-        temporary.replace(path)
-        report["checkpoint"] = {"path": path.relative_to(root).as_posix(), "sha256": file_digest(path)}
+        if "checkpoint" not in report:
+            path = output / f"{name}.pt"
+            temporary = path.with_suffix(".part")
+            torch.save({"config": config, "state": state}, temporary)
+            temporary.replace(path)
+            report["checkpoint"] = {"path": path.relative_to(root).as_posix(), "sha256": file_digest(path)}
         model = build(config).to(DEVICE).eval()
         model.load_state_dict(state)
         predictions[name] = {cohort: student_scores(model, clips) for cohort, clips in cohorts.items()}
@@ -291,8 +294,10 @@ def compare(root, output, fits):
             result[cohort][name] = {**rates(score, y), "threshold": thresholds[name],
                                     "fixed": _stats(score.tolist(), y.tolist(), thresholds[name])}
     scores = {name: probabilities["english"] for name, probabilities in predictions.items()}
-    peers = {f"{arm}-{SEEDS[0]}": f"score-{SEEDS[0]}" for arm in ARMS[1:]
-             if f"{arm}-{SEEDS[0]}" in scores and f"score-{SEEDS[0]}" in scores}
+    if peers is None:
+        peers = {f"{arm}-{SEEDS[0]}": f"score-{SEEDS[0]}" for arm in ARMS[1:]
+                 if f"{arm}-{SEEDS[0]}" in scores and f"score-{SEEDS[0]}" in scores}
+    peers = {arm: reference for arm, reference in peers.items() if arm in scores and reference in scores}
     intervals = paired_intervals(scores, labels["english"], [group for _, _, group in views["english"]],
                                  peers, partial_auc=True) if peers else {}
     return result, intervals
