@@ -1,5 +1,6 @@
 """Compare real and shuffled teacher targets in two Superturn GRUs."""
 
+import argparse
 from collections import defaultdict
 from copy import deepcopy
 import json
@@ -24,6 +25,11 @@ SEEDS = (17, 29)
 SIZES = (150_000, 1_000_000)
 EPOCHS = 10
 BATCH = 128
+CORPORA = {
+    "all": SOURCES,
+    "emilia-only": ("emilia_yodas",),
+    "without-emilia": ("ami", "voxpopuli"),
+}
 
 
 def load_pool(root, folder):
@@ -83,11 +89,11 @@ def batch(pcm, i, j, device):
     return audio, elapsed
 
 
-def evaluate_fidelity(model, pcm, targets, fidelity, sources, device):
+def evaluate_fidelity(model, pcm, targets, fidelity, sources, active_sources, device):
     results = {}
     model.eval()
     with torch.inference_mode():
-        for source in SOURCES:
+        for source in active_sources:
             rows = fidelity[sources[fidelity] == source]
             if not len(rows):
                 raise ValueError(f"{source} is missing from the fidelity pool")
@@ -139,12 +145,13 @@ def fit_model(output, config, pcm, targets, sources, roles, groups, cache_hash, 
     output.mkdir(parents=True, exist_ok=True)
     fit = np.flatnonzero(roles == "fit")
     fidelity = np.flatnonzero(roles == "fidelity")
+    active_sources = tuple(source for source in SOURCES if source in sources)
     weights = np.zeros(len(roles), dtype=np.float32)
-    for source in SOURCES:
+    for source in active_sources:
         indices = fit[sources[fit] == source]
         if not len(indices):
             raise ValueError(f"{source} is missing from the fit pool")
-        weights[indices] = len(fit) / (len(SOURCES) * len(indices))
+        weights[indices] = len(fit) / (len(active_sources) * len(indices))
     seed = config["seed"]
     y = shuffled_targets(targets, sources, groups, fit, seed) if config["shuffled"] else targets
     torch.manual_seed(seed)
@@ -172,7 +179,7 @@ def fit_model(output, config, pcm, targets, sources, roles, groups, cache_hash, 
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0, error_if_nonfinite=True)
                 optimizer.step()
                 meter.advance(1)
-            stats = evaluate_fidelity(model, pcm, targets, fidelity, sources, device)
+            stats = evaluate_fidelity(model, pcm, targets, fidelity, sources, active_sources, device)
             loss = float(np.mean([value["bce"] for value in stats.values()]))
             history.append({"epoch": epoch, "macro_bce": loss, "sources": stats})
             if loss < best_loss:
@@ -191,7 +198,7 @@ def fit_model(output, config, pcm, targets, sources, roles, groups, cache_hash, 
               "epochs": history, "selected": history[epoch - 1],
               "checkpoint_sha256": file_digest(checkpoint), "moved_targets": {
                   source: float(np.mean(y[fit[sources[fit] == source]] != targets[fit[sources[fit] == source]]))
-                  for source in SOURCES}}
+                  for source in active_sources}}
     _write_json(report_path, report)
     return checkpoint, report
 
@@ -243,31 +250,43 @@ def external(root, fits, device):
     return results
 
 
-def run(root, device):
+def run(root, device, corpus):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("dense teacher diagnostics use the existing training server")
     folder = root / "shards" / "dense-teacher"
-    output = root / "runs" / "dense-teacher-diagnostic"
-    pool = load_pool(root, folder)
+    suffix = "" if corpus == "all" else f"-{corpus}"
+    output = root / "runs" / f"dense-teacher-diagnostic{suffix}"
+    pcm, targets, sources, roles, groups, fingerprint = load_pool(root, folder)
+    selected = CORPORA[corpus]
+    if corpus != "all":
+        eligible = np.isin(sources, selected)
+        pcm, targets, sources, roles, groups = (values[eligible]
+                                              for values in (pcm, targets, sources, roles, groups))
+    coverage = {source: {role: int(np.count_nonzero((sources == source) & (roles == role)))
+                         for role in ("fit", "fidelity")} for source in selected}
     torch.set_num_threads(2)
     torch.use_deterministic_algorithms(True)
     fits = {}
-    for size in SIZES:
+    for size in (SIZES if corpus == "all" else SIZES[:1]):
         for seed in SEEDS:
             for shuffle in (False, True):
                 name = f"{size}-{seed}-{'shuffle' if shuffle else 'teacher'}"
                 config = {"architecture": "a", "window": SAMPLES / RATE, "parameters": size,
                           "seed": seed, "shuffled": shuffle}
-                fits[name] = fit_model(output / name, config, *pool, device)
-    del pool
+                fits[name] = fit_model(output / name, config, pcm, targets, sources, roles, groups, fingerprint, device)
+    del pcm, targets, sources, roles, groups
     metrics = external(root, fits, device)
     report = {"use": "diagnostic", "dataset_sha256": DATASET_SHA256, "decision_ms": DECISION_MS,
-              "epochs": EPOCHS, "batch_size": BATCH, "selector": "macro-source teacher fidelity BCE",
+              "epochs": EPOCHS, "batch_size": BATCH, "corpus": corpus, "coverage": coverage,
+              "selector": "macro-source teacher fidelity BCE",
               "external_half_probability_threshold": "0.5 for description only",
               "fit": {name: result for name, (_, result) in fits.items()}, "external": metrics}
-    _write_json(root / "reports" / "dense-teacher-gru.json", report)
+    _write_json(root / "reports" / f"dense-teacher-gru{suffix}.json", report)
     return metrics
 
 
 if __name__ == "__main__":
-    print(json.dumps(run(data_root(), "cuda"), indent=2))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--corpus", choices=CORPORA, default="all")
+    args = parser.parse_args()
+    print(json.dumps(run(data_root(), "cuda", args.corpus), indent=2))
