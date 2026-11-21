@@ -158,18 +158,24 @@ def ami_labels(root, vad):
                 if len(offsets) != 1:
                     raise ValueError(f"{meeting}: headset slices are misaligned")
                 offset, = offsets
-                channels = set()
-                for entry in tracks:
-                    path = raw / entry["path"]
-                    channel = int(path.stem.rsplit("Headset-", 1)[1])
-                    channels.add(channel)
-                    speaker, agent = expected[channel]
+                channel_paths = {
+                    int(Path(entry["path"]).stem.rsplit("Headset-", 1)[1]): raw / entry["path"]
+                    for entry in tracks
+                }
+                missing = expected.keys() - channel_paths.keys()
+                if missing:
+                    raise ValueError(f"{meeting}: missing annotated headset channels {sorted(missing)}")
+                extra = channel_paths.keys() - expected.keys()
+                if any(vad(channel_paths[channel]) for channel in sorted(extra)):
+                    print(f"{meeting}: skipping meeting with speech on an unannotated headset", flush=True)
+                    meter.advance(1)
+                    continue
+                for channel, (speaker, agent) in sorted(expected.items()):
+                    path = channel_paths[channel]
                     paths[speaker] = str(path.relative_to(root))
                     spans.extend(Speech(speaker, start, end) for start, end in vad(path))
                     for sample in ami_backchannels(archive, meeting, agent, offset):
                         backchannels[speaker].append(sample)
-                if channels != expected.keys():
-                    raise ValueError(f"{meeting}: expected headset channels {sorted(expected)}, got {sorted(channels)}")
                 group = groups[meeting]
                 split = assign("ami", group, "train-conversation")
                 for span, gap, label in turns(spans):

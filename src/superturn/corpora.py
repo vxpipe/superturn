@@ -111,9 +111,20 @@ def _table_clips(raw, source):
                    "", row["audio"]["bytes"], None)
 
 
-def _read_clips(raw, source):
+def _read_tables(raw, source, locale=None):
+    pattern = "transcript/*/train.tsv" if source == "common_voice" else "data/*/test.tsv"
+    return [path for path in sorted(raw.glob(pattern)) if locale is None or path.parent.name == locale]
+
+
+def parallel_locales(raw, source):
+    if source == "emilia_yodas":
+        return [path.name for path in sorted((raw / "Emilia-YODAS").iterdir()) if path.is_dir()]
+    return [path.parent.name for path in _read_tables(raw, source)]
+
+
+def _read_clips(raw, source, locale=None):
     if source == "common_voice":
-        metadata = sorted(raw.glob("transcript/*/train.tsv"))
+        metadata = _read_tables(raw, source, locale)
         for table in metadata:
             language = table.parent.name
             clips = {p.name: p for p in (raw / "audio" / language).rglob("*.mp3")}
@@ -124,7 +135,7 @@ def _read_clips(raw, source):
                     if clip and row["client_id"]:
                         yield clip.name, clip.name, row["client_id"], language, row["sentence"], clip, None
     else:
-        for table in sorted(raw.glob("data/*/test.tsv")):
+        for table in _read_tables(raw, source, locale):
             language = table.parent.name
             clips = {p.name: p for p in table.parent.rglob("*.wav")}
             with table.open(encoding="utf-8", newline="") as handle:
@@ -134,8 +145,9 @@ def _read_clips(raw, source):
                         yield clip.name, clip.name, None, language, columns[3], clip, None
 
 
-def _emilia_clips(raw):
-    for metadata in sorted(raw.rglob("*.json")):
+def _emilia_clips(raw, locale=None):
+    folder = raw / "Emilia-YODAS" / locale if locale else raw
+    for metadata in sorted(folder.rglob("*.json")):
         if metadata.name == "MANIFEST.json" or ".done" in metadata.parts:
             continue
         audio = metadata.with_suffix(".mp3")
@@ -147,28 +159,29 @@ def _emilia_clips(raw):
                 yield key, key, str(speaker), row["language"], "", audio, None
 
 
-def _clip_count(raw, source):
+def _clip_count(raw, source, locale=None):
     if source in {"indic_diarbench", "voxpopuli"}:
         import pyarrow.parquet as pq
 
         return sum(pq.ParquetFile(path).metadata.num_rows for path in raw.rglob("*.parquet"))
-    return sum(1 for _ in (_emilia_clips(raw) if source == "emilia_yodas" else _read_clips(raw, source)))
+    return sum(1 for _ in (_emilia_clips(raw, locale) if source == "emilia_yodas" else _read_clips(raw, source, locale)))
 
 
-def corpus_labels(root, source, vad, align=None):
+def corpus_labels(root, source, vad, align=None, locale=None):
     raw = root / "raw" / source
     role = "test" if source in {"indic_diarbench", "fleurs"} else "train"
     read = source in {"common_voice", "fleurs"}
     if source in {"indic_diarbench", "voxpopuli"}:
         clips = _table_clips(raw, source)
     elif read:
-        clips = _read_clips(raw, source)
+        clips = _read_clips(raw, source, locale)
     else:
-        clips = _emilia_clips(raw)
-    count = _clip_count(raw, source)
+        clips = _emilia_clips(raw, locale)
+    count = _clip_count(raw, source, locale)
     if not count:
         raise ValueError(f"{source}: no usable downloaded clips")
-    meter = Progress(f"label-{source}", count, "clips")
+    step = f"label-{source}" if locale is None else f"label-{source}-{locale}"
+    meter = Progress(step, count, "clips")
     try:
         for sample, recording, speaker, language, text, audio, row in clips:
             language = language_code(language)
@@ -183,7 +196,9 @@ def corpus_labels(root, source, vad, align=None):
             else:
                 speech = vad(pcm)
                 if read:
-                    examples = read_pauses(speech, len(pcm), align(pcm, text, language) if speech else [])
+                    can_cut = bool(speech) and len(pcm) - speech[-1][1] >= MIN_GAP + READ_TAIL_GUARD
+                    words = align(pcm, text, language) if can_cut else []
+                    examples = read_pauses(speech, len(pcm), words)
                     method = "cut"
                 else:
                     examples = spontaneous_pauses(speech, len(pcm))

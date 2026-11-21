@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from importlib.metadata import PackageNotFoundError, version
 from collections import Counter
 from pathlib import Path
 
@@ -130,10 +131,22 @@ def _run_signature(root, config, device):
     if not shard_manifest.is_file():
         return None
     source = hashlib.sha256()
-    for name in ("train.py", "model.py", "augment.py"):
+    for name in ("train.py", "model.py", "augment.py", "audio.py"):
         source.update(Path(__file__).with_name(name).read_bytes())
+    assets = {}
+    if config.get("augmentation", True):
+        for name in ("musan", "openslr26"):
+            manifest = root / "raw" / name / "MANIFEST.json"
+            if manifest.is_file():
+                assets[name] = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    try:
+        decoder = version("av")
+    except PackageNotFoundError:
+        decoder = None
     return {
         "config": config,
+        "augmentation_assets": assets,
+        "decoder": decoder,
         "device": device,
         "torch": str(torch.__version__),
         "source": source.hexdigest(),
@@ -146,7 +159,9 @@ def completed_run(root, name, config, device):
     marker, checkpoint = run / "finished.json", run / "best.pt"
     signature = _run_signature(root, config, device)
     if signature is not None and marker.is_file() and checkpoint.is_file():
-        if json.loads(marker.read_text()) == signature:
+        result = json.loads(marker.read_text())
+        if (result.get("signature") == signature
+                and result.get("checkpoint_sha256") == hashlib.sha256(checkpoint.read_bytes()).hexdigest()):
             return checkpoint
     return None
 
@@ -253,7 +268,9 @@ def train(root, name, config, device):
     else:
         if signature is not None:
             temp = marker.with_suffix(".tmp")
-            temp.write_text(json.dumps(signature, sort_keys=True) + "\n")
+            result = {"signature": signature,
+                      "checkpoint_sha256": hashlib.sha256((run / "best.pt").read_bytes()).hexdigest()}
+            temp.write_text(json.dumps(result, sort_keys=True) + "\n")
             temp.replace(marker)
         meter.finish()
     return run / "best.pt"

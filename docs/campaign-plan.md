@@ -78,7 +78,7 @@ but not redistribution.
    these commands. Review the speaker report and listening check before
    starting experiments.
    ```sh
-   bin/vast-run -n prepare 'uv run --no-sync superturn label --device cuda && uv run --no-sync superturn shard && uv run --no-sync superturn listening && uv run --no-sync superturn check-pitch && bin/sync push raw labels shards manifests && bin/sync verify raw labels shards manifests'
+   bin/vast-run -n prepare 'bin/campaign-prepare --device cuda'
    bin/vast-run -n experiments 'uv run --no-sync superturn experiments --device cuda --config configs/experiments.json'
    ```
    The shard manifest shows per-language group and label counts after caps.

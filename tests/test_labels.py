@@ -2,9 +2,12 @@ from array import array
 from itertools import groupby
 import json
 import wave
+
+import pytest
 from zipfile import ZipFile
 
-from superturn.labels import Speech, ami_labels, turns
+from superturn.ami_reference import check_ami_reference
+from superturn.labels import Speech, ami_labels, turns, write_rows
 
 
 def speech(speaker, start, end):
@@ -21,7 +24,8 @@ def test_turns_classify_holds_shifts_and_overlap():
     assert list(turns([a, speech("b", 1200, 1400), speech("a", 1800, 2300)]))[0] == (a, 3200, "hold")
 
 
-def test_ami_maps_channels_to_global_speakers_and_flags_backchannel(tmp_path, monkeypatch):
+@pytest.mark.parametrize("extra_voiced", (False, True))
+def test_ami_maps_channels_to_global_speakers_and_flags_backchannel(tmp_path, monkeypatch, extra_voiced):
     monkeypatch.setenv("SUPERTURN_DATA", str(tmp_path))
     raw = tmp_path / "raw"
     ami = raw / "ami"
@@ -36,16 +40,19 @@ def test_ami_maps_channels_to_global_speakers_and_flags_backchannel(tmp_path, mo
         </meeting><meeting observation="ES2001a">
         <speaker channel="0" global_name="P1" nxt_agent="A"/>
         </meeting></meetings>""")
+        archive.writestr("words/ES2002a.A.words.xml", """
+        <words><w starttime="10.0" endtime="11.0"/><w starttime="11.8" endtime="12.3"/></words>""")
         archive.writestr("words/ES2002a.B.words.xml",
-                         '<words><w id="word1" starttime="11.2"/></words>')
+                         '<words><w id="word1" starttime="11.2" endtime="11.4"/></words>')
         archive.writestr("dialogueActs/ES2002a.B.dialog-act.xml", """
         <acts><act><pointer href="da-types.xml#id(ami_da_1)"/>
         <child href="ES2002a.B.words.xml#id(word1)"/></act></acts>""")
     (ami / "MANIFEST.json").write_text(json.dumps({"files": [
-        {"path": f"ES2002a/audio/ES2002a.Headset-{channel}.wav", "start_s": 10}
-        for channel in range(2)
+        {"path": f"ES2002a/audio/ES2002a.Headset-{channel}.wav", "start_s": 10, "length_s": 2.5}
+        for channel in range(3)
     ]}))
-    for channel, activity in enumerate(([(0, 16000), (28800, 36800)], [(19200, 22400)])):
+    extra = [(800, 1800)] if extra_voiced else []
+    for channel, activity in enumerate(([(0, 16000), (28800, 36800)], [(19200, 22400)], extra)):
         path = ami / f"ES2002a/audio/ES2002a.Headset-{channel}.wav"
         path.parent.mkdir(parents=True, exist_ok=True)
         pcm = array("h", [0]) * 40000
@@ -67,6 +74,13 @@ def test_ami_maps_channels_to_global_speakers_and_flags_backchannel(tmp_path, mo
             offset = end
         return spans
 
-    first, *_ = list(ami_labels(tmp_path, fixture))
+    labels = list(ami_labels(tmp_path, fixture))
+    if extra_voiced:
+        assert labels == []
+        return
+    first, *_ = labels
     assert (first.speaker, first.group, first.label) == ("P1", "ES2001a", "hold")
     assert first.pause_samples == 3200 and first.annotated_backchannel
+    write_rows(tmp_path / "labels" / "ami.jsonl", labels)
+    reference = json.loads(check_ami_reference(tmp_path).read_text())
+    assert reference["groups"]["all"]["agreement_on_matched"] == 1.0

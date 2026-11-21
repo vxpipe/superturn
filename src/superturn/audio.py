@@ -1,5 +1,6 @@
 """Read or convert audio to mono 16 kHz PCM."""
 
+import io
 import subprocess
 import wave
 from pathlib import Path
@@ -17,12 +18,34 @@ def read_audio(source):
                     return np.frombuffer(wav.readframes(wav.getnframes()), "<i2")
         except wave.Error:
             pass
+    try:
+        import av
+    except ImportError:
+        pass
+    else:
+        try:
+            return _decode_av(av, source)
+        except av.error.FFmpegError:
+            pass
     pcm = subprocess.run(
         ["ffmpeg", "-v", "error", "-i", "pipe:0" if isinstance(source, bytes) else str(source),
          "-f", "s16le", "-ac", "1", "-ar", str(RATE), "pipe:1"],
         input=source if isinstance(source, bytes) else None, capture_output=True, check=True,
     )
     return np.frombuffer(pcm.stdout, "<i2")
+
+
+def _decode_av(av, source):
+    container_source = io.BytesIO(source) if isinstance(source, bytes) else str(source)
+    resampler = av.AudioResampler(format="s16", layout="mono", rate=RATE)
+    with av.open(container_source, mode="r") as media:
+        frames = [
+            converted.to_ndarray().reshape(-1)
+            for frame in media.decode(audio=0)
+            for converted in resampler.resample(frame)
+        ]
+        frames.extend(converted.to_ndarray().reshape(-1) for converted in resampler.resample(None))
+    return np.concatenate(frames) if frames else np.empty(0, dtype="<i2")
 
 
 def write_wave(path, pcm):

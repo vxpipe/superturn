@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Prepare the verified full selection and copy the derived data to R2.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+: "${SUPERTURN_DATA:?set the campaign data root}"
+[[ -f "$SUPERTURN_DATA/.campaign-machine" ]] || { echo "requires a campaign machine" >&2; exit 2; }
+phase=all
+if [[ "${1:-}" == --finish ]]; then
+  phase=finish
+  shift
+fi
+uv run --no-sync superturn check-licences
+if [[ "$phase" == all ]]; then
+  # Keep the GPU aligner and the CPU-only label sources busy independently.
+  uv run --no-sync superturn label --only common_voice fleurs --workers 3 "$@" &
+  read_labels=$!
+  uv run --no-sync superturn label --only ami "$@" &
+  conversation_labels=$!
+  uv run --no-sync superturn label --only indic_diarbench voxpopuli emilia_yodas --workers 2 "$@" &
+  remaining_labels=$!
+  failed=0
+  for task in "$read_labels" "$conversation_labels" "$remaining_labels"; do
+    wait "$task" || failed=1
+  done
+  (( failed == 0 )) || exit 1
+fi
+uv run --no-sync superturn shard
+uv run --no-sync superturn listening
+uv run --no-sync superturn check-pitch
+uv run --no-sync superturn check-ami-reference
+bin/sync push raw labels shards manifests reports
+bin/sync verify raw labels shards manifests reports

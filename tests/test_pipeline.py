@@ -58,11 +58,13 @@ def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture)
     pytest.importorskip("torch")
     pytest.importorskip("onnxruntime")
     pytest.importorskip("onnx")
-    from superturn.evaluate import benchmark, export
+    from superturn.evaluate import benchmark, export, quantization_auc
     from superturn.train import completed_run, train
 
+    from dataclasses import replace
+
     monkeypatch.setenv("SUPERTURN_DATA", str(tmp_path))
-    make_shards(tmp_path, _generated_rows(tmp_path))
+    make_shards(tmp_path, [replace(row, source="ami") for row in _generated_rows(tmp_path)])
     config = {"architecture": architecture, "parameters": 150000, "window": 1,
               "epochs": 1, "augmentation": False}
     checkpoint = train(tmp_path, "fixture", config, "cpu")
@@ -70,8 +72,11 @@ def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture)
     assert completed_run(tmp_path, "fixture", {**config, "epochs": 2}, "cpu") is None
     result = export(checkpoint)
     assert result.stat().st_size < 1000000
+    assert all(auc is not None for auc in quantization_auc(tmp_path, result, 0.5))
     report = benchmark(tmp_path, result, 0.5, samples=3)
     assert all(row["300"]["auc"] is not None for row in report["groups"])
+    assert report["acceptance"]["artifact"]["passed"]
+    assert "conversation_telephone_300ms" in report["acceptance"]
 
 
 def test_pitch_on_known_reference_tone():
@@ -181,3 +186,28 @@ def test_yin_reference_distinguishes_tone_and_silence():
     tone = np.sin(2 * np.pi * 160 * np.arange(400) / 16000)
     assert yin_pitch(tone) == 160
     assert np.isnan(yin_pitch(np.zeros_like(tone)))
+
+
+def test_listening_gate_requires_matching_human_judgments(tmp_path):
+    from dataclasses import replace
+    import csv
+
+    from superturn.listening import prepare, require_gate, summarize
+
+    rows = [replace(row, method="per-track") for row in _generated_rows(tmp_path)]
+    prepare(tmp_path, rows, per_language=3)
+    packet = tmp_path / "labels" / "listening"
+    with pytest.raises(ValueError, match="record the listening"):
+        require_gate(tmp_path, per_language=3)
+    import json
+    answers = json.loads((packet / "key.json").read_text())
+    with (packet / "review.csv").open("w", newline="") as file:
+        writer = csv.writer(file)
+        writer.writerow(["example", "heard", "notes"])
+        writer.writerows((key, row["label"], "") for key, row in answers.items())
+    with pytest.raises(ValueError, match="partial review judgments"):
+        prepare(tmp_path, rows, per_language=3)
+    summarize(tmp_path, packet / "review.csv")
+    require_gate(tmp_path, per_language=3)
+    with pytest.raises(ValueError, match="below 4"):
+        require_gate(tmp_path, per_language=4)

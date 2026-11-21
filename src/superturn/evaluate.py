@@ -20,6 +20,7 @@ from .train import PAUSES, _input, _stats, _threshold, paths, records
 
 BASELINES = (300, 500, 1000, 1500)
 DECISIONS = tuple(range(200, 2501, 100))
+CONVERSATION_SOURCES = {"ami", "indic_diarbench"}
 
 
 def _session(path):
@@ -138,6 +139,63 @@ def _summarize(entries, threshold):
     return summaries
 
 
+def _acceptance(model_path, report):
+    rows = {(row["source"], row["language"], row["condition"]): row for row in report["groups"]}
+    conversation = rows.get(("conversation", "all", "telephone"))
+    telephone = rows.get(("all", "all", "telephone"))
+    clean = rows.get(("all", "all", "clean"))
+    noise = rows.get(("all", "all", "telephone-noise"))
+    if not conversation or not telephone or not clean or not noise:
+        return {}
+
+    threshold_metrics = conversation["300"]
+    false_complete = threshold_metrics["false_complete"]
+    recall = threshold_metrics["recall"]
+    decision = conversation["decision_ms"]["p50"]
+    overall = telephone["300"]["false_complete"]
+    failing_languages = [
+        {"language": language, "holds": row["300"]["holds"], "false_complete": row["300"]["false_complete"]}
+        for (source, language, condition_name), row in rows.items()
+        if source == "all" and language != "all" and condition_name == "telephone"
+        and overall is not None and row["300"]["false_complete"] is not None
+        and row["300"]["false_complete"] > 2 * overall
+    ]
+    unmeasured = [
+        language for (source, language, condition_name), row in rows.items()
+        if source == "all" and language != "all" and condition_name == "telephone"
+        and row["300"]["false_complete"] is None
+    ]
+    clean_rate = clean["300"]["false_complete"]
+    noise_rate = noise["300"]["false_complete"]
+    delta = None if clean_rate is None or noise_rate is None else noise_rate - clean_rate
+    cumulative = conversation["decision_ms"]["false_complete"]
+    beats_timeout = {
+        timeout: decision is not None and cumulative is not None and metrics["false_complete"] is not None
+        and decision < metrics["decision_ms"] and cumulative <= metrics["false_complete"]
+        for timeout, metrics in conversation["baselines"].items()
+    }
+    artifact_bytes = model_path.stat().st_size
+    metadata = model_path.with_name("export.json")
+    parameters = json.loads(metadata.read_text()).get("parameters") if metadata.is_file() else None
+    return {
+        "artifact": {"passed": artifact_bytes <= 1_000_000 and parameters is not None
+                     and 100_000 <= parameters <= 1_000_000,
+                     "bytes": artifact_bytes, "parameters": parameters},
+        "cpu_p99": {"passed": report["latency_ms"]["p99"] < 2,
+                    "milliseconds": report["latency_ms"]["p99"]},
+        "conversation_telephone_300ms": {
+            "passed": false_complete is not None and recall is not None and false_complete <= 0.05 and recall >= 0.8,
+            **threshold_metrics,
+        },
+        "conversation_telephone_decision": {"passed": decision is not None and decision <= 500,
+                                           **conversation["decision_ms"]},
+        "language_gap_telephone": {"passed": overall is not None and not failing_languages and not unmeasured,
+                                   "failing": failing_languages, "no_holds": unmeasured},
+        "telephone_noise_delta": {"passed": delta is not None and delta <= 0.03, "delta": delta},
+        "conversation_telephone_timeouts": {"passed": all(beats_timeout.values()), "timeouts": beats_timeout},
+    }
+
+
 def benchmark(root, model_path, threshold, *, split="test", samples=250, name=None):
     import pyarrow.parquet as pq
 
@@ -166,11 +224,15 @@ def benchmark(root, model_path, threshold, *, split="test", samples=250, name=No
                     decision_ms = [ms for ms in DECISIONS if ms * 16 <= row["pause_samples"]]
                     audio = np.stack([_input(row, length, ms) for ms in decision_ms]).astype("float32") / 32768
                     gaps = np.asarray(decision_ms, dtype="float32").reshape(-1, 1)
-                    scores = _predict(session, audio, gaps)
+                    scores = _predict(session, audio, gaps).tolist()
                     example = (row["pause_samples"] / 16, int(row["label"] == "shift"), scores)
-                    for key in (("all", "all", condition), (row["source"], "all", condition),
-                                ("all", row["language"], condition),
-                                (row["source"], row["language"], condition)):
+                    keys = [("all", "all", condition), (row["source"], "all", condition),
+                            ("all", row["language"], condition),
+                            (row["source"], row["language"], condition)]
+                    if row["source"] in CONVERSATION_SOURCES:
+                        keys.extend([("conversation", "all", condition),
+                                     ("conversation", row["language"], condition)])
+                    for key in keys:
                         groups[key].append(example)
 
         audio = np.zeros((1, length), "float32")
@@ -203,6 +265,8 @@ def benchmark(root, model_path, threshold, *, split="test", samples=250, name=No
                   "latency_ms": {f"p{p}": float(np.percentile(times, p)) for p in (50, 99)},
                   "groups": [{"source": s, "language": lang, "condition": c, **_summarize(rows, threshold)}
                              for (s, lang, c), rows in sorted(groups.items())]}
+        if split == "test":
+            report["acceptance"] = _acceptance(model_path, report)
         (destination / "metrics.json").write_text(json.dumps(report, indent=2) + "\n")
 
         def percentage(value):
@@ -228,6 +292,11 @@ def benchmark(root, model_path, threshold, *, split="test", samples=250, name=No
                              f"{row['decision_ms']['unresolved_shifts']} | "
                              f"{percentage(row['decision_ms']['false_complete'])} | {timeout} | "
                              f"{percentage(metrics['false_complete'])} | {percentage(metrics['recall'])} |")
+        if report.get("acceptance"):
+            lines += ["", "## Measured acceptance gates", "", "| Gate | Result |", "|---|---|"]
+            for gate, details in report["acceptance"].items():
+                status = "Pass" if details["passed"] else "Open"
+                lines.append(f"| {gate.replace('_', ' ')} | {status} |")
         (destination / "report.md").write_text("\n".join(lines) + "\n")
     except BaseException:
         meter.finish("failed")
@@ -238,12 +307,55 @@ def benchmark(root, model_path, threshold, *, split="test", samples=250, name=No
 
 
 def quantization_auc(root, model_path, threshold):
+    """Score only the 300 ms validation point needed for the export gate."""
+    import pyarrow.parquet as pq
+
     model_path = Path(model_path)
-    reports = [
-        benchmark(root, path, None if path == model_path else threshold, split="validation", samples=25,
-                  name=f"{path.parent.name}-{path.stem}-validation")
-        for path in (model_path.with_name("float.onnx"), model_path)
-    ]
-    return [next(row["300"]["auc"] for row in report["groups"]
-                 if (row["source"], row["language"], row["condition"]) == ("all", "all", "clean"))
-            for report in reports]
+    sessions = {
+        "float": _session(model_path.with_name("float.onnx")),
+        "int8": _session(model_path),
+    }
+    validation = paths(root, "validation")
+    total = sum(pq.ParquetFile(path).metadata.num_rows for path in validation)
+    if not total:
+        raise ValueError("quantization check requires validation examples")
+    meter = Progress(f"quantization-{model_path.parent.name}", total, "examples")
+    by_kind = {kind: defaultdict(list) for kind in sessions}
+    length = sessions["float"].get_inputs()[0].shape[1]
+    try:
+        for batch in records(validation):
+            rows = [row for row in batch if row["label"] in {"hold", "shift"}
+                    and row["pause_samples"] >= 4800]
+            if rows:
+                audio = np.stack([_input(row, length, 300) for row in rows]).astype("float32") / 32768
+                elapsed = np.full((len(rows), 1), 300, dtype="float32")
+                for kind, session in sessions.items():
+                    for row, score in zip(rows, _predict(session, audio, elapsed)):
+                        pair = (float(score), int(row["label"] == "shift"))
+                        for group in (("all", "all"), (row["source"], "all"),
+                                      ("all", row["language"]), (row["source"], row["language"])):
+                            by_kind[kind][group].append(pair)
+            meter.advance(len(batch))
+
+        aucs = []
+        for kind, groups in by_kind.items():
+            combined = groups["all", "all"]
+            if not combined:
+                raise ValueError("quantization check found no labelled 300 ms pauses")
+            all_scores, all_labels = zip(*combined)
+            applied = threshold if kind == "float" else _threshold(all_scores, all_labels)
+            aucs.append(_stats(all_scores, all_labels, applied)["auc"])
+            values = []
+            for (source, language), pairs in sorted(groups.items()):
+                scores, labels = zip(*pairs)
+                values.append({"source": source, "language": language, "condition": "clean",
+                               "300": _stats(scores, labels, applied)})
+            path = root / "reports" / f"{model_path.parent.name}-{kind}-validation" / "metrics.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"threshold": applied, "split": "validation", "groups": values}, indent=2) + "\n")
+    except BaseException:
+        meter.finish("failed")
+        raise
+    else:
+        meter.finish()
+    return aucs

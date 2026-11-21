@@ -374,7 +374,9 @@ def _once(fetch):
         if meter:  # credit what was not counted live; streams stop near f.size
             meter.advance(max(0, f.size - counter.count))
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(json.dumps(result))
+        temp_marker = marker.with_suffix(".tmp")
+        temp_marker.write_text(json.dumps(result))
+        temp_marker.replace(marker)
         return result
 
     return wrapper

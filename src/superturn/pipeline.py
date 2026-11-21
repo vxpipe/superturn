@@ -1,8 +1,10 @@
 """Command-line entry points for preparation and the first campaign."""
 
+import hashlib
 import json
 from collections import defaultdict
 from dataclasses import replace
+from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 import subprocess
 
@@ -21,17 +23,109 @@ def _device(value):
     return value
 
 
-def label(root, sources, device):
+READ_SOURCES = {"common_voice", "fleurs"}
+PARALLEL_SOURCES = READ_SOURCES | {"emilia_yodas"}
+
+
+def _init_label_worker(device, read):
+    from .audio import silero
+    from .corpora import whisper_aligner
+
+    global _worker_vad, _worker_align
+    _worker_vad = silero()
+    _worker_align = whisper_aligner(device) if read else None
+
+
+def _label_locale(root, source, locale):
+    from .corpora import corpus_labels
+
+    return list(corpus_labels(root, source, _worker_vad, _worker_align, locale))
+
+
+def _locale_cache(root, source, device):
+    manifest = root / "raw" / source / "MANIFEST.json"
+    if not manifest.is_file():
+        return None
+    digest = hashlib.sha256(manifest.read_bytes())
+    for filename in ("audio.py", "corpora.py", "labels.py"):
+        digest.update(Path(__file__).with_name(filename).read_bytes())
+    digest.update(device.encode())
+    for package in ("av", "openai-whisper", "silero-vad", "torch"):
+        try:
+            digest.update(version(package).encode())
+        except PackageNotFoundError:
+            digest.update(b"unavailable")
+    return root / "labels" / ".locale-cache" / source / digest.hexdigest()
+
+
+def _parallel_labels(root, source, device, workers):
+    from concurrent.futures import ProcessPoolExecutor, as_completed
+    from multiprocessing import get_context
+
+    from .corpora import parallel_locales
+    from .progress import Progress
+
+    locales = parallel_locales(root / "raw" / source, source)
+    if not locales:
+        raise ValueError(f"{source}: no downloaded locales")
+    meter = Progress(f"label-{source}", len(locales), "languages")
+    cache = _locale_cache(root, source, device)
+    by_locale = {}
+    pending = []
+    failures = []
+    try:
+        for locale in locales:
+            cached = cache / f"{locale}.jsonl" if cache is not None else None
+            if cached is not None and cached.is_file():
+                by_locale[locale] = read_rows(cached)
+                meter.skip(1)
+            else:
+                pending.append(locale)
+        if pending:
+            with ProcessPoolExecutor(max_workers=workers, mp_context=get_context("spawn"),
+                                     initializer=_init_label_worker, initargs=(device, source in READ_SOURCES)) as pool:
+                futures = {pool.submit(_label_locale, root, source, locale): locale for locale in pending}
+                for future in as_completed(futures):
+                    locale = futures[future]
+                    try:
+                        rows = future.result()
+                    except Exception as error:
+                        failures.append(locale)
+                        print(f"{source}/{locale} failed: {error}", flush=True)
+                    else:
+                        if cache is not None:
+                            write_rows(cache / f"{locale}.jsonl", rows)
+                        by_locale[locale] = rows
+                        meter.advance(1)
+        if failures:
+            raise RuntimeError(f"{source}: {len(failures)} failed locales ({', '.join(sorted(failures))})")
+    except BaseException:
+        meter.finish("failed")
+        raise
+    else:
+        meter.finish()
+    return [row for locale in locales for row in by_locale[locale]]
+
+
+def label(root, sources, device, workers=1):
     from .audio import silero
     from .corpora import corpus_labels, whisper_aligner
 
-    detect = silero() if any(source != "indic_diarbench" for source in sources) else None
-    align = whisper_aligner(device) if any(source in {"common_voice", "fleurs"} for source in sources) else None
+    if workers < 1:
+        raise ValueError("label workers must be positive")
+    detect = align = None
     registry = load_sources()
     for source in sources:
         output = root / "labels" / f"{source}.jsonl"
-        rows = ami_labels(root, detect) if source == "ami" else corpus_labels(root, source, detect, align)
-        labels = list(rows)
+        if source in PARALLEL_SOURCES and workers > 1:
+            labels = _parallel_labels(root, source, device, workers)
+        else:
+            if detect is None and source != "indic_diarbench":
+                detect = silero()
+            if align is None and source in READ_SOURCES:
+                align = whisper_aligner(device)
+            rows = ami_labels(root, detect) if source == "ami" else corpus_labels(root, source, detect, align)
+            labels = list(rows)
         splits = stratified_groups(source, registry[source].role, ((row.group, row.language) for row in labels))
         labels = [replace(row, split=splits[row.group]) for row in labels]
         write_rows(output, labels)
@@ -229,12 +323,15 @@ def register(sub):
         "experiments": "run the first campaign experiment matrix",
         "listening": "sample labelled audio and score human judgments",
         "check-pitch": "compare pitch and voicing with a YIN speech reference",
+        "check-ami-reference": "compare AMI labels with manual timestamps",
     }
     for name, description in handlers.items():
         parser = sub.add_parser(name, help=description)
         parser.set_defaults(func=command)
         if name in {"label", "train", "smoke", "experiments"}:
             parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
+        if name == "label":
+            parser.add_argument("--workers", type=int, default=1)
         if name in {"label", "shard", "listening"}:
             parser.add_argument("--only", nargs="+", choices=LABEL_SOURCES, default=LABEL_SOURCES)
         if name == "smoke":
@@ -257,9 +354,13 @@ def command(args):
     root = data_root()
     name = args.command
     if name == "label":
-        label(root, args.only, _device(args.device))
+        label(root, args.only, _device(args.device), args.workers)
     elif name == "shard":
         shard(root, args.only)
+    elif name == "check-ami-reference":
+        from .ami_reference import check_ami_reference
+
+        print(check_ami_reference(root))
     elif name == "check-pitch":
         from .pitch_check import check_pitch
 

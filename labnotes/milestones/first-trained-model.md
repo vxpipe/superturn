@@ -35,21 +35,27 @@ Last updated 2026-11-21.
   observed `_id` field. The retry took 2m27s with cached data. It exercised
   all six speech sources, made 3,106 shard copies and ran three GPU training
   steps before exporting a 300,447-byte int8 model and benchmarking it.
-- Started the full download in `vxpipe`. Added split coverage auditing,
+- Completed the full 16.7 GB acquisition and verified all nine manifests.
+  Added split coverage auditing,
   the listening packet workflow, a YIN pitch reference check and R2
   copy verification for preparation. Verified a smoke report copy to R2
   and back by file size. Switched MUSAN to the pinned Free Sound noise
-  subset and resumed acquisition from completed files.
+  subset and resumed acquisition from completed files. The final AMI retry
+  resolved the provider HTTP 503 and passed the licence check.
 
 ### Waiting on
 
-- Full download and licence check. The 50-per-language listening gate
-  still applies before the real training queue.
+- Full preparation is in progress. Indic and VoxPopuli labelling passed.
+  The repaired AMI lane is running. Parallel read-speech and Emilia
+  labelling passed a separate cached-sample check and will replace the
+  slower serial lanes. The 50-per-language listening gate still applies
+  before the real training queue.
 
 ### Next step
 
-After the download exits cleanly, run the preparation command in the
-[campaign runbook](../../docs/campaign-plan.md). Review real source coverage
+After all label lanes finish, run `bin/campaign-prepare --finish` in
+`vxpipe` to shard, prepare the listening packet and verify the R2 copy.
+Review real source coverage
 and the listening results before starting the experiment matrix. Keep
 `bin/vast-watch` running throughout. After all gates pass, send the final
 PushOver message prefixed with `COMPLETE`. Leave the machine running for
@@ -250,7 +256,7 @@ Follows the [campaign runbook](../../docs/campaign-plan.md#runbook).
 - [x] Machine rented with `bin/vast-up`; smoke test passes on it, including
   the speaker count of the streamed Common Voice sample and the MUSAN member
   order from `superturn inspect-archive`.
-- [ ] All sources downloaded, manifests written, licence check passes.
+- [x] All sources downloaded, manifests written, licence check passes.
 - [ ] Labels, speaker report, splits, frozen test sets and shards built per
   source.
 - [ ] Raw downloads, labels, shards and test copies pushed to storage
