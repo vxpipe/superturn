@@ -1,5 +1,6 @@
 """Compare replay, owned-teacher scores, and observed AMI floor labels."""
 
+import argparse
 from collections import defaultdict
 from hashlib import sha256
 import json
@@ -199,6 +200,33 @@ def run(root):
     return report
 
 
+def frozen_thresholds(root):
+    if not (root / ".campaign-machine").is_file():
+        raise ValueError("the score replay uses staged Vast data")
+    report, digest = read_receipt(root, "own-student-ami-supervision")
+    rows = json.loads(read_verified(root, report["paired_language_scores"]).read_text())
+    languages = {}
+    for language, row in rows.items():
+        labels = np.asarray(row["labels"], dtype=bool)
+        shifts, holds = int(labels.sum()), int((~labels).sum())
+        models = {}
+        for name, scores in row["scores"].items():
+            threshold = report["metrics"]["english"][name]["threshold"]
+            fired = np.asarray(scores) >= threshold
+            models[name] = {"threshold": threshold, "shift_hits": int((labels & fired).sum()),
+                            "false_completes": int((~labels & fired).sum())}
+        languages[language] = {"shifts": shifts, "holds": holds, "models": models}
+    output = {"scope": "development scores, each AMI calibration cutoff applied unchanged",
+              "training_report_sha256": digest, "languages": languages}
+    _write_json(root / "reports/own-student-ami-supervision-locked.json", output)
+
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--frozen-thresholds", action="store_true")
+    args = parser.parse_args()
     torch.set_num_threads(2)
-    print(json.dumps(run(data_root())["summary"], indent=2))
+    if args.frozen_thresholds:
+        frozen_thresholds(data_root())
+    else:
+        print(json.dumps(run(data_root())["summary"], indent=2))
