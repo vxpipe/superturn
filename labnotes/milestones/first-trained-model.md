@@ -53,6 +53,11 @@ Last updated 2026-11-21.
   Both acoustic audits leave the per-track quality gate open. Qwen2-Audio
   scored 17/40 on blinded calibration and cannot serve as an acceptance
   judge. The direct manual AMI comparison supports 989 original labels.
+- Audited the unconfirmed AMI labels and measured timing on training speakers.
+  In 4,551 paired training cases, the median absolute timestamp difference
+  was 253 ms at the caller's speech end and 50 ms at the next speech onset.
+  Widening both windows from 200/250 to 300/375 ms confirmed 45 more training
+  labels and exposed 830 additional conflicts. The review gate remains open.
 
 ### Waiting on
 

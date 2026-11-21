@@ -179,3 +179,22 @@
   Opus call from 61 to 22 ms and pitch from 31 to under 1 ms.
   A generated forward/backward probe used 64 examples per step and
   peaked below 1 GB allocation on the 8 s, near-1M candidate.
+
+## AMI timing calibration
+
+- Across 7,665 AMI labels, 989 had matching manual timing and speaker
+  order. Of the 878 contradictions, 819 had annotated speech inside the
+  early pause and 59 disagreed on which speaker continued. The 5,798
+  unresolved cases include 5,339 without a nearby caller word end, 180
+  outside the next-onset tolerance, 274 ambiguous short replies and five
+  unclear continuations after a backchannel. See `reports/ami-audit-reasons.json`.
+- The `ami-timing` job compared 6,512 training labels. Of the 4,551
+  pairs within 600 ms on both boundaries, median absolute differences
+  were 252.8 ms at caller speech end and 49.6 ms at next speech onset.
+  The corresponding 90th percentiles were 494 and 130 ms. Signed medians
+  were -44 and -48 ms. See `reports/ami-timing.json`.
+- With 200/250 ms tolerances, 817 training labels were supported and 754
+  contradicted. At 300/375 ms the counts were 862 and 1,584, and at
+  500/625 ms they were 917 and 3,073. The checks for speech in the early
+  pause and speaker order ran throughout. No validation or test examples
+  informed the timing sweep.
