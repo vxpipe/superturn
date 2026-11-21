@@ -36,6 +36,7 @@ HUBERT_EPS = 1e-5
 WHISPER_SHA256 = "e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb"
 WHISPER_URL = f"https://openaipublic.azureedge.net/main/whisper/models/{WHISPER_SHA256}/large-v3.pt"
 WHISPER_SIZE = 3_087_371_615
+ORIGINAL_HUBERT_REPORT_SHA256 = "d58f3e43b40ab2ef9dabad5b80e73850e2d374b484b7bd0372fe404ef0f9cefe"
 
 
 def checkpoint(root, name, url, size, *, etag=None, sha256=None):
@@ -217,7 +218,7 @@ def depth_curve(name, features, truth, splits, groups, penalty):
 ENCODERS = {"hubert-large": hubert, "whisper-large-v3": whisper_large, "qwen3-asr-1.7b": qwen_audio}
 
 
-def run(root, candidate_name="hubert-large"):
+def run(root, candidate_name="hubert-large", *, replay_hubert=False):
     clips, truth, splits, groups = pinned_inputs(root)
     folds = caller_folds(groups["train"])
     source = root / "reports/wav2vec-harper-probe.json"
@@ -282,6 +283,25 @@ def run(root, candidate_name="hubert-large"):
     report = {"decision_ms": 300, "pcm_sha256": pcm_hash, "reference_sha256": file_digest(source),
               "encoders": provenance, "heads": heads, "metrics": metrics, "paired_english": pairs,
               "advancement": gates, "advanced": all(gates.values())}
+    archived = None
+    if replay_hubert:
+        original_path = root / "reports/open-speech-teacher.json"
+        if file_digest(original_path) != ORIGINAL_HUBERT_REPORT_SHA256:
+            raise ValueError("the original completed HuBERT report differs from its archived digest")
+        archived = json.loads(original_path.read_text())
+        if candidate_name != "hubert-large" or any(
+            report[key] != archived[key] for key in (
+                "decision_ms", "reference_sha256", "pcm_sha256", "encoders", "metrics", "paired_english",
+            )
+        ):
+            raise ValueError("HuBERT replay changed the original matched decision metrics or inputs")
+        for name, values in heads.items():
+            expected = archived["heads"][name]
+            if any(json.loads(json.dumps(values[key])) != expected[key]
+                   for key in ("penalty", "layer_weights", "selection_partial_auc", "pooled_features_sha256")):
+                raise ValueError(f"HuBERT replay changed original features or head selection for {name}")
+        report["archived_hubert_report_sha256"] = ORIGINAL_HUBERT_REPORT_SHA256
+
     folder = root / "runs/open-speech-teacher"
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / f"{candidate_name}-head.pt"
@@ -296,22 +316,32 @@ def run(root, candidate_name="hubert-large"):
     temporary.replace(path)
     report["diagnostic_checkpoint"] = {"path": path.relative_to(root).as_posix(), "sha256": file_digest(path),
                                        "evaluation_probability_sha256": hashlib.sha256(p.tobytes()).hexdigest()}
-    filename = "open-speech-teacher.json" if candidate_name == "hubert-large" else f"open-speech-{candidate_name}.json"
+    filename = f"open-speech-{candidate_name}.json"
+    if candidate_name == "hubert-large" and archived is None:
+        filename = "open-speech-teacher.json"
     path = root / "reports" / filename
     _write_json(path, report)
     paired_rows = {}
     thresholds = {name: value["english"]["ami_threshold"] for name, value in metrics.items()}
     report["multilingual_diagnostic"] = score_languages(
         root, teachers, "cuda", paired_rows=paired_rows, fixed_thresholds=thresholds,
+        progress_name=f"open-teacher-languages-{candidate_name}",
     )
+    if archived is not None:
+        for lang, row in report["multilingual_diagnostic"].items():
+            for name, values in row["models"].items():
+                expected = archived["multilingual_diagnostic"][lang]["models"][name]
+                if any(values[key] != expected[key] for key in ("auc", "partial_auc_to_5pct", "retrospective_roc_limits")):
+                    raise ValueError(f"HuBERT replay changed the language ranking metrics for {lang}")
     paired_path = path.with_name(f"{path.stem}-language-pairs.json")
     _write_json(paired_path, {"dataset_sha256": MULTILINGUAL_SHA256, "languages": paired_rows})
     report["multilingual_paired_rows"] = {"path": paired_path.relative_to(root).as_posix(),
                                          "sha256": file_digest(paired_path)}
     _write_json(path, report)
     selected = ("wav2vec2-base", candidate_name) if report["advanced"] else ("wav2vec2-base",)
-    report["depth"] = {key: depth_curve(key, outputs[key], truth, splits, groups, heads[key]["penalty"])
-                       for key in selected}
+    report["depth"] = (archived["depth"] if archived is not None else {
+        key: depth_curve(key, outputs[key], truth, splits, groups, heads[key]["penalty"]) for key in selected
+    })
     _write_json(path, report)
     return report
 
@@ -319,5 +349,7 @@ def run(root, candidate_name="hubert-large"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--candidate", choices=ENCODERS, default="hubert-large")
+    parser.add_argument("--replay-hubert", action="store_true", help="verify the original HuBERT report and retain paired scores")
     torch.set_num_threads(2)
-    print(json.dumps(run(data_root(), parser.parse_args().candidate), indent=2))
+    args = parser.parse_args()
+    print(json.dumps(run(data_root(), args.candidate, replay_hubert=args.replay_hubert), indent=2))

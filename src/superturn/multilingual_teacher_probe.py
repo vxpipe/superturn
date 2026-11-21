@@ -79,7 +79,7 @@ def run(root, device):
     return report
 
 
-def score_languages(root, models, device, *, teacher=None, paired_rows=None, fixed_thresholds=None):
+def score_languages(root, models, device, *, teacher=None, paired_rows=None, fixed_thresholds=None, progress_name=None):
     folder = root / "raw" / "livekit_multilingual_diagnostic" / "data"
     sources = {}
     for language, digest in DATA.items():
@@ -93,7 +93,7 @@ def score_languages(root, models, device, *, teacher=None, paired_rows=None, fix
 
     results = {}
     step = "multilingual-teacher-probe" if teacher else "depth-multilingual"
-    meter = Progress(step, sum(p.metadata.num_rows for p in sources.values()), "turns")
+    meter = Progress(progress_name or step, sum(p.metadata.num_rows for p in sources.values()), "turns")
     try:
         with ThreadPoolExecutor(max_workers=4) as workers:
             for language, source in sources.items():
