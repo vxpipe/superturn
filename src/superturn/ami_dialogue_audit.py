@@ -209,6 +209,25 @@ def summarize(folds, models):
     return result
 
 
+def dialogue_tracks(manifest, annotation, meetings):
+    offsets = {track["path"].split("/")[0]: round(track["start_s"] * RATE)
+               for track in json.loads(manifest.read_text())["files"]}
+    tracks, pair_links = {}, {}
+    with ZipFile(annotation) as archive:
+        roster = ami_speakers(archive)
+        types = {identifier(entry): entry.get("gloss") for entry in entries(archive, "ontologies/da-types.xml")}
+        if not types:
+            raise ValueError("AMI dialogue act ontology missing")
+        for meeting in meetings:
+            tracks[meeting] = {speaker: read_track(archive, meeting, agent, offsets[meeting], types)
+                               for speaker, agent in roster[meeting].values()}
+            pairs = entries(archive, f"dialogueActs/{meeting}.adjacency-pairs.xml")
+            pointers = [{role: first for role, first, _ in links(entry)}
+                        for entry in pairs if entry.tag.rsplit("}", 1)[-1] == "adjacency-pair"]
+            pair_links[meeting] = {(pair["source"], pair["target"]) for pair in pointers if {"source", "target"} <= pair.keys()}
+    return tracks, pair_links
+
+
 def run(root):
     import torch
 
@@ -230,21 +249,7 @@ def run(root):
     raw = root / "raw"
     manifest = raw / "ami" / "MANIFEST.json"
     annotation, = (raw / "ami_annotations").glob("*.zip")
-    offsets = {track["path"].split("/")[0]: round(track["start_s"] * RATE)
-               for track in json.loads(manifest.read_text())["files"]}
-    tracks, pair_links = {}, {}
-    with ZipFile(annotation) as archive:
-        roster = ami_speakers(archive)
-        types = {identifier(entry): entry.get("gloss") for entry in entries(archive, "ontologies/da-types.xml")}
-        if not types:
-            raise ValueError("AMI dialogue act ontology missing")
-        for meeting in meetings:
-            tracks[meeting] = {speaker: read_track(archive, meeting, agent, offsets[meeting], types)
-                               for speaker, agent in roster[meeting].values()}
-            pairs = entries(archive, f"dialogueActs/{meeting}.adjacency-pairs.xml")
-            pointers = [{role: first for role, first, _ in links(entry)}
-                        for entry in pairs if entry.tag.rsplit("}", 1)[-1] == "adjacency-pair"]
-            pair_links[meeting] = {(pair["source"], pair["target"]) for pair in pointers if {"source", "target"} <= pair.keys()}
+    tracks, pair_links = dialogue_tracks(manifest, annotation, meetings)
     labels = root / "labels" / "ami.jsonl"
     intervals = defaultdict(list)
     for row in read_rows(labels):

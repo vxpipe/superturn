@@ -1,6 +1,7 @@
 """Test a newly fitted turn head over non-turn Wav2Vec2 Base representations."""
 
 from collections import defaultdict
+from dataclasses import fields
 from functools import lru_cache
 import hashlib
 import json
@@ -14,14 +15,17 @@ import torchaudio
 
 from .ami_calibration import _write_json
 from .audio import RATE, read_audio
+from .augment import condition
 from .dense_teacher import SAMPLES, file_digest
 from .elapsed_turn_probe import paired_intervals
 from .eot_domain_probe import GAP, decision_audio
 from .harper_history_probe import recall_area
 from .harper_transcript_coverage import MEMBERSHIP
 from .harper_valley_benchmark import pinned_split
+from .labels import Label
 from .model import AcousticFeatures, FRAME, HOP
 from .progress import Progress
+from .shards import CONTEXT, clip
 from .sources import data_root
 from .train import _auc, _stats, _threshold, paths, records
 from .turn1_mini_probe import english_rows, harper_rows, upsample_prefix
@@ -33,32 +37,36 @@ CHECKPOINT_SHA256 = "1275f890a623b31b9915295dc01d5049c93dc6de8813406c16dfab9b6bd
 AMI = "bed0ba3de027429f"
 
 
-def calibration_rows(root):
-    cohort = json.loads((root / "reports/ami-calibration" / f"{AMI}.json").read_text())["cohorts"]["calibration"]
+def verified_ami_labels(root, split):
+    cohort = json.loads((root / "reports/ami-calibration" / f"{AMI}.json").read_text())["cohorts"][split]
     digest = hashlib.sha256()
-    cached = lru_cache(maxsize=6)(read_audio)
-    from .labels import Label
-    from .shards import CONTEXT, clip
-    from .augment import condition
-    from dataclasses import fields
-
     names = [field.name for field in fields(Label)]
-    for batch in records(paths(root / "shards/ami-calibration" / AMI, "calibration")):
+    labels = []
+    for batch in records(paths(root / "shards/ami-calibration" / AMI, split)):
         for row in batch:
             metadata = {name: row[name] for name in names}
             digest.update(json.dumps(metadata, sort_keys=True).encode())
             digest.update(row["pcm"])
-            if row["label"] == "hold":
-                label = Label(**metadata)
-                if label.pause_samples < GAP:
-                    raise ValueError("AMI calibration hold does not reach 300 ms")
-                original = clip(label, cached(root / label.audio))
-                end = CONTEXT + GAP
-                original[end:] = 0
-                pcm = condition(original, "telephone", 0)
-                yield pcm[end - SAMPLES:end].astype(np.float32) / 32768, 0, row["group"]
+            labels.append(Label(**metadata))
     if digest.hexdigest() != cohort["sha256"]:
-        raise ValueError("AMI calibration rows changed")
+        raise ValueError(f"AMI {split} rows changed")
+    return labels
+
+
+def render_ami(root, labels):
+    cached = lru_cache(maxsize=6)(read_audio)
+    end = CONTEXT + GAP
+    for label in labels:
+        if label.pause_samples < GAP:
+            raise ValueError("AMI pause does not reach 300 ms")
+        original = clip(label, cached(root / label.audio))
+        original[end:] = 0
+        pcm = condition(original, "telephone", 0)
+        yield pcm[end - SAMPLES:end].astype(np.float32) / 32768, int(label.label == "shift"), label.group
+
+
+def calibration_rows(root):
+    return render_ami(root, [label for label in verified_ami_labels(root, "calibration") if label.label == "hold"])
 
 
 def training_rows(root):
