@@ -124,7 +124,8 @@ def qwen_audio(root):
     post = centers >= SAMPLES - GAP
 
     def predict(audio):
-        features = frontend(audio.cpu().numpy(), sampling_rate=RATE, padding="longest", truncation=False)
+        features = frontend(audio.cpu().numpy(), sampling_rate=RATE, padding="longest", truncation=False,
+                            return_attention_mask=True, return_tensors="pt")
         spec = features.input_features.to(audio.device)
         valid = features.attention_mask.to(audio.device)
         if spec.shape[1:] != (128, 300) or not bool(valid.all()):
