@@ -174,6 +174,12 @@ decoder and decoded sample intervals. Verify speaker-channel mapping
 and timing before accepting any hold or shift label.
 [Official ICSI download and licence](https://groups.inf.ed.ac.uk/ami/icsi/download/)
 
+The opt-in `icsi-transcript-census` uses the original MRT transcriptions
+under the same licence. It reads the publisher's meeting, participant,
+channel and segment records for the entire roster and produces aggregate
+speaker recurrence and provisional annotation-gap counts. It acquires
+no audio and produces no training labels.
+
 The opt-in DataHive conversation pilot pins six unscripted stereo calls
 in Hindi and Indonesian plus the metadata at a total of 61.55 MB.
 Callers and callees are isolated on left and right channels of a common
@@ -311,6 +317,15 @@ probe processes only the participant and partner codes from the index.
 It does not download audio or transcript payloads. A header and index
 match still needs channel, clock and speaker-independence validation.
 [Pinned Part 3 documentation](https://huggingface.co/datasets/recursal/reprocessed_singapore_national_speech_corpus/blob/5e8294c3fb5f2634fd1d7004f7c0264969fe6687/Docs/Part%203%20-%206.md)
+
+### AppTek Call-Center Dialogues metadata
+
+AppTek publishes split-channel English VoIP role-play and manual
+segment times for evaluation and analysis, under CC BY-SA 4.0.
+The current source registry rejects this licence. The release
+remains outside the registry and any evaluation queue pending
+a project decision on evaluation-only sources.
+[Pinned AppTek dataset card](https://huggingface.co/datasets/apptek-com/apptek_callcenter_dialogues/blob/82a72903da3c868604f6dc20ddc8788b25ed4f86/README.md)
 
 ### AMI manual annotations
 

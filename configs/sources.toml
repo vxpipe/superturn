@@ -122,6 +122,18 @@ selection_command = "python -m superturn.nsc_part3_preflight --partner-index"
 max_total_bytes = 1_200_000
 order = 3
 
+[sources.icsi-transcript-census]
+kind = "http"
+url = "https://groups.inf.ed.ac.uk/ami/ICSICorpusAnnotations/ICSI_original_transcripts.zip"
+sha256 = "9db98ebdd61a085b4f45f24f46e9c9f6c6f26c3c9cd41643a3b9e74362c85de7"
+licence = "CC BY 4.0"
+attribution = "ICSI Meeting Corpus, original MRT transcriptions, Edinburgh distribution, CC BY 4.0."
+role = "metadata"
+opt_in = true
+selection_command = "python -m superturn.icsi_roster"
+max_total_bytes = 5_000_000
+order = 3
+
 [sources.dral-original-pilot]
 kind = "http"
 licence = "CC0-1.0"
