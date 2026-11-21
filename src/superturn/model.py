@@ -12,9 +12,10 @@ HOP = 160
 
 
 class AcousticFeatures(nn.Module):
-    def __init__(self, active_stats=False):
+    def __init__(self, active_stats=False, *, hop=HOP):
         super().__init__()
         self.active_stats = active_stats
+        self.hop = hop
         frequency = torch.arange(129) * (16000 / FFT)
         def mel(hz):
             return 2595 * torch.log10(1 + hz / 700)
@@ -58,7 +59,7 @@ class AcousticFeatures(nn.Module):
         window = F.pad(self.window, (0, FFT - FRAME))
         centered = audio - audio.mean(dim=1, keepdim=True)
         padded = F.pad(centered, (0, FFT - FRAME))
-        spectrum = torch.stft(padded, n_fft=FFT, hop_length=HOP, window=window,
+        spectrum = torch.stft(padded, n_fft=FFT, hop_length=self.hop, window=window,
                               center=False, return_complex=False)
         return spectrum[:, :129].square().sum(dim=-1).transpose(1, 2)
 
@@ -88,8 +89,8 @@ class AcousticFeatures(nn.Module):
 
     def active_features(self, audio, power):
         framed = audio.unsqueeze(1)
-        mean = F.avg_pool1d(framed, FRAME, HOP)
-        variance = F.avg_pool1d(framed.square(), FRAME, HOP) - mean.square()
+        mean = F.avg_pool1d(framed, FRAME, self.hop)
+        variance = F.avg_pool1d(framed.square(), FRAME, self.hop) - mean.square()
         active = (variance.transpose(1, 2) > self.activity_floor).to(power.dtype)
         # Base activity on the native frames before whole-window centering.
         power = power * active
@@ -131,11 +132,11 @@ class ConformerBlock(nn.Module):
 
 
 class TurnModel(nn.Module):
-    def __init__(self, architecture, width, window, layers=None, gru_hidden_size=None, *, active_stats=False):
+    def __init__(self, architecture, width, window, layers=None, gru_hidden_size=None, *, active_stats=False, hop=HOP):
         super().__init__()
         self.architecture = architecture
         self.samples = round(window * 16000)
-        self.features = AcousticFeatures(active_stats=active_stats)
+        self.features = AcousticFeatures(active_stats=active_stats, hop=hop)
         self.stem = nn.Sequential(StemBlock(43, width // 2), StemBlock(width // 2, width))
         output_width = width
         if architecture == "a":
@@ -143,7 +144,7 @@ class TurnModel(nn.Module):
                 output_width = gru_hidden_size
             self.sequence = nn.GRU(width, output_width, num_layers=layers or 2, batch_first=True)
         elif architecture == "b":
-            frames = ((self.samples - FRAME) // HOP + 4) // 4
+            frames = ((self.samples - FRAME) // hop + 4) // 4
             self.positions = nn.Parameter(torch.zeros(1, frames, width))
             self.sequence = nn.Sequential(*(ConformerBlock(width) for _ in range(layers or 3)))
             self.pool = nn.Linear(width, 1)
@@ -176,6 +177,9 @@ def build(config):
 
         return CitrinetTurnModel(config)
     width = config.get("width")
+    hop = config.get("hop", HOP)
+    if hop not in (HOP, 2 * HOP) or (hop != HOP and config["architecture"] != "a"):
+        raise ValueError("only GRU models support a 20 ms feature hop")
     gru_hidden_size = config.get("gru_hidden_size")
     if gru_hidden_size is not None and (width is None or config["architecture"] != "a"):
         raise ValueError("a custom GRU hidden size requires a fixed GRU stem width")
@@ -186,7 +190,7 @@ def build(config):
         width = min((value for value, size in sizes.items() if size <= 1_000_000),
                     key=lambda value: abs(sizes[value] - target))
     return TurnModel(config["architecture"], width, config["window"], config.get("layers"), gru_hidden_size,
-                     active_stats=config.get("active_stats", False))
+                     active_stats=config.get("active_stats", False), hop=hop)
 
 
 def parameter_count(architecture, width, window, layers=None):

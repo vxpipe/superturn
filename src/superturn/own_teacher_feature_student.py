@@ -148,11 +148,11 @@ def project_features(cache, digests, count, origin, basis, scale, meter):
     return projected, valid
 
 
-def score_features(model, audio, elapsed):
+def score_features(model, audio, elapsed, tail_frames=TAIL_FRAMES):
     states = model.stem(model.features(audio).transpose(1, 2)).transpose(1, 2)
     sequence, _ = model.sequence(states)
     decision = torch.cat((sequence[:, -1], elapsed / 1000), dim=-1)
-    return model.decision(decision).flatten(), sequence[:, -TAIL_FRAMES:]
+    return model.decision(decision).flatten(), sequence[:, -tail_frames:]
 
 
 def stable_scores(metrics):
@@ -168,8 +168,11 @@ def replace_history(audio, prefix, noise):
 
 
 def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active, arm, seed, *,
-            shuffle_features=False, active_stats=False, score_history=None, parameters=150000):
+            shuffle_features=False, active_stats=False, score_history=None, parameters=150000, hop=HOP):
     config = {"architecture": "a", "window": 3, "parameters": parameters}
+    if hop != HOP:
+        config["hop"] = hop
+    tail_frames = teacher.shape[1]
     if active_stats:
         config["active_stats"] = True
     torch.manual_seed(seed)
@@ -186,7 +189,7 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
     j = np.zeros(BATCH, dtype=int)
     x, elapsed = batch(pcm, fit[:2], j[:2], DEVICE, DEADLINES)
     with torch.inference_mode():
-        torch.testing.assert_close(score_features(model, x, elapsed)[0], model.logits(x, elapsed).flatten(),
+        torch.testing.assert_close(score_features(model, x, elapsed, tail_frames)[0], model.logits(x, elapsed).flatten(),
                                    rtol=0, atol=0)
     history, winner, best_state = [], None, None
     name = f"{arm}-{seed}" + ("-shuffled-features" if shuffle_features else "")
@@ -197,6 +200,8 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
         name += "-history"
     if parameters != 150000:
         name += f"-{parameters}"
+    if hop != HOP:
+        name += f"-hop{hop}"
     meter = Progress(f"own-feature-{name}", EPOCHS * ((len(fit) + BATCH - 1) // BATCH), "updates")
     try:
         for epoch in range(1, EPOCHS + 1):
@@ -205,8 +210,8 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
             use_scores = arm != "feature-first" or epoch > 5
             use_features = arm == "joint" or not use_scores
             score_losses, feature_losses = [], []
-            feature_positions = np.zeros(TAIL_FRAMES)
-            position_counts = np.zeros(TAIL_FRAMES)
+            feature_positions = np.zeros(tail_frames)
+            position_counts = np.zeros(tail_frames)
             for start in range(0, len(order), BATCH):
                 rows = order[start:start + BATCH]
                 audio, elapsed = batch(pcm, rows, j[:len(rows)], DEVICE, DEADLINES)
@@ -217,7 +222,7 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
                     audio = replace_history(audio, lengths, noise[rows % len(noise)])
                     truth = np.where(replaces, history_scores[rows], truth)
                 weight = torch.as_tensor(row_weights[rows], device=DEVICE)
-                logits, states = score_features(model, audio, elapsed)
+                logits, states = score_features(model, audio, elapsed, tail_frames)
                 losses = []
                 if use_scores:
                     y = torch.as_tensor(truth, device=DEVICE)

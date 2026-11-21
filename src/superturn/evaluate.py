@@ -102,7 +102,7 @@ def export(checkpoint, *, limit=True, spectrum="stft"):
     if spectrum == "convolution":
         from .spectral import ConvolutionSpectrum
 
-        model.features = ConvolutionSpectrum(active_stats=config.get("active_stats", False)).eval()
+        model.features = ConvolutionSpectrum(active_stats=model.features.active_stats, hop=model.features.hop).eval()
     inputs = (torch.from_numpy(audio[:1]), torch.from_numpy(gap[:1]))
     torch.onnx.export(model, inputs, float_path, input_names=["audio", "silence_ms"],
                       output_names=["p_complete"], opset_version=17, dynamo=False,
