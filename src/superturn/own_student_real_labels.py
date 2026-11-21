@@ -31,7 +31,7 @@ def arrays(rows):
     return np.stack(clips).astype(np.float32), np.asarray(labels), np.asarray(groups)
 
 
-def fit(root, report, arm, seed, data, replay):
+def fit(root, report, arm, seed, data, replay, *, attenuate=False, output_dir=None):
     path = root / report["path"]
     if file_digest(path) != report["sha256"]:
         raise ValueError("feature-first checkpoint changed")
@@ -55,11 +55,12 @@ def fit(root, report, arm, seed, data, replay):
             training[rows] = rng.permutation(training[rows])
     harper_rng = np.random.default_rng(seed_for("harper-adaptation-order", seed))
     supplement_rng = np.random.default_rng(seed_for("harper-adaptation-supplement", seed))
+    gain_rng = np.random.default_rng(seed_for("harper-adaptation-attenuation", seed)) if attenuate else None
     harper_pools = [np.flatnonzero(training == value) for value in (0, 1)]
     ami, ami_labels, _ = data["ami-train"]
     ami_pools = [np.flatnonzero(ami_labels == value) for value in (0, 1)]
     replay_pcm, targets, replay_groups = replay
-    name = f"{arm}-{seed}"
+    name = f"{arm}-{seed}" + ("-attenuated" if attenuate else "")
     meter = Progress(f"own-student-real-{name}", STEPS, "updates")
     losses = []
     try:
@@ -83,6 +84,12 @@ def fit(root, report, arm, seed, data, replay):
             delays = torch.full((len(x), 1), float(DEADLINE), device=DEVICE)
             logits = model.logits(x, delays).flatten()
             loss = (F.binary_cross_entropy_with_logits(logits, y, reduction="none") * w).sum() / w.sum()
+            if gain_rng is not None:
+                gain = torch.as_tensor(10 ** (gain_rng.uniform(-6, 0, (len(x), 1)) / 20),
+                                       dtype=x.dtype, device=DEVICE)
+                augmented = model.logits(x * gain, delays).flatten()
+                loss_augmented = (F.binary_cross_entropy_with_logits(augmented, y, reduction="none") * w).sum() / w.sum()
+                loss = (loss + loss_augmented) / 2
             optimizer.zero_grad(set_to_none=True)
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 5, error_if_nonfinite=True)
@@ -93,7 +100,8 @@ def fit(root, report, arm, seed, data, replay):
         meter.finish("failed")
         raise
     meter.finish()
-    output = root / "runs/own-student-real-labels" / f"{name}.pt"
+    directory = root / "runs/own-student-real-labels" if output_dir is None else output_dir
+    output = directory / f"{name}.pt"
     temporary = output.with_suffix(".part")
     torch.save({"config": payload["config"], "state": model.state_dict()}, temporary)
     temporary.replace(output)
@@ -134,7 +142,7 @@ def paired_means(predictions, labels, groups):
     return {name: np.quantile(values, [.025, .975]).tolist() for name, values in deltas.items()}
 
 
-def run(root):
+def checked_inputs(root):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("the experiment requires staged Vast data")
     receipt = root / "reports/own-teacher-feature-student.json"
@@ -159,6 +167,11 @@ def run(root):
     if len(views["harper-train"][1]) != len(fit_members) or len(views["harper-validation"][1]) != len(valid_members):
         raise ValueError("Harper materialization and pinned roles disagree")
     replay = pcm, scores, [np.flatnonzero((roles == "fit") & (sources == source)) for source in np.unique(sources)]
+    return receipt, parent, views, replay, train_membership, validation_membership
+
+
+def run(root):
+    receipt, parent, views, replay, train_membership, validation_membership = checked_inputs(root)
     train_output = root / "runs/own-student-real-labels"
     train_output.mkdir(parents=True, exist_ok=True)
     predictions, fits = {}, {}
