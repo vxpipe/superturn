@@ -203,7 +203,7 @@ def fit_model(output, config, pcm, targets, sources, roles, groups, cache_hash, 
     return checkpoint, report
 
 
-def external(root, fits, device):
+def external(root, fits, device, *, thresholds=None):
     path = root / "raw" / "livekit_eot_diagnostic" / "data/en/validation-00000-of-00002.parquet"
     if file_digest(path) != DATASET_SHA256:
         raise ValueError("external diagnostic differs from the matched teacher comparison")
@@ -241,7 +241,8 @@ def external(root, fits, device):
             meter.advance(rows.num_rows)
         if (len(truth), sum(truth)) != (932, 400):
             raise ValueError("external diagnostic no longer matches the matched teacher counts")
-        results = {name: summarize(values, truth, [0.5], roc_limits=True) for name, values in scores.items()}
+        results = {name: summarize(values, truth, [0.5 if thresholds is None else thresholds[name]], roc_limits=True)
+                   for name, values in scores.items()}
     except BaseException:
         meter.finish("failed")
         raise
