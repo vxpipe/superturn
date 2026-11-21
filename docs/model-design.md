@@ -112,7 +112,8 @@ alignment. Pack it by applying NFKC, Unicode lowercase, then removing
 Unicode punctuation and NUL. UTF-8 encode, take the last 128 bytes and
 left-pad with zeros. The graph consumes bytes as integers, including
 truncated UTF-8 sequences at the leading boundary. An absent partial
-becomes 128 zeros. The planned interface is:
+becomes 128 zeros. The reference packer is
+`superturn.transcript.pack_partial_transcript`. The planned interface is:
 
 | Tensor | Type and shape |
 | --- | --- |
