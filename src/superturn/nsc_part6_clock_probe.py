@@ -85,7 +85,7 @@ def direct_power(power, activity):
     return float(np.median(np.concatenate(parts))) if parts else None
 
 
-def match_phrases(source, receiver, edges, source_direct, receiver_direct):
+def match_phrases(source, receiver, edges, source_direct, receiver_direct, *, max_copy_db=MAX_COPY_DB):
     bands, source_power = source
     other, power = receiver
     if receiver_direct is None or source_direct is None:
@@ -121,7 +121,7 @@ def match_phrases(source, receiver, edges, source_direct, receiver_direct):
         echo = float(np.median(power[target:target + PHRASE]) - receiver_direct)
         if not 0 < peak < len(score) - 1 or best < MIN_CORR or margin < MIN_MARGIN:
             rejected["weak_or_ambiguous_peak"] += 1
-        elif echo > MAX_COPY_DB:
+        elif max_copy_db is not None and echo > max_copy_db:
             rejected["copy_too_loud"] += 1
         else:
             alternatives = np.flatnonzero(score >= best - MIN_MARGIN)

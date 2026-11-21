@@ -1,5 +1,6 @@
 """Find roster-verified original NSC Part 4 pairs without reading audio."""
 
+import argparse
 from collections import defaultdict
 from itertools import combinations
 import json
@@ -37,12 +38,24 @@ def inventory():
     return parts, len(encoded)
 
 
-def scan(fragments, roster, reciprocated):
-    reader = RangeReader(fragments, byte_limit=512 * 1024, request_limit=2 * HEADERS)
+def choose(pairs, groups, cap):
+    sizes = {session: sum(member["bytes"] for paths in people.values() for member in paths.values())
+             for session, people in pairs.items()}
+    rank = sorted((session for session in pairs if assign(SOURCE, groups[session], "train-conversation") == "train"),
+                  key=lambda session: (seed_for(SOURCE, session), session))
+    return next(((left, right) for left, right in combinations(rank, 2)
+                 if groups[left] != groups[right] and sizes[left] + sizes[right] + (1 << 20) <= cap), ()), sizes
+
+
+def scan(fragments, roster, reciprocated, groups, headers, cap):
+    reader = RangeReader(fragments, byte_limit=512 * 1024, request_limit=2 * headers)
     found = defaultdict(lambda: defaultdict(dict))
-    meter = Progress(SOURCE, HEADERS, "headers")
+    complete = {}
+    meter = Progress(SOURCE, headers, "headers")
+    parsed = 0
     try:
-        for name, regular, start, size in tar_headers(reader, HEADERS):
+        for name, regular, start, size in tar_headers(reader, headers):
+            parsed += 1
             meter.advance(1)
             key = MEMBER.fullmatch(name or "")
             if not regular or key is None:
@@ -55,16 +68,20 @@ def scan(fragments, roster, reciprocated):
             if fmt in files or size <= 42 or not 0 < start < reader.ends[-1]:
                 raise ValueError("invalid duplicate or empty original archive member")
             files[fmt] = {"name": name, "offset": start, "bytes": size}
+            pair = found[session]
+            if set(pair) == roster[session] and all(set(paths) == {"flac", "jsonl"} for paths in pair.values()):
+                complete[session] = dict(pair)
+                if choose(complete, groups, cap)[0]:
+                    break
     except BaseException:
         meter.finish("failed")
         raise
+    meter.skip(headers - parsed)
     meter.finish()
-    complete = {session: dict(people) for session, people in found.items()
-                if set(people) == roster[session] and all(set(paths) == {"flac", "jsonl"} for paths in people.values())}
-    return reader, complete, len(found)
+    return reader, complete, len(found), parsed
 
 
-def run(root):
+def run(root, headers=HEADERS):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("run the original recording check on Vast")
     census, census_sha = read_receipt(root, REPORT)
@@ -80,16 +97,11 @@ def run(root):
     part4, reciprocated, *_ = part_rosters(roster_directory / "SpeakerMetaData")
     groups = speaker_groups((session, part4[session]) for session in reciprocated)
     fragments, listing_bytes = inventory()
-    reader, pairs, mentioned = scan(fragments, part4, reciprocated)
-    sizes = {session: sum(member["bytes"] for paths in people.values() for member in paths.values())
-             for session, people in pairs.items()}
-    rank = sorted((session for session in pairs if assign(SOURCE, groups[session], "train-conversation") == "train"),
-                  key=lambda session: (seed_for(SOURCE, session), session))
-    inventory_bytes = listing_bytes + reader.bytes
     transport_cap = source.get("max_total_bytes")
+    reader, pairs, mentioned, parsed = scan(fragments, part4, reciprocated, groups, headers, transport_cap)
+    chosen, sizes = choose(pairs, groups, transport_cap)
+    inventory_bytes = listing_bytes + reader.bytes
     raw_used = sum(path.stat().st_size for path in (root / "raw").rglob("*") if path.is_file())
-    chosen = next(((left, right) for left, right in combinations(rank, 2)
-                   if groups[left] != groups[right] and sizes[left] + sizes[right] + (1 << 20) <= transport_cap), ())
     selected = []
     for session in chosen:
         people = pairs[session]
@@ -104,7 +116,8 @@ def run(root):
     result = {
         "scope": "native same-room headers and stream information only",
         "roster_census_sha256": census_sha, "repository": REPO, "revision": REVISION,
-        "archive_fragments": fragments, "headers_budget": HEADERS,
+        "archive_fragments": fragments, "headers_budget": headers, "headers_checked": parsed,
+        "range_requests": reader.requests,
         "inspected_metadata_bytes": listing_bytes + reader.bytes, "header_walk_bytes": inventory_bytes,
         "complete_reciprocal_pairs": len(pairs), "roster_session_headers_seen": mentioned,
         "selected": selected, "byte_cap": transport_cap,
@@ -118,4 +131,9 @@ def run(root):
 
 
 if __name__ == "__main__":
-    run(data_root())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--headers", type=int, default=HEADERS)
+    args = parser.parse_args()
+    if not 1 <= args.headers <= 896:
+        parser.error("header budget must be between 1 and 896")
+    run(data_root(), args.headers)
