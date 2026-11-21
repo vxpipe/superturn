@@ -11,6 +11,7 @@ source name and the group key, so it is identical on every machine and run.
 from __future__ import annotations
 
 import hashlib
+from collections import Counter, defaultdict
 from collections.abc import Iterable
 
 # Percent of groups per split, for training sources.
@@ -64,7 +65,11 @@ def speaker_groups(recordings: Iterable[tuple[str, Iterable[str]]]) -> dict[str,
     members: dict[str, list[str]] = {}
     for recording in recording_ids:
         members.setdefault(find(f"r\0{recording}"), []).append(recording)
-    return {r: min(group) for group in members.values() for r in group}
+    groups = {}
+    for members_of_group in members.values():
+        key = min(members_of_group)
+        groups.update(dict.fromkeys(members_of_group, key))
+    return groups
 
 
 def split_recordings(
@@ -84,8 +89,6 @@ def stratified_groups(
     test groups for small languages when at least three groups are available.
     A multilingual group receives one split for all its languages.
     """
-    from collections import Counter, defaultdict
-
     languages = defaultdict(set)
     for group, language in groups:
         languages[group].add(language)
@@ -147,3 +150,136 @@ def stratified_groups(
                     counts[other][previous] -= 1
                     counts[other][split] += 1
     return assignments
+
+
+DURATION_BANDS = ("under_1200_ms", "1200_to_2699_ms", "2700_to_5999_ms", "6000_ms_or_more")
+
+
+def duration_band(milliseconds: int | None) -> str:
+    """Bin available turn history as measured at a pause."""
+    if milliseconds is None:
+        return "unknown"
+    if type(milliseconds) is not int or milliseconds < 0:
+        raise ValueError("prior_turn_ms must be a nonnegative integer or null")
+    return DURATION_BANDS[sum(milliseconds >= edge for edge in (1200, 2700, 6000))]
+
+
+def stratified_duration_groups(
+    source: str, role: str, rows: Iterable[tuple[str, str, int | None]], *, fixed: dict[str, str] | None = None,
+) -> tuple[dict[str, str], list[dict]]:
+    """Allocate whole groups by joint language and duration pause counts."""
+    volumes = defaultdict(Counter)
+    for group, language, prior_turn_ms in rows:
+        volumes[group][language, duration_band(prior_turn_ms)] += 1
+        volumes[group][language, "all_durations"] += 1
+        volumes[group]["", "all_durations"] += 1
+
+    totals, group_totals = Counter(), Counter()
+    for frequencies in volumes.values():
+        totals.update(frequencies)
+        group_totals.update(frequencies.keys())
+
+    pause_counts = defaultdict(Counter)
+    group_counts = defaultdict(Counter)
+    remaining = group_totals.copy()
+    assignments = dict(fixed or {})
+    order = sorted(volumes.keys() - assignments.keys(), key=lambda group: (
+        min(group_totals[cell] for cell in volumes[group]),
+        -sum(volumes[group].values()),
+        hashlib.sha256(f"superturn-duration-split-v1\0{source}\0{group}".encode()).digest(),
+    ))
+
+    def place(group, split, direction):
+        for cell, weight in volumes[group].items():
+            pause_counts[cell][split] += direction * weight
+            group_counts[cell][split] += direction
+
+    shares = dict(SPLITS)
+    if any(group not in volumes or split not in shares or (role == "test" and split != "test")
+           for group, split in assignments.items()):
+        raise ValueError("invalid fixed group or split")
+    for group, split in assignments.items():
+        place(group, split, 1)
+        remaining.subtract(volumes[group].keys())
+
+    def cost(cell, split, delta):
+        total = totals[cell]
+        before = pause_counts[cell][split] / total - shares[split] / 100
+        after = before + delta / total
+        weight = 1 if cell[1] != "all_durations" else .1 if cell[0] else .01
+        return weight * (after * after - before * before)
+
+    for group in order:
+        cells = sorted(volumes[group].items())
+
+        def priority(split):
+            coverage, increase = 0.0, 0.0
+            for cell, weight in cells:
+                if group_totals[cell] >= len(SPLITS):
+                    missing = sum(group_counts[cell][name] == 0 for name in shares)
+                    if remaining[cell] <= missing and group_counts[cell][split] == 0:
+                        coverage += 1 / group_totals[cell]
+                increase += cost(cell, split, weight)
+            return -coverage, increase
+
+        split = "test" if role == "test" else min(shares, key=priority)
+        assignments[group] = split
+        place(group, split, 1)
+        remaining.subtract(volumes[group].keys())
+
+    if role != "test":
+        # Fill uncovered cells by moving a group only if its other cells
+        # retain coverage. Counts can still be constrained by large groups.
+        for cell in sorted(totals, key=lambda key: (group_totals[key], key)):
+            if group_totals[cell] < len(SPLITS):
+                continue
+            for split in shares:
+                if group_counts[cell][split]:
+                    continue
+                candidates = [group for group in order if cell in volumes[group] and all(
+                    group_totals[tag] < len(SPLITS) or group_counts[tag][assignments[group]] > 1
+                    for tag in volumes[group]
+                )]
+                if candidates:
+                    def move_cost(group):
+                        previous = assignments[group]
+                        return sum(cost(tag, split, weight) + cost(tag, previous, -weight)
+                                   for tag, weight in sorted(volumes[group].items()))
+
+                    group = min(candidates, key=move_cost)
+                    place(group, assignments[group], -1)
+                    assignments[group] = split
+                    place(group, split, 1)
+                elif len(order) <= 48:
+                    # A donor's previous split can sometimes be replenished
+                    # by one other group in the same small planning problem.
+                    for donor in order:
+                        if cell not in volumes[donor]:
+                            continue
+                        previous = assignments[donor]
+                        donors_last_tags = {tag for tag in volumes[donor]
+                                            if group_totals[tag] >= len(SPLITS) and group_counts[tag][previous] == 1}
+                        replacement = next((other for other in order if assignments[other] != previous
+                                            and donors_last_tags <= volumes[other].keys()
+                                            and all(group_totals[tag] < len(SPLITS)
+                                                    or group_counts[tag][assignments[other]] > 1
+                                                    or (assignments[other] == split and tag in volumes[donor])
+                                                    for tag in volumes[other])), None)
+                        if replacement is not None:
+                            place(donor, previous, -1)
+                            place(replacement, assignments[replacement], -1)
+                            assignments[donor], assignments[replacement] = split, previous
+                            place(donor, split, 1)
+                            place(replacement, previous, 1)
+                            break
+
+    summary = []
+    for cell, total in sorted(totals.items()):
+        language, band = cell
+        groups = group_totals[cell]
+        summary.append({"language": language or None, "duration_band": band, "pauses": total,
+                        "independent_groups": groups,
+                        "by_split": {split: {"pauses": pause_counts[cell][split], "groups": group_counts[cell][split]}
+                                     for split in shares},
+                        "empty_splits": [split for split in shares if not group_counts[cell][split]]})
+    return assignments, summary

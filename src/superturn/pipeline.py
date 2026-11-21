@@ -431,10 +431,16 @@ def register(sub):
         "audit-labels": "audit sampled pauses with independent WebRTC speech activity",
         "check-pitch": "compare pitch and voicing with a YIN speech reference",
         "check-ami-reference": "compare AMI labels with the aligned human transcript",
+        "plan-conversation-splits": "plan speaker-disjoint splits by language and turn length for a new cohort",
     }
     for name, description in handlers.items():
         parser = sub.add_parser(name, help=description)
         parser.set_defaults(func=command)
+        if name == "plan-conversation-splits":
+            parser.add_argument("manifest", type=Path)
+            parser.add_argument("output", type=Path)
+            parser.add_argument("--source", required=True)
+            parser.add_argument("--test-only", action="store_true")
         if name in {"label", "train", "smoke", "experiments", "audit-labels"}:
             parser.add_argument("--device", choices=("auto", "cpu", "cuda"), default="auto")
         if name == "label":
@@ -474,7 +480,11 @@ def register(sub):
 def command(args):
     root = data_root()
     name = args.command
-    if name == "label":
+    if name == "plan-conversation-splits":
+        from .conversation_splits import write_plan
+
+        print(json.dumps(write_plan(args.manifest, args.output, args.source, test_only=args.test_only), indent=2))
+    elif name == "label":
         label(root, args.only, _device(args.device), args.workers)
     elif name == "shard":
         shard(root, args.only)
