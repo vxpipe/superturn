@@ -149,6 +149,9 @@ def _run_signature(root, config, device):
     for name in ("train.py", "model.py", "augment.py", "audio.py", "quant_aware.py",
                  "ami_training.py", "training_augmentation.py"):
         source.update(Path(__file__).with_name(name).read_bytes())
+    if config.get("architecture") == "citrinet":
+        source.update(Path(__file__).with_name("citrinet.py").read_bytes())
+        source.update(version("nemo-toolkit").encode())
     assets = {}
     if config.get("augmentation", True):
         for name in ("musan", "openslr26"):
@@ -220,6 +223,10 @@ def train(root, name, config, device):
     warm_start = _starting_checkpoint(root, config)
     if warm_start is not None:
         model.load_state_dict(torch.load(warm_start, map_location="cpu", weights_only=True)["state"])
+    if config["architecture"] == "citrinet":
+        from .citrinet import initialize
+
+        initialize(model, root, config["citrinet_modules"], pretrained=config["citrinet_pretrained"])
     parameter_total = sum(p.numel() for p in model.parameters())
     state_dict = type(model).state_dict
     if config.get("quantization_aware", False):

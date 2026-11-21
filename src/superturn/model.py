@@ -134,6 +134,10 @@ class TurnModel(nn.Module):
 
 
 def build(config):
+    if config["architecture"] == "citrinet":
+        from .citrinet import CitrinetTurnModel
+
+        return CitrinetTurnModel(config)
     width = config.get("width")
     if width is None:
         target = config.get("parameters", 150000)

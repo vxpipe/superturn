@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Prepare an isolated NeMo environment and run the conversation transfer pilot.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+: "${SUPERTURN_DATA:?set the campaign data root}"
+[[ -f "$SUPERTURN_DATA/.campaign-machine" ]] || { echo "requires a campaign machine" >&2; exit 2; }
+export PYTHONPATH="$PWD/src${PYTHONPATH:+:$PYTHONPATH}"
+
+environment="$SUPERTURN_DATA/audit-models/citrinet-256-ls/nemo-3.0.0"
+if [[ ! -f "$environment/.ready" ]]; then
+  mkdir -p "$(dirname "$environment")"
+  temporary="$(mktemp -d "$environment.XXXXXX")"
+  trap 'rm -rf -- "$temporary"' EXIT
+  cp -a --reflink=auto .venv/. "$temporary/"
+  uv pip install --python "$temporary/bin/python" 'nemo-toolkit[asr]==3.0.0' \
+    'torch==2.8.0' 'torchaudio==2.8.0' 'numpy>=2,<3'
+  "$temporary/bin/python" -c 'from nemo.collections.asr.modules import AudioToMelSpectrogramPreprocessor, ConvASREncoder'
+  touch "$temporary/.ready"
+  mv -T "$temporary" "$environment"
+fi
+if [[ "${1:-}" == --setup ]]; then
+  exit 0
+fi
+"$environment/bin/python" -m superturn.citrinet_probe
+bin/sync verify runs reports
