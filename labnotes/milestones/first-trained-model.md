@@ -165,9 +165,9 @@ weak recall at the operating target even with independent calibration.
 The current sources and variants have weak recall at low false-positive
 rates. Asked whether to add up to 1 GB of speaker-stratified HarperValleyBank
 training data on Vast.ai while retaining the original evaluation sets.
-Use the existing evidence to guide the experiment queue without changing
-the acceptance targets. The 3 s convolution export is available for
-latency checks on an eventual candidate.
+Prioritize turn quality. Resume CPU latency benchmarking once a candidate
+meets the turn-quality targets. Keep the 2 ms latency requirement for
+that candidate.
 Finish the original Stage 1 validation ranking with the five remaining
 Conformer runs. The Stage 1 job stops before windows, export, and test.
 Preserve the original test shards and record the mixture decision before

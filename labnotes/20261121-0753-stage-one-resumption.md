@@ -17,3 +17,7 @@
   Astra reviewed checkpoint compatibility, the early return and the
   separate receipt. The live job confirmed reuse of all seven original
   checkpoints and started `s1-b-150000-29`.
+- At 330 of 14,135 optimizer steps the measured pace was 11 steps/s,
+  with 20m55s estimated remaining for that run. The user prioritized
+  turn quality and asked to defer further speed benchmarks until a
+  model meets the quality targets.
