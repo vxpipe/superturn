@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -23,9 +24,9 @@ def paths(root, split, condition="clean"):
     return sorted((root / "shards" / split / condition).glob("*.parquet"))
 
 
-def records(files, batch_size=16):
+def records(files, batch_size=16, columns=None):
     for path in files:
-        for batch in pq.ParquetFile(path).iter_batches(batch_size=batch_size):
+        for batch in pq.ParquetFile(path).iter_batches(batch_size=batch_size, columns=columns):
             yield batch.to_pylist()
 
 
@@ -124,6 +125,32 @@ def _assets(root, samples):
     return noise, sorted(ir_root.glob("*.wav")), voices
 
 
+def _run_signature(root, config, device):
+    shard_manifest = root / "shards" / "manifest.json"
+    if not shard_manifest.is_file():
+        return None
+    source = hashlib.sha256()
+    for name in ("train.py", "model.py", "augment.py"):
+        source.update(Path(__file__).with_name(name).read_bytes())
+    return {
+        "config": config,
+        "device": device,
+        "torch": str(torch.__version__),
+        "source": source.hexdigest(),
+        "shards": hashlib.sha256(shard_manifest.read_bytes()).hexdigest(),
+    }
+
+
+def completed_run(root, name, config, device):
+    run = root / "runs" / name
+    marker, checkpoint = run / "finished.json", run / "best.pt"
+    signature = _run_signature(root, config, device)
+    if signature is not None and marker.is_file() and checkpoint.is_file():
+        if json.loads(marker.read_text()) == signature:
+            return checkpoint
+    return None
+
+
 def train(root, name, config, device):
     train_files = paths(root, "train")
     valid_files = paths(root, "validation")
@@ -138,9 +165,13 @@ def train(root, name, config, device):
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.get("lr", 0.001))
     run = root / "runs" / name
     run.mkdir(parents=True, exist_ok=True)
+    marker = run / "finished.json"
+    marker.unlink(missing_ok=True)
+    signature = _run_signature(root, config, device)
     counts = Counter()
     train_batches = 0
-    for batch in records(train_files, config.get("batch_size", 16)):
+    for batch in records(train_files, config.get("batch_size", 16),
+                         columns=["source", "language", "audio", "label", "pause_start"]):
         selection = [row for row in batch if eligible(row, config)]
         counts.update(row["language"] for row in selection)
         train_batches += bool(selection)
@@ -220,5 +251,9 @@ def train(root, name, config, device):
         meter.finish("failed")
         raise
     else:
+        if signature is not None:
+            temp = marker.with_suffix(".tmp")
+            temp.write_text(json.dumps(signature, sort_keys=True) + "\n")
+            temp.replace(marker)
         meter.finish()
     return run / "best.pt"

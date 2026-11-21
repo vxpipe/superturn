@@ -87,7 +87,9 @@ but not redistribution.
    time, then fill the `heard` column of `review.csv` with `hold`, `shift`,
    or `unclear`. Run `superturn listening --judgments PATH` on the machine
    for per-language and per-method accuracy. Keep the packet and review
-   working data private.
+   working data private. The experiment queue can reuse a finished training
+   run when the shard fingerprints, configuration, device, Torch version
+   and training code match.
    Each job runs in the tmux session `vxpipe`, logs under
    `$REMOTE_DATA/logs/`, and records its exit status under
    `$REMOTE_DATA/jobs/`. Keep the watcher running for estimate, stall,

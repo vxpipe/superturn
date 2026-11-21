@@ -59,13 +59,15 @@ def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture)
     pytest.importorskip("onnxruntime")
     pytest.importorskip("onnx")
     from superturn.evaluate import benchmark, export
-    from superturn.train import train
+    from superturn.train import completed_run, train
 
     monkeypatch.setenv("SUPERTURN_DATA", str(tmp_path))
     make_shards(tmp_path, _generated_rows(tmp_path))
     config = {"architecture": architecture, "parameters": 150000, "window": 1,
               "epochs": 1, "augmentation": False}
     checkpoint = train(tmp_path, "fixture", config, "cpu")
+    assert completed_run(tmp_path, "fixture", config, "cpu") == checkpoint
+    assert completed_run(tmp_path, "fixture", {**config, "epochs": 2}, "cpu") is None
     result = export(checkpoint)
     assert result.stat().st_size < 1000000
     report = benchmark(tmp_path, result, 0.5, samples=3)

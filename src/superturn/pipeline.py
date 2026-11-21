@@ -110,7 +110,7 @@ def experiments(root, base, device):
     import torch
     from .evaluate import benchmark, export, quantization_auc
     from .progress import Progress
-    from .train import train
+    from .train import completed_run, train
 
     if (root / ".campaign-machine").is_file():
         from .listening import require_gate
@@ -126,9 +126,15 @@ def experiments(root, base, device):
     final_models = []
 
     def attempt(name, config):
+        reused = False
         try:
             merged = {**base, **config}
-            output = train(root, name, merged, device)
+            output = completed_run(root, name, merged, device)
+            reused = output is not None
+            if reused:
+                print(f"{name}: reuse verified training checkpoint", flush=True)
+            else:
+                output = train(root, name, merged, device)
             result = torch.load(output, map_location="cpu", weights_only=True)["metrics"]
             _run_sync(root)
             return name, merged, result
@@ -136,7 +142,10 @@ def experiments(root, base, device):
             print(f"{name} failed: {error}", flush=True)
             failures.append((name, str(error)))
         finally:
-            meter.advance(1)
+            if reused:
+                meter.skip(1)
+            else:
+                meter.advance(1)
 
     def stage(variants):
         return [result for name, config in variants if (result := attempt(name, config)) is not None]

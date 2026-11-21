@@ -118,7 +118,7 @@ def make_shards(root, rows, *, sample=False):
     try:
         with TemporaryDirectory(dir=target.parent) as temp:
             staging = target.parent / temp
-            frozen = hashlib.sha256()
+            fingerprints = {split: hashlib.sha256() for split in grouped}
             for split, items in sorted(grouped.items()):
                 for name in CONDITIONS if split == "test" else ("clean",):
                     folder = staging / split / name
@@ -129,15 +129,17 @@ def make_shards(root, rows, *, sample=False):
                             seed = _key(row)
                             pcm = condition(clip(row, cached(root / row.audio)), name, seed)
                             metadata = asdict(row)
-                            if split == "test":
-                                frozen.update(json.dumps((name, metadata), sort_keys=True).encode())
-                                frozen.update(pcm.tobytes())
-                            records.append({**metadata, "condition": name, "pcm": pcm.tobytes()})
+                            pcm_bytes = pcm.tobytes()
+                            fingerprints[split].update(json.dumps((name, metadata), sort_keys=True).encode())
+                            fingerprints[split].update(pcm_bytes)
+                            records.append({**metadata, "condition": name, "pcm": pcm_bytes})
                             meter.advance(1)
                         pq.write_table(pa.Table.from_pylist(records),
                                        folder / f"{start // SHARD_ROWS:06d}.parquet", compression="zstd")
             (staging / "manifest.json").write_text(json.dumps(
-                {"test_sha256": frozen.hexdigest(), "speaker_report": report,
+                {"test_sha256": fingerprints.get("test", hashlib.sha256()).hexdigest(),
+                 "sha256_by_split": {split: digest.hexdigest() for split, digest in fingerprints.items()},
+                 "speaker_report": report,
                  "examples_by_split": {name: len(items) for name, items in grouped.items()}}, indent=2) + "\n")
             for entry in staging.iterdir():
                 destination = target / entry.name
