@@ -69,6 +69,17 @@ def run(root, device):
         model = build(state["config"]).to(device).eval()
         model.load_state_dict(state["state"])
         models[name] = model
+    results = score_languages(root, models, device, teacher=teacher)
+    report = {"revision": REVISION, "dataset_sha256": DATA, "teacher_sha256": teacher_hash,
+              "student_fit_sha256": file_digest(fits_path), "decision_ms": DECISION_MS,
+              "condition": "G.711 telephone", "scope": "provider-labelled diagnostic only",
+              "threshold_note": "0.5 descriptive, ROC cutoffs retrospective, no threshold fitted",
+              "languages": results}
+    _write_json(root / "reports" / "multilingual-teacher-probe.json", report)
+    return report
+
+
+def score_languages(root, models, device, *, teacher=None):
     folder = root / "raw" / "livekit_multilingual_diagnostic" / "data"
     sources = {}
     for language, digest in DATA.items():
@@ -81,7 +92,8 @@ def run(root, device):
         return {name: teacher(clip[-length:]) for name, length in WINDOWS.items()}
 
     results = {}
-    meter = Progress("multilingual-teacher-probe", sum(p.metadata.num_rows for p in sources.values()), "turns")
+    step = "multilingual-teacher-probe" if teacher else "depth-multilingual"
+    meter = Progress(step, sum(p.metadata.num_rows for p in sources.values()), "turns")
     try:
         with ThreadPoolExecutor(max_workers=4) as workers:
             for language, source in sources.items():
@@ -91,9 +103,10 @@ def run(root, device):
                     if examples:
                         clips, labels = zip(*examples, strict=True)
                         truth.extend(labels)
-                        for row in workers.map(score_teachers, clips):
-                            for name, value in row.items():
-                                scores[name].append(value)
+                        if teacher is not None:
+                            for row in workers.map(score_teachers, clips):
+                                for name, value in row.items():
+                                    scores[name].append(value)
                         x = torch.as_tensor(np.stack([c[-SAMPLES:] for c in clips]), device=device)
                         elapsed = torch.full((len(x), 1), float(DECISION_MS), device=device)
                         with torch.inference_mode():
@@ -107,20 +120,15 @@ def run(root, device):
                                      "shifts": sum(truth), "models": {
                                          name: summarize(values, truth, [0.5], roc_limits=True)
                                          for name, values in scores.items()}}
-                _write_json(root / "reports" / "multilingual-teacher-progress.json",
-                            {"complete_languages": sorted(results), "languages": results})
-        report = {"revision": REVISION, "dataset_sha256": DATA, "teacher_sha256": teacher_hash,
-                  "student_fit_sha256": file_digest(fits_path), "decision_ms": DECISION_MS,
-                  "condition": "G.711 telephone", "scope": "provider-labelled diagnostic only",
-                  "threshold_note": "0.5 descriptive, ROC cutoffs retrospective, no threshold fitted",
-                  "languages": results}
-        _write_json(root / "reports" / "multilingual-teacher-probe.json", report)
+                if teacher is not None:
+                    _write_json(root / "reports" / "multilingual-teacher-progress.json",
+                                {"complete_languages": sorted(results), "languages": results})
     except BaseException:
         meter.finish("failed")
         raise
     else:
         meter.finish()
-    return report
+    return results
 
 
 if __name__ == "__main__":

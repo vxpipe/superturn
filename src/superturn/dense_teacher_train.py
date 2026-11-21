@@ -32,21 +32,39 @@ CORPORA = {
 }
 
 
-def load_pool(root, folder):
-    report_path = root / "reports" / "dense-teacher-targets.json"
+def load_pool(root, folder, *, teacher_seconds=3):
+    suffix = "" if teacher_seconds == 3 else f"-{teacher_seconds}s"
+    reference_path = root / "reports" / "dense-teacher-targets.json"
+    report_path = root / "reports" / f"dense-teacher-targets{suffix}.json"
     report = json.loads(report_path.read_text())
     if report["preview"] or report["pool_sha256"] != file_digest(folder / "pool.json"):
         raise ValueError("training requires the complete inventoried target pool")
+    reference = None
+    if teacher_seconds != 3:
+        reference = json.loads(reference_path.read_text())
+        if (report.get("teacher_context_seconds") != teacher_seconds
+                or report.get("reference_3s_report_sha256") != file_digest(reference_path)
+                or report["pool_sha256"] != reference["pool_sha256"]
+                or set(report["shard_sha256"]) != set(reference["shard_sha256"])):
+            raise ValueError("teacher history changed the student selection or reference provenance")
     count = report["pauses"]
     pcm = np.empty((count, len(DEADLINES), SAMPLES), dtype="<i2")
     targets = np.empty((count, len(DEADLINES)), dtype=np.float32)
     sources, roles, groups, speakers, recordings = [], [], [], [], []
     start = 0
     for name, digest in sorted(report["shard_sha256"].items()):
-        path = folder / "scored" / name
+        path = folder / f"scored{suffix}" / name
         if file_digest(path) != digest:
             raise ValueError(f"teacher target shard changed: {name}")
-        rows = pq.read_table(path).to_pylist()
+        table = pq.read_table(path)
+        if reference is not None:
+            original = folder / "scored" / name
+            if file_digest(original) != reference["shard_sha256"][name]:
+                raise ValueError(f"reference student audio changed: {name}")
+            common = [key for key in table.column_names if not key.startswith("target_")]
+            if not table.select(common).equals(pq.read_table(original, columns=common)):
+                raise ValueError(f"student audio or metadata differs across teacher histories: {name}")
+        rows = table.to_pylist()
         stop = start + len(rows)
         for j, deadline in enumerate(DEADLINES):
             pcm[start:stop, j, :] = np.stack([np.frombuffer(row[f"pcm_{deadline}"], "<i2") for row in rows])
@@ -89,7 +107,7 @@ def batch(pcm, i, j, device):
     return audio, elapsed
 
 
-def evaluate_fidelity(model, pcm, targets, fidelity, sources, active_sources, device):
+def evaluate_fidelity(model, pcm, targets, fidelity, sources, active_sources, device, *, record_layers=False):
     results = {}
     model.eval()
     with torch.inference_mode():
@@ -99,11 +117,15 @@ def evaluate_fidelity(model, pcm, targets, fidelity, sources, active_sources, de
                 raise ValueError(f"{source} is missing from the fidelity pool")
             i = np.repeat(rows, len(DEADLINES))
             j = np.tile(np.arange(len(DEADLINES)), len(rows))
-            predictions, states, losses = [], [], []
+            predictions, states, losses, recurrent = [], [], [], []
             for start in range(0, len(i), BATCH):
                 sl = slice(start, start + BATCH)
                 x, elapsed = batch(pcm, i[sl], j[sl], device)
-                features = model.decision_input(x, elapsed)
+                if record_layers:
+                    features, hidden = model.decision_input(x, elapsed, return_state=True)
+                    recurrent.append(hidden.cpu().numpy())
+                else:
+                    features = model.decision_input(x, elapsed)
                 logits = model.decision(features).flatten()
                 y = torch.as_tensor(targets[i[sl], j[sl]], device=device)
                 losses.append(F.binary_cross_entropy_with_logits(logits, y, reduction="none").cpu().numpy())
@@ -126,6 +148,8 @@ def evaluate_fidelity(model, pcm, targets, fidelity, sources, active_sources, de
             results[source] = {"pauses": len(rows), "bce": float(np.concatenate(losses).mean()),
                                "state_std": float(np.concatenate(states).std(axis=0).mean()),
                                "by_deadline": by_deadline}
+            if recurrent:
+                results[source]["layer_state_std"] = np.concatenate(recurrent, axis=1).std(axis=1).mean(axis=1).tolist()
     return results
 
 
@@ -179,7 +203,8 @@ def fit_model(output, config, pcm, targets, sources, roles, groups, cache_hash, 
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 5.0, error_if_nonfinite=True)
                 optimizer.step()
                 meter.advance(1)
-            stats = evaluate_fidelity(model, pcm, targets, fidelity, sources, active_sources, device)
+            stats = evaluate_fidelity(model, pcm, targets, fidelity, sources, active_sources, device,
+                                      record_layers="gru_hidden_size" in config)
             loss = float(np.mean([value["bce"] for value in stats.values()]))
             history.append({"epoch": epoch, "macro_bce": loss, "sources": stats})
             if loss < best_loss:

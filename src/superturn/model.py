@@ -100,14 +100,17 @@ class ConformerBlock(nn.Module):
 
 
 class TurnModel(nn.Module):
-    def __init__(self, architecture, width, window, layers=None):
+    def __init__(self, architecture, width, window, layers=None, gru_hidden_size=None):
         super().__init__()
         self.architecture = architecture
         self.samples = round(window * 16000)
         self.features = AcousticFeatures()
         self.stem = nn.Sequential(StemBlock(43, width // 2), StemBlock(width // 2, width))
+        output_width = width
         if architecture == "a":
-            self.sequence = nn.GRU(width, width, num_layers=layers or 2, batch_first=True)
+            if gru_hidden_size is not None:
+                output_width = gru_hidden_size
+            self.sequence = nn.GRU(width, output_width, num_layers=layers or 2, batch_first=True)
         elif architecture == "b":
             frames = ((self.samples - FRAME) // HOP + 4) // 4
             self.positions = nn.Parameter(torch.zeros(1, frames, width))
@@ -115,16 +118,19 @@ class TurnModel(nn.Module):
             self.pool = nn.Linear(width, 1)
         else:
             raise ValueError(f"unknown architecture {architecture!r}")
-        self.decision = nn.Sequential(nn.Linear(width + 1, width // 2), nn.GELU(), nn.Linear(width // 2, 1))
+        self.decision = nn.Sequential(nn.Linear(output_width + 1, width // 2), nn.GELU(), nn.Linear(width // 2, 1))
 
-    def decision_input(self, audio, silence_ms):
+    def decision_input(self, audio, silence_ms, *, return_state=False):
         x = self.stem(self.features(audio).transpose(1, 2)).transpose(1, 2)
         if self.architecture == "a":
-            x = self.sequence(x)[0][:, -1]
+            sequence, state = self.sequence(x)
+            x = sequence[:, -1]
         else:
+            state = None
             x = self.sequence(x + self.positions)
             x = (self.pool(x).softmax(dim=1) * x).sum(dim=1)
-        return torch.cat((x, silence_ms / 1000), dim=-1)
+        features = torch.cat((x, silence_ms / 1000), dim=-1)
+        return (features, state) if return_state else features
 
     def logits(self, audio, silence_ms):
         return self.decision(self.decision_input(audio, silence_ms))
@@ -139,13 +145,16 @@ def build(config):
 
         return CitrinetTurnModel(config)
     width = config.get("width")
+    gru_hidden_size = config.get("gru_hidden_size")
+    if gru_hidden_size is not None and (width is None or config["architecture"] != "a"):
+        raise ValueError("a custom GRU hidden size requires a fixed GRU stem width")
     if width is None:
         target = config.get("parameters", 150000)
         sizes = {value: parameter_count(config["architecture"], value, config["window"], config.get("layers"))
                  for value in range(32, 433, 4)}
         width = min((value for value, size in sizes.items() if size <= 1_000_000),
                     key=lambda value: abs(sizes[value] - target))
-    return TurnModel(config["architecture"], width, config["window"], config.get("layers"))
+    return TurnModel(config["architecture"], width, config["window"], config.get("layers"), gru_hidden_size)
 
 
 def parameter_count(architecture, width, window, layers=None):
