@@ -28,6 +28,8 @@ import tarfile
 
 root, output = map(Path, sys.argv[1:3])
 state_dirs = ("reports", "jobs", "progress", "logs", "manifests")
+artifact_dirs = ("raw", "labels", "shards", "tests", "runs", "exports", "cache")
+hashed_dirs = {"runs", "exports", "cache"}
 credentials = re.compile(rb"hf_[A-Za-z0-9]{24,}|AKIA[A-Z0-9]{16}|BEGIN [ A-Z]*PRIVATE KEY|X-Amz-Signature=")
 records = []
 omitted = Counter()
@@ -52,10 +54,29 @@ with tarfile.open(archive, "w:gz") as tar:
             records.append({"path": name, "size": len(content), "sha256": hashlib.sha256(content).hexdigest()})
 with archive.open("rb") as stream:
     digest = hashlib.file_digest(stream, "sha256").hexdigest()
+artifacts, links = [], []
+for directory in artifact_dirs:
+    for path in sorted((root / directory).rglob("*")):
+        name = path.relative_to(root).as_posix()
+        if path.is_symlink():
+            target = path.resolve()
+            if target.is_relative_to(root):
+                links.append({"path": name, "target": target.relative_to(root).as_posix()})
+            else:
+                omitted["external_link"] += 1
+        elif path.is_file() and path.suffix != ".tmp":
+            record = {"path": name, "size": path.stat().st_size}
+            if directory in hashed_dirs:
+                with path.open("rb") as stream:
+                    record["sha256"] = hashlib.file_digest(stream, "sha256").hexdigest()
+            artifacts.append(record)
+without_exit = [path.stem for path in sorted((root / "jobs").glob("*.started"))
+                if not path.with_suffix(".exit").is_file()]
 index = {"recorded_utc": datetime.now(timezone.utc).isoformat(),
          "project_revision": sys.argv[3], "notes_revision": sys.argv[4],
          "sha256": digest,
-         "files": records, "omitted": dict(omitted)}
+         "files": records, "artifacts": artifacts, "links": links,
+         "started_without_exit": without_exit, "omitted": dict(omitted)}
 (output / "index.json").write_text(json.dumps(index, indent=2) + "\n")
 print(f"Archived {len(records)} state files; omitted {sum(omitted.values())}")
 PY
