@@ -84,16 +84,18 @@ Last updated 2026-11-21.
   clean validation recalls were 74.79% and 66.93% at 4.997% false
   completes. At a fitted 4.79% false-complete operating point on AMI
   telephone validation, recall was 2.92% and 5.84%. The first checkpoint
-  was fetched and its SHA-256 checked. The first 500k GRU completed.
-  Its AMI telephone validation recall was 0.73% at 4.79% false completes.
+  was fetched and its SHA-256 checked. Both 500k GRU seeds completed.
+  Their AMI telephone validation recalls were 0.73% and 4.38% at
+  4.79% false completes.
   Common Voice supplies 98.3% of pooled validation shifts, so the
   Stage 1 assessment will also compare AMI telephone scores.
   A validation-only export preflight for the first checkpoint produced
   a 302,367-byte int8 file with unchanged pooled AUC to four decimals.
   A 512-step training probe found identical weights and validation metrics
   with spawned workers in about 30% less time. The restarted queue reused
-  all three completed checkpoints. The second 500k seed is training at
-  12 steps/s, up from approximately 8 steps/s. All 53 server tests passed.
+  all three completed checkpoints. The second 500k run finished in
+  19m04s, versus 29m29s for the threaded seed. The 1M GRU has started.
+  All 53 server tests passed.
 
 ### Next step
 
