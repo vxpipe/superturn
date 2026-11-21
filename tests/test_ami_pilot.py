@@ -10,6 +10,7 @@ from superturn.ami_activity import anchors
 from superturn.ami_calibration import development_splits
 from superturn.ami_crossval import assign_folds
 from superturn.ami_learning import select_speakers
+from superturn.ami_more_turns import extra_turns
 from superturn.ami_transfer import partial_auc
 from superturn.ami_pilot import acoustic_status, annotated_pauses, group_words, match_training
 from superturn.labels import Label, Speech
@@ -138,3 +139,26 @@ def test_crossval_retains_largest_component_and_balances_disjoint_folds():
     assert set(assignments.values()) == {None, 0, 1, 2}
     counts = [sum(assignments[row["group"]] == fold for row in rows) for fold in range(3)]
     assert max(counts) - min(counts) <= 1
+
+
+def test_extra_turns_preserve_fit_voice_group_and_cap():
+    a = Label("ami", "en", "a", "meeting", "fit", "train", 6400, 4800,
+              "hold", "annotation", "fixture.wav")
+    baseline = [{"speaker": "a", "group": "fit", "audio": "fixture.wav", "pause_start": pause}
+                for pause in range(6390, 6401)]
+    added = replace(a, pause_start=10000)
+    candidates = [a, replace(a, speaker="b"), replace(a, group="held", pause_start=8000), added, added]
+    assert extra_turns(baseline, candidates) == [added]
+
+
+def test_reference_scoring_never_retrains_a_missing_checkpoint(tmp_path, monkeypatch):
+    import importlib
+
+    pytest.importorskip("torch")
+    from superturn.ami_pilot import fit_and_score
+
+    train_module = importlib.import_module("superturn.train")
+    monkeypatch.setattr(train_module, "completed_run", lambda *args: None)
+    monkeypatch.setattr(train_module, "train", lambda *args: pytest.fail("reference checkpoint would be overwritten"))
+    with pytest.raises(ValueError, match="completed reference checkpoint"):
+        fit_and_score(tmp_path, "reference", {}, tmp_path, (), tmp_path, "cpu", expected_checkpoint="sha")

@@ -184,6 +184,15 @@ bin/vast-run -n ami-crossval 'uv run --no-sync python -m superturn.ami_crossval 
 The pilot holds each evaluation group out of training and threshold
 calibration. Results and checkpoints are under `ami-crossval/`.
 
+Use a completed group cross-validation report to test additional AMI turns.
+
+```sh
+bin/vast-run -n ami-more-turns 'uv run --no-sync python -m superturn.ami_more_turns 6dbe4ae7e8bdfd90 && bin/sync push exports reports && bin/sync verify exports reports'
+```
+
+This keeps fold speakers and optimizer steps fixed. Results are under
+`ami-more-turns/`.
+
 ## Later campaigns
 
 A later campaign runs `bin/sync pull` after bootstrap and starts from the

@@ -145,6 +145,13 @@ Last updated 2026-11-21.
   completes. All five configurations exceeded 5% false completes at
   independently fitted thresholds. The original assessment and test
   remained unused.
+- Additional-turn pilot added 28 annotation-derived clips per fold from
+  existing speakers and matched the 396-step training budget. Recall
+  stayed near 10% and false completes near 8.5%. Mean AUC fell from
+  0.553 to 0.489 after the screening, count, and ordering changes.
+- Validation-only exports of the 1, 3 and 6 s 150k GRUs were about
+  302 KB. One-core p99 latency was 0.93, 2.60 and 5.11 ms.
+  STFT contributed the most time in the two longer windows.
 
 ### Next step
 
@@ -152,11 +159,12 @@ Use the new speaker-disjoint AMI development cohorts to test changes that
 improve ranking and recall at 300 ms on held-out voices, with calibration
 and model selection on separate recordings. The scratch pilots have
 weak recall at the operating target even with independent calibration.
-Use the same AMI folds to test direct annotation-derived turns from the
-existing recordings. Keep the training voices, optimizer steps, and
-evaluation folds fixed while varying the additional turn evidence.
-The larger validation check found weak ranking at low false-positive
-rates across windows and architectures.
+The current sources and variants have weak recall at low false-positive
+rates. Asked whether to add up to 1 GB of speaker-stratified HarperValleyBank
+training data on Vast.ai while retaining the original evaluation sets.
+Use the existing evidence to guide the experiment queue without changing
+the acceptance targets. The longer windows also need a faster spectral
+front end to fit the 2 ms latency gate.
 Preserve the original test shards and record the mixture decision before
 resuming the staged experiment matrix. Measure selected artifacts on the frozen test set,
 including the AMI reference diagnostic and telephone speech level and
@@ -180,6 +188,7 @@ destroy it unless the user asks to keep it.
 - [AMI learning curve](../20261121-0704-ami-learning-curve.md)
 - [AMI future-activity pretraining](../20261121-0712-ami-activity-pretraining.md)
 - [AMI meeting-group cross-validation](../20261121-0720-ami-group-crossvalidation.md)
+- [Additional AMI turns](../20261121-0736-ami-additional-turns.md)
 - [Local turn pipeline](../20261121-0112-local-turn-pipeline.md)
 - [Dataset sizes and scaffold](../20261120-1600-dataset-sizes-and-scaffold.md)
 - [Campaign runbook](../../docs/campaign-plan.md)

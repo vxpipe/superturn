@@ -82,7 +82,7 @@ def _peak(audio, start, end):
     return float(np.sqrt(np.max(np.mean(values * values, axis=1))))
 
 
-def acoustic_status(caller, following, tracks, nonwords=()):
+def acoustic_status(caller, following, tracks, nonwords=(), *, dominance=1.414, quiet_ratio=0.5):
     """Require evidence for both active headsets and a quieter query window."""
     if caller.end + GAP > min(map(len, tracks.values())):
         return "incomplete slice"
@@ -95,14 +95,14 @@ def acoustic_status(caller, following, tracks, nonwords=()):
     ):
         peaks = {speaker: _peak(pcm, start, end) for speaker, pcm in tracks.items()}
         own = peaks.pop(span.speaker)
-        if own < 128 or own < 1.414 * max(peaks.values(), default=0):
+        if own < 128 or own < dominance * max(peaks.values(), default=0):
             return "headset dominance or level"
         levels.append(own)
     quiet = max(_peak(pcm, caller.end + 2 * FRAME, caller.end + GAP) for pcm in tracks.values())
-    return "passed" if quiet <= 0.5 * min(levels) else "speech or noise in pause"
+    return "passed" if quiet <= quiet_ratio * min(levels) else "speech or noise in pause"
 
 
-def _annotation_labels(root, original, current):
+def _annotation_labels(root, original, current, *, screen=acoustic_status):
     split_by_meeting = {row.recording: row for row in original}
     current_by_meeting = defaultdict(list)
     for row in current:
@@ -142,7 +142,7 @@ def _annotation_labels(root, original, current):
                 marked = {speaker: ami_backchannels(archive, meeting, agent, offset)
                           for speaker, agent in mapping.values()}
                 for caller, following, label, backchannel in annotated_pauses(spans, marked):
-                    status = acoustic_status(caller, following, audio, nonwords)
+                    status = screen(caller, following, audio, nonwords)
                     counts[row.split][status] += 1
                     if status == "passed":
                         results.append(replace(
@@ -279,13 +279,16 @@ def train_and_score(folder, name, config, validation, archive, device):
     }
 
 
-def fit_and_score(folder, name, config, evaluation, splits, archive, device):
+def fit_and_score(folder, name, config, evaluation, splits, archive, device, *, expected_checkpoint=None):
     import torch
 
     from .model import build
     from .train import _input, completed_run, paths, records, train
 
     checkpoint = completed_run(folder, name, config, device)
+    if expected_checkpoint is not None and (
+            checkpoint is None or hashlib.sha256(checkpoint.read_bytes()).hexdigest() != expected_checkpoint):
+        raise ValueError(f"{name} does not match the completed reference checkpoint")
     if checkpoint is None:
         checkpoint = train(folder, name, config, device)
     saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
