@@ -99,12 +99,14 @@ def summarize(scores, truth, thresholds, *, roc_limits=False):
     return metrics
 
 
-def run(root, *, stage_one=False, checkpoint_name=None):
+def run(root, *, stage_one=False, checkpoint_name=None, window_names=()):
     import pyarrow.parquet as pq
     import torch
 
     if not (root / ".campaign-machine").is_file():
         raise ValueError("LiveKit benchmark uses the existing training server")
+    if sum(map(bool, (stage_one, checkpoint_name, window_names))) > 1:
+        raise ValueError("choose one benchmark checkpoint scope")
     torch.set_num_threads(1)
     data = root / "raw" / "livekit_eot_diagnostic" / "data/en/validation-00000-of-00002.parquet"
     with data.open("rb") as handle:
@@ -114,15 +116,24 @@ def run(root, *, stage_one=False, checkpoint_name=None):
     source = pq.ParquetFile(data)
     if source.metadata.num_rows != 400 or {"cohort", "silence_spans"} - set(source.schema_arrow.names):
         raise ValueError("expected the 400-turn English general benchmark shard")
-    reference_report = root / "reports" / "livekit-eot-domain-probe.json"
-    if stage_one:
-        names = [f"s1-{arch}-{size}-{seed}" for arch in ("a", "b")
-                 for size in (150000, 500000, 1000000) for seed in (17, 29)]
+    reuse_reference = stage_one or bool(window_names)
+    if reuse_reference:
+        if window_names:
+            names = window_names
+            reference_report = root / "reports" / f"{names[0]}-eot-domain-probe.json"
+        else:
+            names = [f"s1-{arch}-{size}-{seed}" for arch in ("a", "b")
+                     for size in (150000, 500000, 1000000) for seed in (17, 29)]
+            reference_report = root / "reports" / "livekit-eot-domain-probe.json"
         models, provenance = load_validated_models(root, names)
         reference_bytes = reference_report.read_bytes()
         reference = json.loads(reference_bytes)
         if (reference["dataset_sha256"], reference["decision_ms"]) != (digest, DECISION_MS):
             raise ValueError("held-out reference scores use a different benchmark")
+        if window_names:
+            previous = reference["checkpoint_provenance"]["checkpoints"][names[0]]
+            if provenance["checkpoints"][names[0]]["sha256"] != previous["sha256"]:
+                raise ValueError("the 3-second checkpoint differs from the reference comparison")
         predict, defaults, smart_hash = None, {}, reference["smart_turn_sha256"]
         thresholds = {}
     else:
@@ -138,15 +149,18 @@ def run(root, *, stage_one=False, checkpoint_name=None):
                       for name in defaults}
     result = {"turns": source.metadata.num_rows, "decision_ms": DECISION_MS, "dataset_sha256": DATASET_SHA256,
               "threshold_source": "AMI calibration groups", "smart_turn_sha256": smart_hash, "conditions": {}}
-    if stage_one:
+    if reuse_reference:
         result["threshold_source"] = "original AMI telephone validation"
         result["reference_report_sha256"] = hashlib.sha256(reference_bytes).hexdigest()
-        result["stage_one_provenance"] = provenance
+        key = "stage_one_provenance" if stage_one else "window_sweep_provenance"
+        result[key] = provenance
     if checkpoint_name:
         result["threshold_source"] = "original AMI telephone validation"
         result["checkpoint_provenance"] = provenance
+    result["reference_threshold_source"] = "five AMI calibration-group thresholds per reference model"
     conditions = ("clean", "telephone")
-    job = ("stage1-eot-domain-probe" if stage_one else
+    job = ("capacity-window-eot-domain-probe" if window_names else
+           "stage1-eot-domain-probe" if stage_one else
            f"{checkpoint_name}-eot-domain-probe" if checkpoint_name else "livekit-eot-domain-probe")
     meter = Progress(job, source.metadata.num_rows * len(conditions), "turns")
     try:
@@ -183,14 +197,15 @@ def run(root, *, stage_one=False, checkpoint_name=None):
                         for scores, (_, model, _) in zip(student, models, strict=True):
                             scores.extend(model(audio[:, -model.samples:], elapsed).flatten().tolist())
                 meter.advance(batch.num_rows)
-            own = {name: summarize(scores, truth, [threshold], roc_limits=bool(checkpoint_name))
+            own = {name: summarize(scores, truth, [threshold], roc_limits=bool(checkpoint_name or window_names))
                    for scores, (name, _, threshold) in zip(student, models, strict=True)}
             counts = {"holds": len(truth) - sum(truth), "shifts": sum(truth)}
-            if stage_one:
+            if reuse_reference:
                 prior = reference["conditions"][audio_condition]
                 if any(prior[label] != count for label, count in counts.items()):
                     raise ValueError("held-out case counts differ from the reference evaluation")
-                result["conditions"][audio_condition] = {**prior, "stage_one": own}
+                group = "stage_one" if stage_one else "capacity_windows"
+                result["conditions"][audio_condition] = {**prior, group: own}
             else:
                 result["conditions"][audio_condition] = {
                     **counts,
