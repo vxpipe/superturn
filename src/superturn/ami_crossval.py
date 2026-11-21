@@ -2,6 +2,7 @@
 
 import argparse
 from collections import Counter, defaultdict
+from functools import partial
 import hashlib
 import json
 from pathlib import Path
@@ -116,7 +117,7 @@ def summarize_runs(runs):
     }
 
 
-def paired_deltas(predictions, meta, *, variants=VARIANTS, baseline="gru-3s", seeds=SEEDS):
+def paired_deltas(predictions, meta, *, variants=VARIANTS, baseline="gru-3s", seeds=SEEDS, max_fpr=0.1):
     """Bootstrap connected evaluation groups within each fold and pair by seed."""
     from .train import _auc
 
@@ -124,7 +125,7 @@ def paired_deltas(predictions, meta, *, variants=VARIANTS, baseline="gru-3s", se
     output = {}
     for variant in sorted(set(variants) - {baseline}):
         output[variant] = {}
-    for name, metric in (("auc", _auc), ("partial_auc", partial_auc)):
+    for name, metric in (("auc", _auc), ("partial_auc", partial(partial_auc, max_fpr=max_fpr))):
         resamples = defaultdict(list)
         for _ in range(400):
             folds = defaultdict(list)

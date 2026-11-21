@@ -184,10 +184,11 @@ def _compatible_signature(recorded, expected):
     if recorded is None or {**recorded, "source": expected["source"]} != expected:
         return False
     path = REPO_ROOT / "configs" / "training-source-equivalence.json"
-    if not path.is_file() or expected.get("config", {}).get("fixed_epochs", False):
+    if not path.is_file() or expected.get("config", {}).get("auxiliary_size"):
         return False
     equivalent = json.loads(path.read_text())
-    previous = equivalent["previous"]
+    previous = (equivalent.get("fixed_epochs_previous", [])
+                if expected.get("config", {}).get("fixed_epochs", False) else equivalent["previous"])
     if isinstance(previous, str):
         previous = [previous]
     return recorded.get("source") in previous and equivalent["current"] == expected["source"]
@@ -226,7 +227,12 @@ def train(root, name, config, device):
 
         enable(model)
         state_dict = plain_state_dict
-    optimizer = torch.optim.AdamW(model.parameters(), lr=config.get("lr", 0.001))
+    parameters = list(model.parameters())
+    auxiliary = None
+    if auxiliary_size := config.get("auxiliary_size"):
+        auxiliary = torch.nn.Linear(model.decision[0].in_features, auxiliary_size).to(device)
+        parameters.extend(auxiliary.parameters())
+    optimizer = torch.optim.AdamW(parameters, lr=config.get("lr", 0.001))
     run = root / "runs" / name
     run.mkdir(parents=True, exist_ok=True)
     marker = run / "finished.json"
@@ -268,7 +274,7 @@ def train(root, name, config, device):
                 selected = [row for row in batch if eligible(row, config, verified_ami)]
                 if not selected:
                     continue
-                audio, jobs, gaps, truth, weights = [], [], [], [], []
+                audio, jobs, gaps, truth, weights, auxiliary_truth = [], [], [], [], [], []
                 for index in rng.permutation(len(selected)):
                     row = selected[index]
                     pause_samples = row["pause_samples"]
@@ -285,6 +291,8 @@ def train(root, name, config, device):
                     gaps.append([gap_ms])
                     positive = row["label"] != "hold"
                     truth.append([float(positive)])
+                    if auxiliary is not None:
+                        auxiliary_truth.append(row["auxiliary_targets"])
                     weight = counts[row["language"]] ** -0.3 / language_normalizer
                     weight *= 0.35 if row["label"] == "weak-shift" else 1
                     weight *= 1 if positive else config.get("hold_weight", 2.0)
@@ -297,8 +305,17 @@ def train(root, name, config, device):
                 targets = torch.tensor(truth, device=device)
                 weights = torch.tensor(weights, device=device)
                 optimizer.zero_grad()
-                losses = F.binary_cross_entropy_with_logits(model.logits(inputs, gap), targets, reduction="none")
+                if auxiliary is None:
+                    logits = model.logits(inputs, gap)
+                else:
+                    features = model.decision_input(inputs, gap)
+                    logits = model.decision(features)
+                losses = F.binary_cross_entropy_with_logits(logits, targets, reduction="none")
                 loss = (losses * weights).mean()
+                if auxiliary is not None:
+                    auxiliary_labels = torch.as_tensor(auxiliary_truth, dtype=torch.float32, device=device)
+                    auxiliary_loss = F.binary_cross_entropy_with_logits(auxiliary(features), auxiliary_labels)
+                    loss = loss + config["auxiliary_weight"] * auxiliary_loss
                 loss.backward()
                 optimizer.step()
                 loss_total += loss.item()

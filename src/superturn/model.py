@@ -117,14 +117,17 @@ class TurnModel(nn.Module):
             raise ValueError(f"unknown architecture {architecture!r}")
         self.decision = nn.Sequential(nn.Linear(width + 1, width // 2), nn.GELU(), nn.Linear(width // 2, 1))
 
-    def logits(self, audio, silence_ms):
+    def decision_input(self, audio, silence_ms):
         x = self.stem(self.features(audio).transpose(1, 2)).transpose(1, 2)
         if self.architecture == "a":
             x = self.sequence(x)[0][:, -1]
         else:
             x = self.sequence(x + self.positions)
             x = (self.pool(x).softmax(dim=1) * x).sum(dim=1)
-        return self.decision(torch.cat((x, silence_ms / 1000), dim=-1))
+        return torch.cat((x, silence_ms / 1000), dim=-1)
+
+    def logits(self, audio, silence_ms):
+        return self.decision(self.decision_input(audio, silence_ms))
 
     def forward(self, audio, silence_ms):
         return self.logits(audio, silence_ms).sigmoid()
