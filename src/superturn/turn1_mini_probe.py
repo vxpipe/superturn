@@ -1,9 +1,11 @@
 """Evaluate the pinned single-channel Turn-1-Mini on fixed causal pause queries."""
 
+import argparse
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 import json
 from urllib.request import urlopen
+import wave
 
 import numpy as np
 import pyarrow.parquet as pq
@@ -129,7 +131,7 @@ def english_rows(root):
             yield pcm, edge, int(span["label"] == "eot"), group
 
 
-def harper_rows(root):
+def harper_rows(root, *, native_prefix=False):
     import hashlib
 
     cases, _, _ = pinned_validation(root)
@@ -141,12 +143,33 @@ def harper_rows(root):
     allowed = {case["id"]: case["caller"] for case in cases}
     for call, pauses in membership:
         if pauses:
-            pcm = read_audio(root / "raw/harper-valley/data/audio/caller" / f"{call}.wav")
+            path = root / "raw/harper-valley/data/audio/caller" / f"{call}.wav"
+            if native_prefix:
+                with wave.open(str(path), "rb") as reader:
+                    if (reader.getframerate(), reader.getsampwidth(), reader.getnchannels()) != (8000, 2, 1):
+                        raise ValueError("unexpected native HarperValley format")
+                    pcm = np.frombuffer(reader.readframes(reader.getnframes()), "<i2")
+            else:
+                pcm = read_audio(path)
             for edge, label in pauses:
-                yield pcm, edge, int(label == "shift"), allowed[call]
+                observed = upsample_prefix(pcm, edge + GAP) if native_prefix else pcm
+                yield observed, edge, int(label == "shift"), allowed[call]
 
 
-def run(root):
+def upsample_prefix(pcm, stop):
+    from scipy.signal import resample_poly
+
+    # An odd 16 kHz endpoint leaves a half-sample position at the native rate.
+    # Do not read the next original sample to fill this position.
+    count = stop // 2
+    if not 0 < count <= len(pcm):
+        raise ValueError("native audio does not cover the requested deadline")
+    prefix = resample_poly(pcm[:count].astype(np.float32), 2, 1)
+    prefix = np.rint(prefix).clip(-32768, 32767).astype(np.int16)
+    return np.pad(prefix, (0, stop - len(prefix)))
+
+
+def run(root, *, render_controls=False):
     import torch
 
     from .elapsed_turn_probe import checkpoints
@@ -160,6 +183,14 @@ def run(root):
     students, student_hash = checkpoints(root, "cuda")
     cohorts = {"english": list(english_rows(root)), "harper": list(harper_rows(root))}
     expected = {"english": (532, 400), "harper": (40, 48)}
+    if render_controls:
+        fixture = np.random.default_rng(17).integers(-20000, 20000, 800, dtype=np.int16)
+        future = fixture.copy()
+        future[311:] = -future[311:]
+        for stop in (622, 623):
+            np.testing.assert_array_equal(upsample_prefix(fixture, stop), upsample_prefix(future, stop))
+        cohorts["harper-native-prefix"] = list(harper_rows(root, native_prefix=True))
+        expected["harper-native-prefix"] = expected["harper"]
     for key, rows in cohorts.items():
         shifts = sum(row[2] for row in rows)
         if (len(rows) - shifts, shifts) != expected[key]:
@@ -177,22 +208,30 @@ def run(root):
     def evaluate(row):
         pcm, edge, label, group = row
         recent, full, _ = render(pcm, edge)
-        return recent, label, group, len(full) / RATE, model.score(recent, use_partial), model.score(full, use_partial)
+        modes = {"matched-3s": model.score(recent, use_partial), "full-history": model.score(full, use_partial)}
+        suffix_error = 0.0
+        if render_controls:
+            suffix = np.pad(full, (max(0, SAMPLES - len(full)), 0))[-SAMPLES:]
+            modes["full-render-reset-3s"] = model.score(suffix, use_partial)
+            suffix_error = float(np.sqrt(np.mean((recent - suffix) ** 2)))
+        return recent, label, group, len(full) / RATE, modes, suffix_error
 
     results = {}
     meter = Progress("turn1-mini-probe", sum(map(len, cohorts.values())), "pauses")
     try:
         with ThreadPoolExecutor(max_workers=4) as workers:
             for name, rows in cohorts.items():
-                comparison, lag, lengths, labels, groups = defaultdict(list), defaultdict(list), [], [], []
+                comparison, lag = defaultdict(list), defaultdict(list)
+                lengths, labels, groups, errors = [], [], [], []
                 for start in range(0, len(rows), 16):
                     recent = []
-                    for pcm, label, group, length, short, full in workers.map(evaluate, rows[start:start + 16]):
+                    for pcm, label, group, length, modes, error in workers.map(evaluate, rows[start:start + 16]):
                         recent.append(pcm)
                         labels.append(label)
                         groups.append(group)
                         lengths.append(length)
-                        for mode, (instant, cumulative, age) in (("matched-3s", short), ("full-history", full)):
+                        errors.append(error)
+                        for mode, (instant, cumulative, age) in modes.items():
                             comparison[f"{mode}-instant"].append(instant)
                             comparison[f"{mode}-cumulative"].append(cumulative)
                             lag[mode].append(age * 1000 / RATE)
@@ -205,6 +244,8 @@ def run(root):
                 scores, truth = {key: np.asarray(values) for key, values in comparison.items()}, np.asarray(labels)
                 results[name] = {"overall": metrics(scores, truth, np.arange(len(labels))),
                                  "frame_lag_ms": {mode: [min(values), max(values)] for mode, values in lag.items()}}
+                if render_controls:
+                    results[name]["matched_vs_full_suffix_pcm_rms_p50_p95"] = np.quantile(errors, [.5, .95]).tolist()
                 if name == "english":
                     results[name]["elapsed_at_least_3_3s"] = metrics(scores, truth,
                                                                     np.flatnonzero(np.asarray(lengths) >= LONG_TURN_SECONDS))
@@ -216,8 +257,10 @@ def run(root):
                   "deadline_ms": DECISION_MS, "max_future_effect": max(audit, default=None),
                   "future_checks": len(audit), "partial_chunk_used": use_partial,
                   "full_history": "G.711 on observed prefix; Harper history starts at channel start",
+                  "render_controls": render_controls,
                   "thresholds": "retrospective ROC, no fitted thresholds", "results": results}
-        _write_json(root / "reports/turn1-mini-probe.json", report)
+        suffix = "-render-controls" if render_controls else ""
+        _write_json(root / f"reports/turn1-mini-probe{suffix}.json", report)
     except BaseException:
         meter.finish("failed")
         raise
@@ -230,4 +273,7 @@ if __name__ == "__main__":
     import torch
 
     torch.set_num_threads(2)
-    print(json.dumps(run(data_root()), indent=2))
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--render-controls", action="store_true")
+    args = parser.parse_args()
+    print(json.dumps(run(data_root(), render_controls=args.render_controls), indent=2))
