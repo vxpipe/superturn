@@ -211,7 +211,7 @@ def run(root):
     return report
 
 
-def score_english(root):
+def score_english(root, *, telephone=False):
     reports = root / "reports"
     fit_path = reports / "harper-audio-text-probe.json"
     fit_report = json.loads(fit_path.read_text())
@@ -219,8 +219,11 @@ def score_english(root):
     if file_digest(head_file) != fit_report["head_file_sha256"]:
         raise ValueError("the fitted fusion heads changed")
     heads = json.loads(head_file.read_text())["300"]
-    replay_path = reports / "english-partial-stt.json"
+    suffix = "-telephone" if telephone else ""
+    replay_path = reports / f"english-partial-stt{suffix}.json"
     replay = json.loads(replay_path.read_text())
+    if replay.get("input_condition", "native") != ("telephone" if telephone else "native"):
+        raise ValueError("unexpected ASR replay condition")
     snapshots_path = root / replay["snapshot_file"]
     rows, tracks, digest = english_membership(root)
     if digest != replay["english_membership_sha256"] or file_digest(snapshots_path) != replay["snapshot_file_sha256"]:
@@ -249,16 +252,20 @@ def score_english(root):
     if scores["300"]["audio"]["recalls_at_2_5_5_7_5pct"][1] != .135:
         raise ValueError("frozen audio-only baseline failed to reproduce on English")
     result = {"scope": "frozen Harper fusion evaluated on English development",
+              "asr_condition": "telephone" if telephone else "native",
               "replay_sha256": file_digest(replay_path), "fit_report_sha256": file_digest(fit_path),
               "metrics": scores}
-    _write_json(reports / "harper-audio-text-english.json", result)
+    _write_json(reports / f"harper-audio-text-english{suffix}.json", result)
     return result
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--english", action="store_true")
+    parser.add_argument("--telephone", action="store_true")
     args = parser.parse_args()
+    if args.telephone and not args.english:
+        parser.error("--telephone requires --english")
     torch.set_num_threads(2)
-    report = score_english(data_root()) if args.english else run(data_root())
+    report = score_english(data_root(), telephone=args.telephone) if args.english else run(data_root())
     print(json.dumps(report["metrics"]["300"], indent=2))

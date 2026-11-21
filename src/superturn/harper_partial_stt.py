@@ -14,6 +14,7 @@ import torch
 
 from .ami_calibration import _write_json
 from .audio import RATE
+from .augment import condition
 from .dense_teacher import file_digest
 from .eot_domain_probe import GAP
 from .harper_transcript_coverage import MEMBERSHIP
@@ -85,9 +86,11 @@ def english_membership(root):
     return rows, tracks, hashlib.sha256(json.dumps(rows).encode()).hexdigest()
 
 
-def run(root, *, full=False, english=False, serial_cpu=False):
+def run(root, *, full=False, english=False, telephone=False, serial_cpu=False):
     import whisper
 
+    if telephone and not english:
+        raise ValueError("telephone replay changes only the English comparison input")
     if not (root / ".campaign-machine").is_file():
         raise ValueError("the speech replay uses staged Vast recordings")
     checkpoint = Path.home() / ".cache/whisper/tiny.pt"
@@ -119,7 +122,10 @@ def run(root, *, full=False, english=False, serial_cpu=False):
             return np.frombuffer(wav.readframes(wav.getnframes()), "<i2")
 
     outputs, elapsed = {}, []
-    meter = Progress("harper-partial-stt", total, "snapshots")
+    stem = "harper-partial-stt" if full else "harper-partial-stt-pilot"
+    if english:
+        stem = "english-partial-stt-telephone" if telephone else "english-partial-stt"
+    meter = Progress(stem, total, "snapshots")
     try:
         with torch.inference_mode():
             for call, ticks in sorted(requests.items()):
@@ -130,6 +136,8 @@ def run(root, *, full=False, english=False, serial_cpu=False):
                         if tick > len(track):
                             raise ValueError("the English track does not reach the scheduled snapshot")
                         audio = track[start:tick]
+                        if telephone:
+                            audio = condition(audio, "telephone", 0)
                     else:
                         track = native(call)
                         if tick // 2 > len(track):
@@ -179,7 +187,6 @@ def run(root, *, full=False, english=False, serial_cpu=False):
                                                 "post_edge_word_timestamps": post_edge}
             result[role].append(record)
         coverage[role] = dict(counts)
-    stem = "english-partial-stt" if english else "harper-partial-stt" if full else "harper-partial-stt-pilot"
     destination = root / "runs" / stem
     destination.mkdir(parents=True, exist_ok=True)
     output = destination / "snapshots.json"
@@ -192,6 +199,7 @@ def run(root, *, full=False, english=False, serial_cpu=False):
               "decode_ms_quantiles": np.quantile(elapsed, [.1, .5, .9]).tolist(), "coverage": coverage}
     if english:
         report["english_membership_sha256"] = english_digest
+        report["input_condition"] = "telephone" if telephone else "native"
     _write_json(root / "reports" / f"{stem}.json", report)
     return report
 
@@ -201,7 +209,9 @@ if __name__ == "__main__":
     scope = parser.add_mutually_exclusive_group()
     scope.add_argument("--full", action="store_true")
     scope.add_argument("--english", action="store_true")
+    parser.add_argument("--telephone", action="store_true")
     parser.add_argument("--cpu", action="store_true")
     args = parser.parse_args()
     torch.set_num_threads(2)
-    print(json.dumps(run(data_root(), full=args.full, english=args.english, serial_cpu=args.cpu), indent=2))
+    print(json.dumps(run(data_root(), full=args.full, english=args.english, telephone=args.telephone,
+                         serial_cpu=args.cpu), indent=2))
