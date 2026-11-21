@@ -123,9 +123,12 @@ Last updated 2026-11-21.
 ### Next step
 
 Use existing conversational recordings to build a larger reference-supported
-telephone validation set at 300 ms. Split epoch selection and threshold
-calibration by speaker and check the false-complete rate on held-out voices.
-Test speaker-capped conversational training mixtures against that validation.
+telephone validation set at 300 ms. The two pilot views cover only 12
+distinct voices. Reserve additional voices from the original training pool
+and exclude their recordings from the next pilot's training. Split epoch
+selection and threshold calibration by speaker and check the false-complete
+rate on held-out voices. Test speaker-capped conversational training mixtures
+against that validation.
 Preserve the original test shards and record the mixture decision before
 resuming the staged experiment matrix. Measure selected artifacts on the frozen test set,
 including the AMI reference diagnostic and telephone speech level and
