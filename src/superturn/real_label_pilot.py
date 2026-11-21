@@ -176,13 +176,7 @@ def fit(output, ami, extra, validation, calibration, seed, device):
                         "ami_calibration": summarize(cal_scores, calibration[1].tolist(), [threshold], roc_limits=True)}
 
 
-def run(root, device):
-    if not (root / ".campaign-machine").is_file():
-        raise ValueError("real-label pilot uses staged audio on Vast")
-    cohorts = ami_cohorts(root)
-    harper, evidence, validation_cases, audit_hash = harper_train(root)
-    selected = materialize(root, harper)
-    ami = {role: materialize(root, rows) for role, rows in cohorts.items()}
+def harper_development(root, validation_cases):
     membership_path = root / "reports" / "harper-valley-development-stratified-provenance.json"
     prior = json.loads((root / "reports" / "harper-valley-development-stratified.json").read_text())
     held = json.loads(membership_path.read_text())
@@ -193,7 +187,17 @@ def run(root, device):
     held_rows = [Label(HARPER, "en", callers[call], call, "harper-validation", "validation",
                        edge, GAP, label, "word-and-vad-timing-supported", f"raw/harper-valley/data/audio/caller/{call}.wav")
                  for call, pauses in membership for edge, label in pauses]
-    harper_dev = {condition: materialize(root, held_rows, condition) for condition in ("telephone", "native")}
+    return {condition: materialize(root, held_rows, condition) for condition in ("telephone", "native")}, prior
+
+
+def run(root, device):
+    if not (root / ".campaign-machine").is_file():
+        raise ValueError("real-label pilot uses staged audio on Vast")
+    cohorts = ami_cohorts(root)
+    harper, evidence, validation_cases, audit_hash = harper_train(root)
+    selected = materialize(root, harper)
+    ami = {role: materialize(root, rows) for role, rows in cohorts.items()}
+    harper_dev, prior = harper_development(root, validation_cases)
     fits, results = {}, {}
     for seed in SEEDS:
         for arm, extra in (("ami-only", ami["train"]), ("ami-plus-harper", selected)):
