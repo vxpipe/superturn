@@ -79,12 +79,13 @@ Last updated 2026-11-21.
 
 ### Waiting on
 
-- Experiment checkpoints and final benchmarks.
-  A 256-step validation-only pilot measured training pace before the matrix.
-  The first full run reached epoch 2 with 60.11% recall at 4.997% false
-  completes on pooled clean validation. The same threshold on held-out
-  AMI telephone validation yielded 47.95% false completes and 45.26%
-  recall across 575 pauses. No complete matrix run is counted yet.
+- Stage 1 and later experiments, export selection, and final benchmarks.
+  The first of 12 Stage 1 configurations completed all five epochs and
+  was backed up. At 300 ms it achieved 74.79% recall at 4.997% false
+  completes on pooled clean validation. The same threshold on AMI
+  telephone validation yielded 12.10% false completes and 5.11% recall.
+  Fitting an AMI validation threshold yielded 4.79% false completes and
+  2.92% recall. The second Stage 1 configuration has started.
 
 ### Next step
 
