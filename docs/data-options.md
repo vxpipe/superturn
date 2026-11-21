@@ -47,8 +47,8 @@ are weaker than one-to-one calls.
 |---|---|---|---|
 | AMI Meeting Corpus | CC BY 4.0 per the current Edinburgh download page; older releases were under a modified NC-SA licence, so use only the current release | English | ~100 h, individual headset microphones. Selected (4-minute window per meeting). |
 | ICSI Meeting Corpus | CC BY 4.0 per its Edinburgh licence page | English | ~70 h, close-talk microphones. Not selected: files are compressed and only downloadable whole (34 GB). |
-| NOTSOFAR-1 | CC BY 4.0 (reported by a derivative card; confirm on the official page) | English | Close-talk per speaker in train and dev splits only. Candidate. |
-| Full-duplex dual-track set (arXiv 2509.04093) | CC BY 4.0 (verify) | Chinese, English | ~15 h, one track per speaker. Small. Candidate. |
+| NOTSOFAR-1 recorded meetings | [CC BY 4.0](https://huggingface.co/datasets/microsoft/NOTSOFAR#data-license) | English | Close-talk audio and timed transcripts. The publisher reports speaker overlap between training and Dev 1. Any new development split needs verified identities. |
+| otoSpeech task-oriented releases | [CC BY 4.0](https://huggingface.co/datasets/otoearth/otoSpeech-full-duplex-task-oriented-v2#licensing-information) | English | Separate speaker channels and stable pseudonymous IDs. The current Hugging Face credential has no access. |
 
 No other large, permissively licensed, multilingual per-speaker conversation
 source was found on 2026-11-20. Consequences:
@@ -81,6 +81,7 @@ source was found on 2026-11-20. Consequences:
 | Global-Conversational-Speech | Paid commercial licence |
 | Basis Conversations 1500 | Access requested 2026-11-20 and not granted. Its licence (Basis Data License 1.0) would have allowed commercial training and open weights. |
 | Switchboard, Fisher, CALLHOME (LDC) | Paid, restricted licence |
+| MagicData dual-track Chinese and English (arXiv 2509.04093) | Publisher's audio licence is [CC BY-NC-ND 4.0](https://magichub.com/datasets/multi-stream-spontaneous-conversation-training-datasets_english/) |
 
 ## Channel augmentation
 
