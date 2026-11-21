@@ -119,6 +119,16 @@ opt_in = true
 selection_command = "python -m superturn.dral_original_pilot --plan-only"
 order = 3
 
+[sources.ami-hard-pauses]
+kind = "http"
+licence = "CC BY 4.0"
+attribution = "AMI Meeting Corpus, University of Edinburgh (CC BY 4.0)"
+role = "train-conversation"
+opt_in = true
+selection_command = "python -m superturn.ami_hard_pauses"
+max_total_bytes = 110000000
+order = 3
+
 [sources.open-yap-sample]
 kind = "http"
 repo = "TheAgenticDataCompany/open-yap-1k"
