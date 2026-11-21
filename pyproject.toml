@@ -29,6 +29,9 @@ audit-model = [
   "speechbrain==1.0.3",
   "torchaudio==2.8.0",
 ]
+qwen-audio = [
+  "transformers==5.24.0",
+]
 
 [build-system]
 requires = ["hatchling"]

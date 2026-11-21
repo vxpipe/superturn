@@ -19,6 +19,7 @@ from .harper_history_probe import recall_area
 from .multilingual_teacher_probe import DATA as MULTILINGUAL_SHA256, score_languages
 from .own_head_distillation import encoder, predictions
 from .progress import Progress
+from .qwen_speech_encoder import qwen_audio
 from .sources import data_root
 from .train import _stats, _threshold
 from .wav2vec_harper_probe import (
@@ -213,6 +214,9 @@ def depth_curve(name, features, truth, splits, groups, penalty):
             "positive_draws": sum(delta > 0 for delta in gain)}
 
 
+ENCODERS = {"hubert-large": hubert, "whisper-large-v3": whisper_large, "qwen3-asr-1.7b": qwen_audio}
+
+
 def run(root, candidate_name="hubert-large"):
     clips, truth, splits, groups = pinned_inputs(root)
     folds = caller_folds(groups["train"])
@@ -231,8 +235,7 @@ def run(root, candidate_name="hubert-large"):
             base = encoder(root, {"encoder_sha256": CHECKPOINT_SHA256})
             predict = lambda audio: speech_features(base, audio)
         else:
-            load = hubert if name == "hubert-large" else whisper_large
-            predict, provenance[name] = load(root)
+            predict, provenance[name] = ENCODERS[name](root)
         torch.cuda.reset_peak_memory_stats()
         features = extract(name, predict, clips)
         heads_peak = torch.cuda.max_memory_allocated()
@@ -315,6 +318,6 @@ def run(root, candidate_name="hubert-large"):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--candidate", choices=("hubert-large", "whisper-large-v3"), default="hubert-large")
+    parser.add_argument("--candidate", choices=ENCODERS, default="hubert-large")
     torch.set_num_threads(2)
     print(json.dumps(run(data_root(), parser.parse_args().candidate), indent=2))
