@@ -18,6 +18,7 @@ ROLES = {
     "test",
     "noise",
     "reverb",
+    "metadata",
 }
 
 

@@ -40,3 +40,17 @@ def test_groups_merge_transitively():
     groups = speaker_groups([("a", ["x"]), ("b", ["x", "y"]), ("c", ["y"]), ("d", ["z"])])
     assert groups["a"] == groups["b"] == groups["c"] == "a"
     assert groups["d"] == "d"
+
+
+def test_language_stratification_preserves_speakers_and_small_language_holdouts():
+    from superturn.splits import stratified_groups
+
+    groups = [(f"en-{index}", "en") for index in range(50)]
+    groups += [(f"de-{index}", "de") for index in range(6)]
+    groups += [("de-0", "en"), ("pt-only", "pt"), ("it-a", "it"), ("it-b", "it")]
+    split = stratified_groups("cv", "train-read", groups)
+    assert split == stratified_groups("cv", "train-read", reversed(groups))
+    for language in ("en", "de"):
+        assert {split[group] for group, tag in groups if tag == language} == {"train", "validation", "test"}
+    assert {split[group] for group, tag in groups if tag in {"pt", "it"}} == {"train"}
+    assert set(stratified_groups("fleurs", "test", groups).values()) == {"test"}

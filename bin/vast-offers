@@ -2,4 +2,4 @@
 # List matching vast.ai offers, cheapest first. Override the query with
 # VAST_QUERY=... (see configs/campaign.env).
 source "$(dirname "$0")/_lib.sh"
-vast search offers "$VAST_QUERY" -o "$VAST_ORDER" | head -n "${1:-15}"
+COLUMNS=220 vast search offers "$VAST_QUERY $VAST_TARGET" -o "$VAST_ORDER" --storage "$VAST_DISK_GB" --limit "${1:-15}"

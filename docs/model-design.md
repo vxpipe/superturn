@@ -5,8 +5,8 @@ Status: proposal, 2026-11-20.
 ## Call contract
 
 The application's VAD reports a pause. The application calls Superturn with
-the last 3 s of the caller's audio (zero-padded at the start if shorter) and
-the silence elapsed so far in milliseconds. Superturn returns
+the last 3 s of the caller's audio through the decision instant, including
+the pause (zero-padded at the start if shorter), and the silence elapsed so far in milliseconds. Superturn returns
 P(turn complete). The application may call again as the pause grows, for
 example at 200, 300 and 500 ms.
 
@@ -29,7 +29,7 @@ come later if longer context helps.
 - All feature extraction is inside the exported ONNX graph. The application
   passes raw PCM and computes nothing.
 
-Window length (1, 2, 3, 4, 8 s) is measured on the test set before it is fixed.
+Window length (1, 2, 3, 4, 8 s) is selected on validation and measured on the held-out test set.
 
 ## Network
 
@@ -58,8 +58,8 @@ the final syllables directly to the earlier part of the window, which is where
 the speaker's pitch range and pace come from. Quantisation needs more care
 (softmax and layer norm stay in float).
 
-Both are under 1 MB at int8 and well under a millisecond per call on CPU. Data
-quality and coverage are expected to matter more than the choice between them.
+Model size and latency are measured after export. The campaign tests whether
+data quality and coverage matter more than the choice between architectures.
 
 ## Pretraining
 

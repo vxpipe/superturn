@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+set -euo pipefail
+cd "$(dirname "$0")/.."
+: "${SUPERTURN_DATA:?set the campaign data root}"
+[[ -f "$SUPERTURN_DATA/.campaign-machine" ]] || { echo "requires a bootstrapped campaign machine" >&2; exit 2; }
+campaign_root="$SUPERTURN_DATA"
+# Separate raw paths, so sample WAV slices and parquet cannot satisfy full
+# download markers. Keep smoke reports and progress visible at the main root.
+export SUPERTURN_DATA="$campaign_root/smoke"
+[[ -f .env ]] && { set -a; source .env; set +a; }
+export SUPERTURN_DATA="$campaign_root/smoke"
+mkdir -p "$SUPERTURN_DATA" "$campaign_root/"{progress,reports}
+ln -sfnT "$campaign_root/progress" "$SUPERTURN_DATA/progress"
+ln -sfnT "$campaign_root/reports" "$SUPERTURN_DATA/reports"
+uv run --no-sync superturn download --sample
+uv run --no-sync superturn check-licences
+uv run --no-sync superturn inspect-archive https://www.openslr.org/resources/17/musan.tar.gz --mb 50
+uv run --no-sync superturn smoke "$@"

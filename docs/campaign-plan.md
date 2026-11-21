@@ -1,9 +1,9 @@
 # Cloud campaign plan
 
-Status: scripts written 2026-11-20; no campaign run yet.
+Status: local fixture pipeline verified 2026-11-21. The first campaign is pending.
 
 Datasets are never downloaded locally. Downloads are capped at 20 GB and
-fetch only the parts of each dataset that are used (18.3 GB; see
+fetch only the parts of each dataset that are used (18.1 GB; see
 [data options](data-options.md#download-plan-and-sizes)). Rented machines are
 still not created and destroyed ad hoc. Work is grouped into planned campaigns:
 one machine, rented once, that downloads, labels, runs a whole round of
@@ -35,8 +35,7 @@ machine for anything that will be repeated; add or fix a script instead.
 - 200 GB of disk: 20 GB of downloads plus decoded audio, shards,
   checkpoints and logs;
 - at least 300 Mb/s download;
-- verified hosts with a reliability record above 0.98. No selected source
-  requires datacenter hosting.
+- verified datacenter hosts with a reliability record above 0.98.
 
 ## Keeping results
 
@@ -66,20 +65,27 @@ but not redistribution.
 1. `bin/vast-offers` lists matching offers, cheapest first.
 2. `bin/vast-up OFFER_ID` rents the machine, waits for it, copies the repo and
    `.env` (`bin/vast-push`) and installs everything (`bin/vast-bootstrap`).
-3. Smoke test: `bin/vast-run -n smoke 'bin/download --sample'`, then the
-   pipeline's smoke command on the sample, and `uv run superturn
-   inspect-archive https://www.openslr.org/resources/17/musan.tar.gz --mb 50`
-   to see whether MUSAN noise falls inside its cap. Fix and `bin/vast-push`
-   until it passes. About 1 GB.
-4. Acquire: `bin/vast-run -n download 'bin/download'`. Rerun after an
-   interruption; it resumes. Ends with the licence check.
-5. Prepare, experiment, export and benchmark: the commands the milestone adds
-   for each stage, each started with `bin/vast-run` as a window of the tmux
-   session `vxpipe`, so it survives disconnects, logging to
-   `$REMOTE_DATA/logs/` and recording its exit status in `$REMOTE_DATA/jobs/`.
-   Start `bin/vast-watch` locally in the background with the first job: it
-   checks every 5 minutes and sends job, estimate, stall, idle and hourly
-   progress notifications through `pushnotify`.
+3. Run `bin/vast-run -n smoke 'bin/campaign-smoke --device cuda'` and start
+   `bin/vast-watch` locally in the background. Smoke downloads the 0.9 GB
+   sample into an isolated data directory, prints the MUSAN member order,
+   labels every speech source, builds shards, trains for up to three steps,
+   exports ONNX and writes `reports/smoke/report.md`. Smoke progress and
+   reports appear under the main campaign root. Fix and `bin/vast-push` until
+   it passes.
+4. Acquire with `bin/vast-run -n download 'bin/download'`. Rerun after an
+   interruption to resume. The job ends with the licence check.
+5. After download passes, start preparation and the experiment matrix with
+   these commands. Review the speaker report and listening check before
+   starting experiments.
+   ```sh
+   bin/vast-run -n prepare 'uv run --no-sync superturn label --device cuda && uv run --no-sync superturn shard && bin/sync push raw labels shards manifests'
+   bin/vast-run -n experiments 'uv run --no-sync superturn experiments --device cuda --config configs/experiments.json'
+   ```
+   Each job runs in the tmux session `vxpipe`, logs under
+   `$REMOTE_DATA/logs/`, and records its exit status under
+   `$REMOTE_DATA/jobs/`. Keep the watcher running for estimate, stall,
+   idle and hourly notifications. For steps estimated or measured above
+   three minutes, the watcher reports every quarter from 0% through 100%.
 6. `bin/vast-progress` shows each long step's progress, measured pace and
    estimated time left (from `$REMOTE_DATA/progress/<step>.json`); `bin/vast-ssh` to inspect; `bin/vast-fetch` copies results here at any
    time.

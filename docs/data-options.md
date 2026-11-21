@@ -181,7 +181,9 @@ Rules, enforced in code during labelling and splitting:
 
 ## Labelling tools
 
-- **Silero VAD**: pause boundaries and lengths on each per-speaker track.
+- **Silero VAD** v6.2.3 (MIT code and ONNX model): pause boundaries and lengths
+  on each per-speaker or single-speaker track.
+  [Silero VAD](https://github.com/snakers4/silero-vad/tree/v6.2.3)
 - **pyannote**: diarization for mixed, single-track audio such as podcasts or call
   recordings. Its boundary errors fall exactly where labels matter, so treat
   diarized labels as lower quality than per-track labels.
@@ -191,7 +193,10 @@ Rules, enforced in code during labelling and splitting:
   utterances can be cut at a word boundary to make incomplete examples from real
   voices. Cut only at word boundaries and pad with real silence from the same
   recording; cutting mid-word would teach the model to spot edits instead of
-  unfinished speech.
+  unfinished speech. The campaign aligns known transcripts with multilingual
+  Whisper `tiny` and its cross-attention timestamp routine. Whisper code and
+  weights are MIT. Languages without tokenizer support contribute natural
+  ends only. [Whisper](https://github.com/openai/whisper)
 - **Speaker augmentation**: pitch shift, formant shift, speed perturbation and
   vocal tract length perturbation on real speech to widen speaker variety.
 
@@ -211,3 +216,9 @@ independence should come from many languages in the training data. Low-pass
 filtered speech (around 400 Hz) keeps the pitch contour and removes most words.
 It is worth trying as an augmentation, and as a test that the model relies on
 prosody rather than words.
+
+### AMI manual annotations
+
+The University of Edinburgh's [manual annotations v1.6.2](https://groups.inf.ed.ac.uk/ami/download/)
+are CC BY 4.0. The 22,887,865-byte ZIP is included in the full and smoke
+plans. Labelling uses the headset-to-speaker map and dialogue acts.

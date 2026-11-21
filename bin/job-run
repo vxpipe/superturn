@@ -7,6 +7,7 @@
 # $REMOTE_DATA/logs/NAME.log, and its exit status to $REMOTE_DATA/jobs/NAME.exit
 # (read by `superturn status` and bin/vast-watch).
 set -euo pipefail
+export PATH="$HOME/.local/bin:$PATH"
 cd "$(dirname "$0")/.."
 source configs/campaign.env
 export SUPERTURN_DATA="$REMOTE_DATA"

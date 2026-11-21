@@ -73,3 +73,57 @@ def split_recordings(
     """Map each recording ID to its split, speaker-disjoint within the source."""
     groups = speaker_groups(recordings)
     return {r: assign(source, g, role) for r, g in groups.items()}
+
+
+def stratified_groups(
+    source: str, role: str, groups: Iterable[tuple[str, str]]
+) -> dict[str, str]:
+    """Assign whole speaker groups to approximate 80/10/10 within each language.
+
+    Count an independent group once per language. Allocate validation and
+    test groups for small languages when at least three groups are available.
+    A multilingual group receives one split for all its languages.
+    """
+    from collections import Counter, defaultdict
+
+    languages = defaultdict(set)
+    for group, language in groups:
+        languages[group].add(language)
+    if role == "test":
+        return dict.fromkeys(sorted(languages), "test")
+
+    totals = Counter(language for tags in languages.values() for language in tags)
+    goals = {}
+    for language, total in totals.items():
+        held_out = max(1, round(total * 0.1)) if total >= 3 else 0
+        goals[language] = {"train": total - 2 * held_out, "validation": held_out, "test": held_out}
+    counts = {language: Counter() for language in totals}
+    remaining = totals.copy()
+    assignments = {}
+    order = sorted(languages, key=lambda group: (
+        min(totals[tag] for tag in languages[group]), -len(languages[group]),
+        hashlib.sha256(f"superturn-language-split-v2\0{source}\0{group}".encode()).digest(),
+    ))
+    for group in order:
+        tags = sorted(languages[group])
+
+        def priority(split):
+            mandatory = 0.0
+            deficit = 0.0
+            for tag in tags:
+                gap = goals[tag][split] - counts[tag][split]
+                # Preserve space for a language's held-out splits as the
+                # number of still-unassigned groups approaches its deficit.
+                unfilled = sum(counts[tag][name] == 0 and goal > 0
+                               for name, goal in goals[tag].items())
+                if remaining[tag] <= unfilled and gap > 0 and counts[tag][split] == 0:
+                    mandatory += 1 / totals[tag]
+                deficit += gap / totals[tag]
+            return mandatory, deficit
+
+        split = max((name for name, _ in SPLITS), key=priority)
+        assignments[group] = split
+        for tag in tags:
+            counts[tag][split] += 1
+            remaining[tag] -= 1
+    return assignments

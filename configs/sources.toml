@@ -17,7 +17,7 @@
 #
 # `bin/plan-downloads` prices each source from provider listings and file
 # metadata (parquet footers, HEAD requests) and refuses a plan over budget.
-# role: train-conversation | train-read | train-spontaneous | test | noise | reverb
+# role: train-conversation | train-read | train-spontaneous | test | noise | reverb | metadata
 # `sample_*` keys select the small subset used by the on-machine smoke test.
 
 budget_gb = 20
@@ -36,6 +36,14 @@ minutes_per_meeting = 4.0
 start_fraction = 0.3
 sample_minutes_per_meeting = 1.0
 sample_match = "/ES2002a/"
+order = 1
+
+[sources.ami_annotations]
+kind = "http"
+licence = "CC BY 4.0"
+attribution = "AMI Meeting Corpus manual annotations v1.6.2, University of Edinburgh (CC BY 4.0)"
+role = "metadata"
+urls = ["https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip"]
 order = 1
 
 [sources.indic_diarbench]

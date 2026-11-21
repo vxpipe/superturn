@@ -39,5 +39,13 @@ ssh_opts() {
 remote() {
   ssh_target
   mapfile -t opts < <(ssh_opts)
-  ssh "${opts[@]}" "$SSH_HOST" "$@"
+  if [[ "${1:-}" == -t ]]; then
+    opts+=(-t)
+    shift
+  fi
+  if (( $# )); then
+    ssh "${opts[@]}" "$SSH_HOST" 'export PATH="$HOME/.local/bin:$PATH";' "$@"
+  else
+    ssh "${opts[@]}" "$SSH_HOST"
+  fi
 }

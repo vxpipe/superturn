@@ -4,6 +4,19 @@
 source "$(dirname "$0")/_lib.sh"
 offer="${1:?usage: bin/vast-up OFFER_ID}"
 [[ -s "$STATE/instance" ]] && die "instance $(cat "$STATE/instance") already recorded; bin/vast-down it first"
+[[ "$offer" =~ ^[0-9]+$ ]] || die "offer ID must be numeric"
+offers="$(vast search offers "$VAST_QUERY $VAST_TARGET id=$offer" --storage "$VAST_DISK_GB" --raw)"
+printf '%s' "$offers" | python3 -c '
+import json
+import sys
+
+offers = json.load(sys.stdin)
+matches = [offer for offer in offers if str(offer["id"]) == sys.argv[1]]
+if not matches or float(matches[0]["dph_total"]) >= float(sys.argv[2]):
+    raise SystemExit("offer is unavailable, fails campaign filters, or exceeds the hourly price cap")
+price = float(matches[0]["dph_total"])
+print(f"verified campaign offer at ${price:.4f}/h")
+' "$offer" "$VAST_MAX_HOURLY"
 out="$(vast create instance "$offer" --image "$VAST_IMAGE" --disk "$VAST_DISK_GB" --ssh --direct --raw)"
 id="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["new_contract"])' "$out")"
 echo "$id" > "$STATE/instance"
@@ -21,4 +34,4 @@ if [[ -n "${SUPERTURN_REMOTE:-}" ]]; then
   echo "pulling stored data from $SUPERTURN_REMOTE/superturn/ (empty on the first campaign)"
   remote "cd $REMOTE_REPO && export SUPERTURN_DATA=$REMOTE_DATA && bin/sync pull" || die "pull from storage failed; instance $id kept"
 fi
-echo "instance $id ready. Next: bin/vast-run 'bin/download --sample' (smoke test)"
+echo "instance $id ready. Next: bin/vast-run -n smoke 'bin/campaign-smoke --device cuda'"

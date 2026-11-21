@@ -34,7 +34,11 @@ for d in "${dirs[@]}"; do
 done
 
 mkdir -p "$SUPERTURN_DATA/manifests"
-cp -f "$SUPERTURN_DATA"/raw/*/MANIFEST.json "$SUPERTURN_DATA/manifests/" 2>/dev/null || true
+for manifest in "$SUPERTURN_DATA"/raw/*/MANIFEST.json; do
+  [[ -f "$manifest" ]] || continue
+  source_dir="$(basename "$(dirname "$manifest")")"
+  cp -f "$manifest" "$SUPERTURN_DATA/manifests/$source_dir.json"
+done
 for d in "${dirs[@]}"; do
   if [[ "$direction" == push ]]; then
     [[ -d "$SUPERTURN_DATA/$d" ]] || continue

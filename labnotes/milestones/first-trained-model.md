@@ -1,79 +1,57 @@
 # First trained turn model
 
-Status: in progress (checkpoint A). Last updated 2026-11-21.
+Status: checkpoint B in progress on a South Korea RTX 5090 datacenter rental.
+Last updated 2026-11-21.
 
-## Handover: current state and next step
-
-Read this section first when picking up the work, then `AGENTS.md` (working
-rules, and how to drive and check the campaign machine).
+## Handover
 
 ### Done
 
-- Data sources chosen and licences recorded (`configs/sources.toml`,
-  `docs/data-options.md`). The selection fetches only the parts used:
-  18.1 GB under the 20 GB budget, 0.9 GB smoke sample (`bin/plan-downloads`,
-  2026-11-21). Basis was not granted (2026-11-20), so real conversation
-  training labels are English only (AMI); non-English conversation is
-  measured on Indic DiarBench. Emilia access granted. Common Voice comes from
-  a Hugging Face copy of release 17.0 (CC0), so no Mozilla account is needed.
-- Written and unit-tested: partial downloads with a licence check;
-  reproducible, speaker-disjoint splits; the vast.ai scripts (`bin/vast-*`);
-  persistent storage on a private Cloudflare R2 bucket, all under
-  `<bucket>/superturn/`, synced only between the campaign machine and R2
-  (`bin/sync` refuses to run locally; the user's connection is slow);
-  progress and time-left reporting for long steps (`superturn.progress`,
-  `bin/vast-progress`), used by the download so far; every campaign job
-  runs in the tmux session `vxpipe` and `bin/vast-watch` sends progress with
-  `pushnotify`. `uv run pytest`: 27 passed.
-- `.env` is complete (2026-11-21): `HF_TOKEN` reaches all five Hugging Face
-  sources (file listing only), `SUPERTURN_SSH_KEY` set, R2 lines set
-  including `NO_CHECK_BUCKET=true`; the bucket is reachable and empty
-  (listed with boto3). The vast.ai API key is in `~/.config/vastai/`.
+- Registered AMI manual annotations v1.6.2 (22,887,865 bytes, CC BY 4.0).
+  Provider metadata puts the full selection at 18.1 GB and smoke at 0.9 GB.
+  Emilia access is available. AMI is the English conversation training source.
+  Indic DiarBench is held out for non-English conversation evaluation.
+- Implemented source labellers, speaker counts and caps, compressed shards,
+  seeded augmentation, frozen test conditions, both acoustic models,
+  config-driven training, int8 ONNX export, benchmarking and the staged
+  experiment queue. The runbook has the campaign commands. The smoke command
+  keeps sample cache keys separate from the full campaign.
+- The Python 3.12 unit tests pass. Generated CPU fixtures also trained and
+  exported both architectures using an existing Python 3.14 Torch environment.
+  The 1 s artifacts were 300,447 bytes and 388,961 bytes and matched Torch
+  probabilities in the float ONNX parity probe.
+- The previous session verified Hugging Face access, SSH configuration, the
+  Vast.ai API key and a read-only R2 listing. No live campaign has run.
 
-### Never run for real yet
+- Rented the approved South Korea datacenter RTX 5090 at $0.5304/hour.
+  Fixed the fresh-image uv PATH after the first bootstrap stopped, and
+  restarted bootstrap in `vxpipe`.
+- GPT-6 Astra reviewed the local pipeline. Fixed elapsed-pause PCM, VoxPopuli
+  language decoding, Common Voice TSV parsing, babble arithmetic and
+  unreachable timeout decisions. Added language-stratified speaker groups
+  and quarter-point progress notifications.
 
-- The campaign scripts from `bin/vast-up` onwards against a live machine.
-- A write to R2 (`bin/sync push`); only a read-only listing was done.
-- The download and its progress meter on real data.
-- Jobs in the tmux session `vxpipe` (`bin/job-run`, `bin/vast-run`) and the
-  notifications (`bin/vast-watch`, `pushnotify`); the event logic is
-  unit-tested only. Tmux is deliberately not tested locally (see AGENTS.md).
-All of these are first exercised by the smoke test on the rented machine.
+### Waiting on
 
-### Waiting on the user
-
-- Nothing blocks checkpoint A. Open decisions, none urgent:
-  - Listening check scope: 50 clips per language (about 1,500) as written,
-    or 50 for AMI plus a few spot-check languages (proposed, not approved).
-  - Keep `configs/campaign.env` or fold it into `bin/_lib.sh` (proposed).
-  - GPU: the offer query allows any 24 GB GPU (from about $0.12/h); the user
-    asked about RTX 5090 (about $0.53-0.65/h for offers meeting the filters,
-    2026-11-21). Not decided; models are small and prep is CPU-bound.
-- Before renting: the user confirms the offer. The design review (below)
-  happens before checkpoint A closes.
+- Bootstrap and the initial R2 pull, then the real-data smoke run. The
+  50-per-language label listening gate still applies.
 
 ### Next step
 
-Checkpoint A, "Labelling", starting with the per-track labeller for AMI,
-tested on generated two-track fixtures. Its first sub-task is a gap in the
-download selection: only AMI headset audio is fetched, but the labeller,
-the speaker-disjoint split and the backchannel check need the AMI manual
-annotations (`ami_public_manual_1.6.2.zip`, CC BY 4.0: `corpusResources/
-meetings.xml` maps each headset to a global speaker ID; the dialogue-act
-files mark backchannels). Add them to `configs/sources.toml` (check size
-against the budget with `bin/plan-downloads`), then the labeller. After it:
-the Indic DiarBench labeller; read speech (needs a permissively licensed
-multilingual forced aligner, not yet chosen); spontaneous speech; speaker
-counts and caps; shard writer; augmentation; test copies; features; models;
-export and benchmark; experiment queue; smoke command. Every long step uses
-`superturn.progress.Progress`, and the user is told its estimate once the
-pace is measured.
+Run `bin/vast-run -n smoke 'bin/campaign-smoke --device cuda'` after bootstrap
+succeeds. Check real source layouts, language/speaker counts, and the smoke
+report before the full download. Keep `bin/vast-watch` running throughout.
+After all gates pass, send the final PushOver message prefixed with
+`COMPLETE`. Leave the machine running for at least one hour after that
+message so the user can review, then fetch, sync and destroy it unless the user
+asks to keep it.
 
 ### Evidence
 
-- [labnotes/20261120-1600-dataset-sizes-and-scaffold.md](../20261120-1600-dataset-sizes-and-scaffold.md):
-  source sizes, budget, Basis decision, storage and tooling (2026-11-21
-  section).
+- [South Korea campaign](../20261121-0142-south-korea-campaign.md)
+- [Local turn pipeline](../20261121-0112-local-turn-pipeline.md)
+- [Dataset sizes and scaffold](../20261120-1600-dataset-sizes-and-scaffold.md)
+- [Campaign runbook](../../docs/campaign-plan.md)
 
 ## Outcome
 
@@ -142,19 +120,20 @@ only if the first one's decision record calls for it.
   split, pause start, pause length, label, and how the label was made
   (per-track, human timestamps, diarized or cut).
 
-### Splits: reproducible, per dataset, speaker-disjoint
+### Splits by source, language and speaker group
 
 Implemented in `src/superturn/splits.py`, tested in `tests/test_splits.py`.
 
-- Every dataset is split on its own: 80% train, 10% validation, 10% test of
-  its groups. Every training dataset therefore appears in every split in about
-  the same proportion; no dataset lands wholly in one split.
-- Recordings that share any speaker form one group (AMI reuses the same four
-  people across each series of meetings), so no voice appears in two splits.
-- A group's split is a hash of the source name and group key: identical on
-  every machine and every run, independent of file order, with no stored
-  random state. Changing the rule means bumping the hash salt and recording
-  why.
+- Aim for 80% train, 10% validation and 10% test of independent groups in
+  each source and language. Give small languages validation and test groups
+  when at least three independent groups can be allocated. Record missing
+  coverage when the available groups cannot support all three splits.
+- Recordings that share any speaker form one group, including multilingual
+  speakers and AMI meetings that reuse participants. A group always has one
+  assignment across its languages.
+- The `superturn-language-split-v2` ordering hashes the source and group key,
+  then assigns groups against the language quotas. Reordering inputs leaves
+  the result identical. The shard report records group counts by split.
 - Test-role sources (FLEURS, Indic DiarBench) are test only.
 - Validation picks checkpoints and thresholds; test sets are never used for
   choices. Test manifests are frozen with a content hash.
@@ -202,7 +181,7 @@ machine.
   selection and smoke-test sample per source.
 - [x] `bin/plan-downloads`: exact sizes from provider listings, no downloads.
   Total capped by `budget_gb` (20 GB) and refused above it; current
-  selection 18.3 GB, smoke-test sample 0.9 GB.
+  selection 18.1 GB, smoke-test sample 0.9 GB.
 - [x] `bin/download`: Hugging Face (pinned commit, size-verified), HTTP and
   URL lists (resumable, size-verified), Common Voice via the Mozilla Data
   Collective API; writes a manifest per source; ends with the licence check.
@@ -215,49 +194,49 @@ machine.
 - [x] Campaign scripts: `bin/vast-offers`, `vast-up`, `vast-push`,
   `vast-bootstrap`, `vast-run`, `vast-ssh`, `vast-fetch`, `vast-down`, and
   `bin/sync` for persistent storage.
-- [ ] Add PyTorch, ONNX, ONNX Runtime, Silero VAD and pyannote to the project
-  when the code that needs them lands; pin in the lockfile.
-- [ ] Labelling (rules above), each with fixture tests:
+- [x] Lock PyTorch, ONNX, ONNX Runtime, Silero VAD and Whisper for the
+  campaign. Indic DiarBench uses human timestamps. Add pyannote when a
+  mixed source needs automatic diarization.
+- [x] Labelling (rules above), each with fixture tests:
   - per-track labeller (AMI): Silero VAD per track, hold/shift;
   - human-timestamp labeller (Indic DiarBench);
-  - read speech (Common Voice, FLEURS): a permissively licensed multilingual
-    forced aligner, its licence and models recorded (aligners whose models are
-    non-commercial are excluded); holds cut at word boundaries away from the
+  - read speech (Common Voice, FLEURS): multilingual Whisper tiny as a
+    forced aligner, with MIT code and weights recorded in the data options; holds cut at word boundaries away from the
     sentence end and followed by real silence from the same recording, never
     digital zeros; shifts from the natural sentence end;
   - spontaneous speech (VoxPopuli, Emilia-YODAS): pauses inside a segment are
     holds; segment ends are weak shifts in their own label class.
-- [ ] Speaker counting and per-speaker caps; speaker report per source and
+- [x] Speaker counting and per-speaker caps; speaker report per source and
   language.
-- [ ] Shard writer: pause-centred clips at 16 kHz (window plus decision
+- [x] Shard writer: pause-centred clips at 16 kHz (window plus decision
   silence plus a margin) with labels and metadata, compressed, fixed-size
   shards.
-- [ ] Augmentation, on the fly, seeded and logged: babble (3-8 other
+- [x] Augmentation, on the fly, seeded and logged: babble (3-8 other
   speakers from our own training split mixed in); white, pink and brown
   noise, mains hum and line hiss; telephone channel (8 kHz
   resample, G.711 μ-law and A-law round trip, 300–3400 Hz band-pass, packet
   loss 0–5%, jitter); Opus at 16 kHz and low bitrates; MUSAN noise at SNR
   0–30 dB; OpenSLR 26 reverb; gain; speed 0.9–1.1×; pitch ±2 semitones;
   low-pass filtered speech (around 400 Hz) at a small rate.
-- [ ] Pre-rendered test copies per condition: clean, telephone, telephone plus
+- [x] Pre-rendered test copies per condition: clean, telephone, telephone plus
   noise at 10 dB SNR.
-- [ ] Feature front end as exportable PyTorch modules; parity test of ONNX
+- [x] Feature front end as exportable PyTorch modules; parity test of ONNX
   Runtime against PyTorch, maximum absolute difference below 1e-3 (float);
   pitch accuracy check against a reference pitch tracker.
-- [ ] Models A (recurrent) and B (conformer-style) at configurable sizes;
+- [x] Models A (recurrent) and B (conformer-style) at configurable sizes;
   one-command training from a config file with a fixed seed, per-epoch metrics,
   checkpoint choice on validation.
-- [ ] Export to int8 ONNX and the benchmark command (metrics in D).
-- [ ] Experiment queue runner: takes the stage C matrix, runs it unattended,
+- [x] Export to int8 ONNX and the benchmark command (metrics in D).
+- [x] Experiment queue runner: takes the stage C matrix, runs it unattended,
   keeps going past a failed run, syncs each finished run.
-- [ ] One smoke command: on the downloaded sample, labels, shards, a tiny
+- [x] One smoke command: on the downloaded sample, labels, shards, a tiny
   training run, export and a benchmark report, end to end.
 
 ### B. Campaign 1: data
 
 Follows the [campaign runbook](../../docs/campaign-plan.md#runbook).
 
-- [ ] `.env` filled (Emilia access is already granted).
+- [x] `.env` filled (Emilia access is already granted).
 - [ ] Machine rented with `bin/vast-up`; smoke test passes on it, including
   the speaker count of the streamed Common Voice sample and the MUSAN member
   order from `superturn inspect-archive`.
@@ -349,6 +328,13 @@ stage 1 results, and any change is recorded here with its reason.
 
 ## Design review
 
-Not yet reviewed. Review before checkpoint A finishes: label rules, test-set
-construction, the experiment stages, and whether the targets match the
-product.
+Local review on 2026-11-21 retained the initial targets. Candidate labels
+exclude overlapping takeovers and score only elapsed pauses the caller could
+actually reach. Validation selects architecture, data mix, loss weight and
+threshold. Test shards remain reserved for the final reports. Treat
+Whisper-aligned read-speech cuts and spontaneous segment ends as separate
+labelling methods when interpreting the campaign. Indic DiarBench measures
+transfer from English conversation training to Indian languages. FLEURS
+metadata supports test-only inclusion and does not identify individual voices.
+Review per-source counts and the label listening check before the training
+queue. Revisit targets only with campaign evidence.

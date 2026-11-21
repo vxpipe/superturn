@@ -181,6 +181,9 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("refresh-url-lists", help="rebuild the AMI headset URL list")
     p.set_defaults(func=cmd_refresh_url_lists)
 
+    from .pipeline import register
+
+    register(sub)
     args = parser.parse_args(argv)
     return args.func(args)
 
