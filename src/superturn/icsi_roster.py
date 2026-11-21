@@ -10,7 +10,7 @@ import re
 from xml.etree import ElementTree as ET
 from zipfile import ZipFile
 
-from .acquire import _request
+from .acquire import Plan, PlannedFile, _request, _write_manifest
 from .ami_calibration import _write_json
 from .progress import Progress
 from .sources import data_root, load_sources
@@ -32,6 +32,16 @@ def archive(root, source):
             data = response.read(limit + 1)
     if len(data) > limit or sha256(data).hexdigest() != source.get("sha256"):
         raise ValueError("ICSI transcription archive differs from its receipt")
+    if not path.is_file():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_bytes(data)
+        temporary.replace(path)
+    if not (path.parent / "MANIFEST.json").is_file():
+        planned = PlannedFile(path.name, len(data), url=source.get("url"))
+        _write_manifest(Plan(source, [planned]), path.parent, {
+            path.name: {"bytes": len(data), "sha256": source.get("sha256")},
+        })
     return data
 
 

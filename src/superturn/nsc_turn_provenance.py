@@ -59,7 +59,7 @@ def part_rosters(directory):
 
 def read_part(path):
     calls = {}
-    for row in pq.read_table(path, columns=FIELDS).to_pylist():
+    for row in pq.read_table(path, columns=list(FIELDS)).to_pylist():
         call, speaker = row["call_id"], row["speaker"]
         match, identity = CALL.fullmatch(call), SPEAKER.fullmatch(speaker)
         if not match or not identity:
