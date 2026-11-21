@@ -6,8 +6,9 @@ import numpy as np
 
 from .ami_calibration import _write_json
 from .ami_external_baselines import load_smart_turn
-from .eot_domain_probe import DATASET_SHA256, decision_audio
-from .failure_strata import decisions
+from .audio import RATE
+from .eot_domain_probe import DATASET_SHA256, GAP, decision_audio
+from .failure_strata import cutoff_at_budget, decisions
 from .language_failure_audit import read_receipt, read_verified
 from .own_student_failure_refresh import agree
 from .own_student_fidelity_confirmation import NEW_SEEDS, TRIAL
@@ -19,6 +20,30 @@ from .turn1_mini_probe import english_rows
 
 REPORT = "own-student-smart-turn-benchmark"
 REFERENCES = {"smart-turn-3s": 48_000, "smart-turn-8s": 128_000}
+
+
+def reference_history(rows, truth, values):
+    elapsed = np.asarray([(row[1] + GAP) / RATE for row in rows])
+    scores = {name: np.asarray(data) for name, data in values.items()}
+    global_thresholds = {name: cutoff_at_budget(score, truth) for name, score in scores.items()}
+    results = {}
+    for name, choose in (("at_most_3s", elapsed <= 3), ("more_than_3s", elapsed > 3)):
+        y = truth[choose]
+        selected = {model: score[choose] for model, score in scores.items()}
+        max_difference = None
+        if len(y):
+            max_difference = float(np.max(np.abs(selected["smart-turn-3s"] - selected["smart-turn-8s"])))
+        cell = {"holds": int((~y).sum()), "shifts": int(y.sum()), "max_absolute_score_difference": max_difference}
+        if y.any() and not y.all():
+            cell["matched_within_bin_recall"] = {
+                model: float(decisions(score, y)[y].mean()) for model, score in selected.items()
+            }
+            cell["global_threshold_shifts"] = {
+                model: int((score[y] >= global_thresholds[model]).sum()) for model, score in selected.items()
+            }
+        results[name] = cell
+    return {"scope": "elapsed from extracted clip start; no deployment weighting",
+            "median_elapsed_seconds": float(np.median(elapsed)), "bins": results}
 
 
 def run(root):
@@ -69,9 +94,10 @@ def run(root):
                "student_receipt_sha256": students_sha, "smart_turn_receipt_sha256": benchmark_sha,
                "smart_turn_checkpoint_sha256": model_sha, "by_model": points,
                "epoch20_mean_recall": float(np.mean([points[name]["shift_recall"] for name in candidate])),
-               "epoch20_minus_smart_turn": effects}
+               "epoch20_minus_smart_turn": effects, "smart_turn_history_strata": reference_history(rows, truth, values)}
     _write_json(root / "reports" / f"{REPORT}.json", results)
-    print(json.dumps({key: results[key] for key in ("epoch20_mean_recall", "epoch20_minus_smart_turn")}, indent=2))
+    print(json.dumps({key: results[key] for key in ("epoch20_mean_recall", "epoch20_minus_smart_turn",
+                                                    "smart_turn_history_strata")}, indent=2))
 
 
 if __name__ == "__main__":
