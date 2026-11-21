@@ -69,6 +69,7 @@ def scan(archive, repo, revision, budget, expected, verification):
                     if hashlib.sha256(payload).hexdigest() != entry["sha256"]:
                         raise ValueError("sample JSON failed transport integrity")
                     records[key] = json.loads(payload)
+                    audio[key][suffix] = {"offset": content, "bytes": extent, "verification": entry}
                 elif suffix in ("a.flac", "b.flac"):
                     if suffix in audio[key]:
                         raise ValueError("duplicate audio member")
@@ -83,7 +84,7 @@ def scan(archive, repo, revision, budget, expected, verification):
                 raise ValueError("invalid tar member extent")
         else:
             raise ValueError("Open Yap header cap reached before the end marker")
-        if set(audio) != set(records) or any(set(members) != {"a.flac", "b.flac"} for members in audio.values()):
+        if set(audio) != set(records) or any(set(members) != {"a.flac", "b.flac", "json"} for members in audio.values()):
             raise ValueError("Open Yap archive member pairing is incomplete")
     except BaseException:
         meter.finish("failed")
