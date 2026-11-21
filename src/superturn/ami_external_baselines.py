@@ -1,6 +1,7 @@
 """Score local reference detectors on the same AMI telephone development folds."""
 
 from collections import defaultdict
+from functools import lru_cache
 import hashlib
 import json
 
@@ -8,13 +9,13 @@ import numpy as np
 
 from .ami_calibration import _write_json
 from .ami_crossval import summarize_runs
+from .ami_deadline import TIMES, inputs
 from .ami_text_signal import CROSSVAL
 from .ami_transfer import partial_auc
-from .audio import RATE
+from .audio import RATE, read_audio
 from .progress import Progress
 from .sources import data_root
 
-DEADLINES = (100, 200, 300)
 SMART_TURN_REVISION = "f766f81d3cfdf7737ac64aad813d91bbfd56bf93"
 
 
@@ -23,7 +24,7 @@ def run(root):
     from _whisper_features import compute_whisper_log_mel_features
     from livekit.local_inference import EOT, EOT_MAX_SAMPLES, EOT_THRESHOLDS
 
-    from .train import _input, _stats, _threshold, paths, records
+    from .train import _stats, _threshold, paths, records
 
     if not (root / ".campaign-machine").is_file():
         raise ValueError("External AMI baselines use the training server")
@@ -39,17 +40,18 @@ def run(root):
     defaults = {"livekit-v1.1-mini": float(EOT_THRESHOLDS["en"]),
                 "smart-turn-v3.2": float(np.nextafter(np.float32(0.5), np.float32(1)))}
 
-    def predict(row, gap):
-        pcm = _input(row, 8 * RATE, gap)
+    def predict(row, gap, audio):
+        pcm = (audio * 32768).astype(np.int16)
         valid_samples = min(len(pcm), row["pause_start"] + gap * 16)
         recent = np.ascontiguousarray(pcm[-min(valid_samples, EOT_MAX_SAMPLES):])
         # The archived, causal history approximates turn length in the meeting clips.
         mini_score = mini.predict(recent, turn_samples=valid_samples)
-        features = compute_whisper_log_mel_features(pcm.astype(np.float32) / 32768, do_normalize=True)[None]
+        features = compute_whisper_log_mel_features(audio, do_normalize=True)[None]
         smart_score = smart_turn.run(None, {"input_features": features})[0].item()
         return {"livekit-v1.1-mini": float(mini_score), "smart-turn-v3.2": float(smart_score)}
 
     cached = {}
+    cached_audio = lru_cache(maxsize=6)(read_audio)
     runs = defaultdict(list)
     meter = Progress("ami-external-turn-baselines", reference["folds"], "folds")
     try:
@@ -59,10 +61,11 @@ def run(root):
             for split in ("validation", "out-of-fold"):
                 rows = [row for batch in records(paths(source, split)) for row in batch]
                 truth = [int(row["label"] == "shift") for row in rows]
-                for row in rows:
-                    key = row["audio"], row["pause_start"]
-                    if key not in cached:
-                        cached[key] = [predict(row, gap) for gap in DEADLINES]
+                missing = [row for row in rows if (row["audio"], row["pause_start"]) not in cached]
+                if missing:
+                    clips, _ = inputs(root, missing, 8 * RATE, cached_audio)
+                    for i, row in enumerate(missing):
+                        cached[row["audio"], row["pause_start"]] = [predict(row, gap, clips[gap][i]) for gap in TIMES]
                 views[split] = truth, [cached[row["audio"], row["pause_start"]] for row in rows]
             for model, default in defaults.items():
                 for timing in ("300ms", "100-300ms"):
@@ -79,9 +82,12 @@ def run(root):
                                            "partial_auc": partial_auc(scores, test_y, max_fpr=0.05)},
                         })
             meter.advance(1)
+        expected = sum(fold["out-of-fold"]["examples"] for fold in reference["splits"])
+        if len(cached) != expected:
+            raise ValueError(f"expected {expected} unique AMI development rows, scored {len(cached)}")
         report = root / "reports" / "ami-external-turn-baselines.json"
         _write_json(report, {
-            "crossval": CROSSVAL, "rows": len(cached), "deadlines_ms": DEADLINES,
+            "crossval": CROSSVAL, "rows": len(cached), "deadlines_ms": TIMES,
             "livekit_runtime": "0.3.2", "smart_turn_revision": SMART_TURN_REVISION,
             "smart_turn_sha256": hashlib.sha256(smart_path.read_bytes()).hexdigest(),
             "scope": "AMI telephone development; LiveKit turn length proxied by available history, capped at 8 s",
