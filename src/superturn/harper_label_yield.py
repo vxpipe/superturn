@@ -52,7 +52,7 @@ def events(track, left, right):
     return found, outcomes
 
 
-def one_to_one(first, second, counts, *, endpoint_deltas=None):
+def one_to_one(first, second, counts, *, endpoint_deltas=None, anchor_first=False):
     def near(source, other):
         return [[j for j, (role, end, onset, _) in enumerate(other)
                  if role == ar and abs(end - ae) <= BOUNDARY_TOLERANCE
@@ -76,7 +76,7 @@ def one_to_one(first, second, counts, *, endpoint_deltas=None):
                 counts[f"shared_deadline_conflict_{label}"] += 1
             else:
                 counts[f"agreement_{label}"] += 1
-                matches.append((a[0], edge, onset, label))
+                matches.append((a[0], a[1] if anchor_first else edge, onset, label))
     counts["first_unmatched"] += len(first) - sum(counts[f"comparable_first_{label}"] for label in ("hold", "shift"))
     counts["second_unmatched"] += len(second) - sum(counts[f"comparable_second_{label}"] for label in ("hold", "shift"))
     return matches
