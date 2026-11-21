@@ -206,7 +206,7 @@ def _rank(results, count=1):
     return good[:count]
 
 
-def experiments(root, base, device, *, stage_one_only=False):
+def experiments(root, base, device, *, stage_one_only=False, stage_two_only=False):
     import torch
     from .ami_benchmark import AMI_THRESHOLD_ORIGIN, AmiTelephoneValidation
     from .evaluate import benchmark, export, quantization_auc
@@ -232,8 +232,14 @@ def experiments(root, base, device, *, stage_one_only=False):
             require_gate(root)
         telephone_validation = AmiTelephoneValidation(root)
     # Stages select from validation. Only final, selected exports read test shards.
-    meter = Progress("experiments-stage-one" if stage_one_only else "experiments",
-                     12 if stage_one_only else 37, "runs")
+    if stage_one_only and stage_two_only:
+        raise ValueError("select just one experiment stopping point")
+    queue_name, total, receipt_name = (
+        ("experiments-stage-one", 12, "stage1-queue.json") if stage_one_only
+        else ("experiments-stage-two", 20, "stage2-queue.json") if stage_two_only
+        else ("experiments", 37, "queue.json")
+    )
+    meter = Progress(queue_name, total, "runs")
     failures = []
     final_models = []
     destination = root / "reports" / "experiments"
@@ -308,7 +314,17 @@ def experiments(root, base, device, *, stage_one_only=False):
             (f"s2-{index}-{window}s", {**config, "window": window})
             for index, (_, config, _) in enumerate(top_two) for window in (1, 2, 4, 8)
         ])
-        _, winner, _ = _rank(second)[0]
+        window_order = _rank(second, len(second))
+        (destination / "stage2-ranking.json").write_text(json.dumps({
+            **scope,
+            "windows": [{"checkpoint": name, "architecture": config["architecture"],
+                         "parameters": config["parameters"], "seconds": config["window"],
+                         "validation": metrics} for name, config, metrics in window_order],
+        }, indent=2) + "\n")
+        if stage_two_only:
+            meter.finish("failed" if failures else "done")
+            return int(bool(failures))
+        _, winner, _ = window_order[0]
         mixes = {
             "ami": ["ami"], "read": ["ami", "common_voice"],
             "spontaneous": ["ami", "voxpopuli", "emilia_yodas"], "all": None,
@@ -393,7 +409,7 @@ def experiments(root, base, device, *, stage_one_only=False):
     else:
         meter.finish("failed" if failures else "done")
     finally:
-        receipt = destination / ("stage1-queue.json" if stage_one_only else "queue.json")
+        receipt = destination / receipt_name
         receipt.write_text(json.dumps({"models": final_models, "failures": failures}, indent=2) + "\n")
         _run_sync(root)
     return int(bool(failures))
@@ -434,8 +450,11 @@ def register(sub):
         if name in {"train", "experiments"}:
             parser.add_argument("--config", type=Path, required=True)
         if name == "experiments":
-            parser.add_argument("--stage-one-only", action="store_true",
-                                help="complete Stage 1 and stop after validation ranking")
+            stop = parser.add_mutually_exclusive_group()
+            stop.add_argument("--stage-one-only", action="store_true",
+                              help="complete Stage 1 and stop after validation ranking")
+            stop.add_argument("--stage-two-only", action="store_true",
+                              help="complete the audio-window comparison and stop after validation ranking")
         if name == "train":
             parser.add_argument("--name", required=True)
         if name in {"export", "benchmark", "benchmark-volume"}:
@@ -501,7 +520,7 @@ def command(args):
         smoke(root, _device(args.device), acquire=args.acquire_sample)
     elif name == "experiments":
         return experiments(root, json.loads(args.config.read_text()), _device(args.device),
-                           stage_one_only=args.stage_one_only)
+                           stage_one_only=args.stage_one_only, stage_two_only=args.stage_two_only)
     elif name == "train":
         from .train import train
 

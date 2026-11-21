@@ -350,6 +350,16 @@ def test_experiment_queue_continues_after_failed_run(tmp_path, monkeypatch, conv
         path.unlink()
         path.parent.rmdir()
     runs.clear()
+    assert experiments(tmp_path, {"epochs": 1}, "cpu", stage_two_only=True) == 1
+    assert len(runs) == 20 and sum(name.startswith("s2-") for name in runs) == 8
+    assert benchmarks == []
+    stage2 = json.loads(receipt.with_name("stage2-ranking.json").read_text())
+    assert {row["seconds"] for row in stage2["windows"]} == {1, 2, 4, 8}
+    assert not receipt.with_name("selection.json").exists()
+    for path in (tmp_path / "runs").glob("*/best.pt"):
+        path.unlink()
+        path.parent.rmdir()
+    runs.clear()
     assert experiments(tmp_path, {"epochs": 1}, "cpu") == 1
     expected_threshold = .64 if conversation_ranking else .61
     assert len(runs) == 35 and benchmarks == [(expected_threshold, True)] * 3
