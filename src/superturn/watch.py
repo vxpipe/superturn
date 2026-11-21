@@ -22,6 +22,8 @@ from .progress import fmt_duration, read_all
 
 STALL_SECONDS = 15 * 60
 IDLE_SECONDS = 20 * 60
+LONG_STEP_SECONDS = 180
+PERCENTAGES = (0, 25, 50, 75, 100)
 
 
 def _tmux_windows(session: str) -> list[str]:
@@ -74,6 +76,7 @@ def events(prev: dict, status: dict, summary_every: float = 3600) -> tuple[list[
     seen_jobs = prev.get("jobs", {})
     estimated = set(prev.get("estimated", []))
     stalled = set(prev.get("stalled", []))
+    milestones = dict(prev.get("milestones", {}))
     msgs: list[str] = []
 
     for name, job in status["jobs"].items():
@@ -84,13 +87,35 @@ def events(prev: dict, status: dict, summary_every: float = 3600) -> tuple[list[
         if job["started_at"] and job["ended_at"]:
             took = f" in {fmt_duration(job['ended_at'] - job['started_at'])}"
         if job["state"] == "running" and before is None:
-            msgs.append(f"started job {name}")
+            msgs.append(f"job {name} 0% started")
         elif job["state"] == "done":
-            msgs.append(f"job {name} finished{took}")
+            msgs.append(f"job {name} 100% finished{took}")
         elif job["state"] == "failed":
             msgs.append(f"job {name} FAILED (exit {job['exit']}){took}; see logs/{name}.log")
         elif job["state"] == "lost":
             msgs.append(f"job {name} stopped without an exit status (tmux window gone); see logs/{name}.log")
+
+    for record in status["progress"]:
+        key = f"{record['step']}@{record['started_at']}"
+        elapsed = record["elapsed_s"]
+        remaining = record["remaining_s"]
+        is_long = elapsed >= LONG_STEP_SECONDS or (
+            record["state"] == "running" and remaining is not None
+            and elapsed + remaining >= LONG_STEP_SECONDS
+        )
+        if not is_long and key not in milestones:
+            continue
+        previous = milestones.get(key, -1)
+        reached = 100 if record["state"] == "done" else min(99, int(100 * record["fraction"]))
+        for percentage in PERCENTAGES:
+            if previous < percentage <= reached:
+                suffix = " started" if percentage == 0 else ""
+                if percentage == 100:
+                    suffix = f" finished in {fmt_duration(elapsed)}"
+                elif percentage and remaining is not None and record["state"] == "running":
+                    suffix = f" ({fmt_duration(remaining)} left)"
+                msgs.append(f"{record['step']} {percentage}%{suffix}")
+                milestones[key] = percentage
 
     running = [r for r in status["progress"] if r["state"] == "running"]
     for r in running:
@@ -122,6 +147,7 @@ def events(prev: dict, status: dict, summary_every: float = 3600) -> tuple[list[
         "jobs": {n: j["state"] for n, j in status["jobs"].items()},
         "estimated": sorted(estimated),
         "stalled": sorted(stalled),
+        "milestones": milestones,
         "last_summary": last_summary,
         "idle_since": idle_since,
         "idle_sent": idle_sent,

@@ -18,17 +18,18 @@ def job(state, exit=None, started=900.0, ended=None):
 
 def test_each_event_is_sent_once():
     msgs, state = events({"last_summary": 1000}, status(1000, {"download": job("running")}, [step(0.01)]))
-    assert msgs == ["started job download"]
+    assert msgs == ["job download 0% started"]
 
     msgs, state = events(state, status(1030, {"download": job("running")}, [step(0.2, 600, 1030)]))
-    assert msgs == ["estimate: download 20% (10m00s left, about 00:27 UTC)"]
+    assert msgs == ["download 0% started", "estimate: download 20% (10m00s left, about 00:27 UTC)"]
 
     msgs, state = events(state, status(1060, {"download": job("running")}, [step(0.3, 500, 1060)]))
-    assert msgs == []  # estimate already sent, summary not due
+    assert msgs == ["download 25% (8m20s left)"]
 
     msgs, state = events(state, status(1700, {"download": job("done", 0, ended=1690)},
-                                       [step(1.0, 0, 1690, state="done")]))
-    assert msgs == ["job download finished in 13m10s"]
+                                       [{**step(1.0, 0, 1690, state="done"), "elapsed_s": 790}]))
+    assert msgs == ["job download 100% finished in 13m10s", "download 50%", "download 75%",
+                    "download 100% finished in 13m10s"]
 
 
 def test_summary_every_hour_while_steps_run():

@@ -4,17 +4,18 @@
 # local environment). Runs locally; start it as soon as a campaign job starts
 # and keep it running until bin/vast-down.
 #   bin/vast-watch [--every MIN] [--summary MIN] [--once]
-# Sends each event once: job started, finished or failed; a step's first time
+# Sends each event once: job started, finished or failed; long steps at each
+# quarter; a step's first time
 # estimate once its pace is measured; a step that stopped updating; a summary
 # every --summary minutes (default 60); the machine idle but still rented;
 # the machine unreachable, and back. Check every --every minutes (default 5).
 # --once checks a single time and exits (for an agent's own monitoring loop).
 # Stops by itself when no campaign instance is recorded any more.
 source "$(dirname "$0")/_lib.sh"
-every=5; summary=60; once=0
+interval=30; summary=60; once=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --every) every="$2"; shift 2 ;;
+    --every) interval="$(($2 * 60))"; shift 2 ;;
     --summary) summary="$2"; shift 2 ;;
     --once) once=1; shift ;;
     *) die "usage: bin/vast-watch [--every MIN] [--summary MIN] [--once]" ;;
@@ -28,7 +29,7 @@ failures=0
 while true; do
   [[ -s "$STATE/instance" ]] || { echo "no campaign instance recorded; stopping"; exit 0; }
   id="$(cat "$STATE/instance")"
-  if status="$(remote "cd $REMOTE_REPO && source configs/campaign.env && export SUPERTURN_DATA=$REMOTE_DATA TMUX_SESSION && uv run --quiet superturn status" 2>/dev/null)"; then
+  if status="$(remote "cd $REMOTE_REPO && source configs/campaign.env && export SUPERTURN_DATA=$REMOTE_DATA TMUX_SESSION && uv run --quiet --no-sync superturn status" 2>/dev/null)"; then
     (( failures >= 3 )) && notify "machine $id reachable again"
     failures=0
     while IFS= read -r msg; do
@@ -36,8 +37,8 @@ while true; do
     done < <(printf '%s' "$status" | (cd "$ROOT" && uv run --quiet superturn watch-events --state "$STATE/watch-$id.json" --summary-minutes "$summary"))
   else
     failures=$((failures + 1))
-    (( failures == 3 )) && notify "machine $id unreachable for 3 checks (${every} min apart); jobs in tmux keep running"
+    (( failures == 3 )) && notify "machine $id unreachable for 3 checks (${interval}s apart); jobs in tmux keep running"
   fi
   (( once )) && exit 0
-  sleep "$((every * 60))"
+  sleep "$interval"
 done
