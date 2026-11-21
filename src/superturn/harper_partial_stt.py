@@ -22,7 +22,7 @@ from .progress import Progress
 from .shards import seed_for
 from .sources import data_root
 from .transcript import pack_partial_transcript
-from .turn1_mini_probe import upsample_prefix
+from .turn1_mini_probe import english_spans, upsample_prefix
 
 HOP = RATE // 5
 HISTORY = 6 * RATE
@@ -75,7 +75,17 @@ def tick_at(decision, lag):
     return max(0, (decision - lag * RATE // 1000) // HOP * HOP)
 
 
-def run(root, *, full=False, serial_cpu=False):
+def english_membership(root):
+    tracks, rows = {}, []
+    for pcm, edge, _, label, group in english_spans(root, native_pcm=True):
+        tracks.setdefault(group, pcm)
+        rows.append((len(rows), group, edge, "shift" if label else "hold", group))
+    if Counter(row[3] for row in rows) != {"hold": 532, "shift": 400}:
+        raise ValueError("the pinned English development labels changed")
+    return rows, tracks, hashlib.sha256(json.dumps(rows).encode()).hexdigest()
+
+
+def run(root, *, full=False, english=False, serial_cpu=False):
     import whisper
 
     if not (root / ".campaign-machine").is_file():
@@ -87,7 +97,11 @@ def run(root, *, full=False, serial_cpu=False):
     development, dev_digest = pinned_membership(root, "validation")
     if {row[-1] for row in train} & {row[-1] for row in development}:
         raise ValueError("HarperValley caller identities cross roles")
-    scopes = {"train": train, "validation": development} if full else {"train": pilot_rows(train)}
+    if english:
+        members, english_tracks, english_digest = english_membership(root)
+        scopes = {"english": members}
+    else:
+        scopes = {"train": train, "validation": development} if full else {"train": pilot_rows(train)}
     requests = defaultdict(set)
     for rows in scopes.values():
         for _, call, edge, _, _ in rows:
@@ -111,10 +125,16 @@ def run(root, *, full=False, serial_cpu=False):
             for call, ticks in sorted(requests.items()):
                 for tick in sorted(ticks - {0}):
                     start = max(0, tick - HISTORY)
-                    track = native(call)
-                    if tick // 2 > len(track):
-                        raise ValueError("the caller track does not reach the scheduled snapshot")
-                    audio = upsample_prefix(track[start // 2:tick // 2], tick - start)
+                    if english:
+                        track = english_tracks[call]
+                        if tick > len(track):
+                            raise ValueError("the English track does not reach the scheduled snapshot")
+                        audio = track[start:tick]
+                    else:
+                        track = native(call)
+                        if tick // 2 > len(track):
+                            raise ValueError("the caller track does not reach the scheduled snapshot")
+                        audio = upsample_prefix(track[start // 2:tick // 2], tick - start)
                     if device == "cuda":
                         torch.cuda.synchronize()
                     started = time.perf_counter()
@@ -159,7 +179,7 @@ def run(root, *, full=False, serial_cpu=False):
                                                 "post_edge_word_timestamps": post_edge}
             result[role].append(record)
         coverage[role] = dict(counts)
-    stem = "harper-partial-stt" if full else "harper-partial-stt-pilot"
+    stem = "english-partial-stt" if english else "harper-partial-stt" if full else "harper-partial-stt-pilot"
     destination = root / "runs" / stem
     destination.mkdir(parents=True, exist_ok=True)
     output = destination / "snapshots.json"
@@ -170,14 +190,18 @@ def run(root, *, full=False, serial_cpu=False):
               "train_membership_sha256": train_digest, "validation_membership_sha256": dev_digest,
               "snapshot_file": output.relative_to(root).as_posix(), "snapshot_file_sha256": file_digest(output),
               "decode_ms_quantiles": np.quantile(elapsed, [.1, .5, .9]).tolist(), "coverage": coverage}
+    if english:
+        report["english_membership_sha256"] = english_digest
     _write_json(root / "reports" / f"{stem}.json", report)
     return report
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--full", action="store_true")
+    scope = parser.add_mutually_exclusive_group()
+    scope.add_argument("--full", action="store_true")
+    scope.add_argument("--english", action="store_true")
     parser.add_argument("--cpu", action="store_true")
     args = parser.parse_args()
     torch.set_num_threads(2)
-    print(json.dumps(run(data_root(), full=args.full, serial_cpu=args.cpu), indent=2))
+    print(json.dumps(run(data_root(), full=args.full, english=args.english, serial_cpu=args.cpu), indent=2))

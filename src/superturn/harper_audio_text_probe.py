@@ -1,5 +1,6 @@
 """Measure the value of causal ASR partials in a compact audio/text probe."""
 
+import argparse
 from collections import defaultdict
 import hashlib
 import json
@@ -15,7 +16,7 @@ from .ami_transfer import partial_auc
 from .audio import RATE
 from .dense_teacher import file_digest
 from .eot_domain_probe import load_validated_models
-from .harper_partial_stt import LAGS, pinned_membership, tick_at
+from .harper_partial_stt import LAGS, english_membership, pinned_membership, tick_at
 from .own_head_distillation import BASELINE, student_scores
 from .progress import Progress
 from .sources import data_root
@@ -210,7 +211,54 @@ def run(root):
     return report
 
 
+def score_english(root):
+    reports = root / "reports"
+    fit_path = reports / "harper-audio-text-probe.json"
+    fit_report = json.loads(fit_path.read_text())
+    head_file = root / fit_report["head_file"]
+    if file_digest(head_file) != fit_report["head_file_sha256"]:
+        raise ValueError("the fitted fusion heads changed")
+    heads = json.loads(head_file.read_text())["300"]
+    replay_path = reports / "english-partial-stt.json"
+    replay = json.loads(replay_path.read_text())
+    snapshots_path = root / replay["snapshot_file"]
+    rows, tracks, digest = english_membership(root)
+    if digest != replay["english_membership_sha256"] or file_digest(snapshots_path) != replay["snapshot_file_sha256"]:
+        raise ValueError("the English replay membership changed")
+    snapshots = json.loads(snapshots_path.read_text())["english"]
+    models, provenance = load_validated_models(root, [BASELINE])
+    (_, model, _), = models
+    if provenance != fit_report["audio_baseline"]:
+        raise ValueError("the frozen audio baseline changed")
+    clips, labels, _ = zip(*pause_rows((tracks[group], edge, int(label == "shift"), group)
+                                       for _, group, edge, label, _ in rows), strict=True)
+    audio = student_scores(model, np.stack(clips).astype(np.float32), device="cpu")
+    audio = logit(np.clip(audio, 1e-5, 1 - 1e-5))[:, None]
+    labels = np.asarray(labels)
+    scores = {}
+    for lag in LAGS:
+        text = features_for(snapshots, rows, lag)
+        matrices = {"audio": audio, "text": text, "audio_text": np.column_stack((audio, text)),
+                    "audio_text_zero_text": np.column_stack((audio, np.zeros_like(text)))}
+        scores[str(lag)] = {}
+        for arm, features in matrices.items():
+            head = heads[arm.removesuffix("_zero_text")]
+            weights = np.asarray(head["weights"])
+            score = features @ weights[:-1] + weights[-1]
+            scores[str(lag)][arm] = metrics(score, labels, head["threshold_logit"])
+    if scores["300"]["audio"]["recalls_at_2_5_5_7_5pct"][1] != .135:
+        raise ValueError("frozen audio-only baseline failed to reproduce on English")
+    result = {"scope": "frozen Harper fusion evaluated on English development",
+              "replay_sha256": file_digest(replay_path), "fit_report_sha256": file_digest(fit_path),
+              "metrics": scores}
+    _write_json(reports / "harper-audio-text-english.json", result)
+    return result
+
+
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--english", action="store_true")
+    args = parser.parse_args()
     torch.set_num_threads(2)
-    report = run(data_root())
+    report = score_english(data_root()) if args.english else run(data_root())
     print(json.dumps(report["metrics"]["300"], indent=2))

@@ -111,7 +111,7 @@ def render(pcm, edge):
     return recent, full, normalize(pcm[stop:stop + STEP])
 
 
-def english_spans(root):
+def english_spans(root, *, native_pcm=False):
     path = root / "raw/livekit_eot_diagnostic/data/en/validation-00000-of-00002.parquet"
     if file_digest(path) != DATASET_SHA256:
         raise ValueError("English comparison shard changed")
@@ -120,7 +120,16 @@ def english_spans(root):
         row, = row.to_pylist()
         if row["cohort"] != "general" or row["language"] != "en":
             raise ValueError("unexpected benchmark cohort")
-        pcm = read_audio(row["audio"]["bytes"])
+        binary = row["audio"]["bytes"]
+        if native_pcm:
+            from io import BytesIO
+
+            with wave.open(BytesIO(binary), "rb") as media:
+                if (media.getframerate(), media.getnchannels(), media.getsampwidth()) != (RATE, 1, 2):
+                    raise ValueError("unexpected native English track")
+                pcm = np.frombuffer(media.readframes(media.getnframes()), "<i2")
+        else:
+            pcm = read_audio(binary)
         for span in row["silence_spans"]:
             edge = round(span["start"] * RATE)
             end = min(len(pcm), round(span["end"] * RATE))
