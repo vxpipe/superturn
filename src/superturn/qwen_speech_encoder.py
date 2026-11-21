@@ -123,21 +123,24 @@ def qwen_audio(root):
     pre = (centers >= SAMPLES - GAP - RATE // 2) & (centers < SAMPLES - GAP)
     post = centers >= SAMPLES - GAP
 
-    def predict(audio):
+    def predict(audio, *, return_mid=False):
         features = frontend(audio.cpu().numpy(), sampling_rate=RATE, padding="longest", truncation=False,
                             return_attention_mask=True, return_tensors="pt")
         spec = features.input_features.to(audio.device)
         valid = features.attention_mask.to(audio.device)
         if spec.shape[1:] != (128, 300) or not bool(valid.all()):
             raise ValueError("Qwen front end did not render the exact three-second audio")
-        states = []
+        states, middle = [], []
         for mel, mask in zip(spec, valid, strict=True):
             output = model(mel[None], mask[None], output_hidden_states=True)
             layers = torch.stack((*output.hidden_states[:-1], output.last_hidden_state)).float()
             if layers.shape != (25, 39, 1024):
                 raise ValueError(f"unexpected Qwen acoustic frame geometry: {layers.shape}")
             states.append(torch.cat((layers.mean(1), layers[:, pre].mean(1), layers[:, post].mean(1)), dim=-1))
-        return torch.stack(states)
+            if return_mid:
+                middle.append(layers[12].clone())
+        summary = torch.stack(states)
+        return (summary, torch.stack(middle)) if return_mid else summary
 
     with torch.inference_mode():
         tone = torch.sin(torch.arange(SAMPLES, device="cuda", dtype=torch.float32) / 13)[None, :]

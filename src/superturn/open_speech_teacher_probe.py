@@ -91,7 +91,10 @@ def hubert(root):
             public = torch.stack([pooled(layer, 320, 400) for layer in layers], dim=1)
             if not torch.equal(speech_features(model, audio, normalization_eps=HUBERT_EPS)[:, 1:], public):
                 raise ValueError("HuBERT pooled features diverge from the published single-clip path")
-    return lambda audio: speech_features(model, audio, normalization_eps=HUBERT_EPS), provenance
+    def predict(audio, *, return_mid=False):
+        return speech_features(model, audio, normalization_eps=HUBERT_EPS, return_mid=return_mid)
+
+    return predict, provenance
 
 
 def whisper_large(root):
@@ -131,12 +134,19 @@ def whisper_large(root):
         if not torch.equal(traced, core(features)):
             raise ValueError("Whisper layer extraction must reproduce the official encoder")
 
-    def predict(audio):
+    def predict(audio, *, return_mid=False):
         # Whisper mel frames are centered every 160 samples, then subsampled by two.
-        return torch.cat([
-            torch.stack([pooled(layer[:, :SAMPLES // 320], 320, 1) for layer in states(mel(batch))], dim=1)
-            for batch in audio.split(8)
-        ])
+        pooled_batches, middle = [], []
+        for batch in audio.split(8):
+            summaries = []
+            for index, layer in enumerate(states(mel(batch))):
+                observed = layer[:, :SAMPLES // 320]
+                summaries.append(pooled(observed, 320, 1))
+                if return_mid and index == 16:
+                    middle.append(observed.contiguous())
+            pooled_batches.append(torch.stack(summaries, dim=1))
+        summary = torch.cat(pooled_batches)
+        return (summary, torch.cat(middle)) if return_mid else summary
 
     with torch.inference_mode():
         quiet = tone * 1e-3

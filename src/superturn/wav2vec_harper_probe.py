@@ -111,12 +111,13 @@ def pooled(frames, stride, width, *, temporal=False):
     return torch.cat(parts, dim=-1)
 
 
-def speech_features(model, audio, *, temporal=False, normalization_eps=1e-7):
+def speech_features(model, audio, *, temporal=False, normalization_eps=1e-7, return_mid=False):
     audio = F.layer_norm(audio, (SAMPLES,), eps=normalization_eps)
     features, lengths = model.feature_extractor(audio, None)
     projection = model.encoder.feature_projection(features)
     layers = model.encoder.extract_features(features, lengths)
-    return torch.stack([pooled(layer, 320, 400, temporal=temporal) for layer in (projection, *layers)], dim=1)
+    summary = torch.stack([pooled(layer, 320, 400, temporal=temporal) for layer in (projection, *layers)], dim=1)
+    return (summary, layers[len(layers) // 2 - 1]) if return_mid else summary
 
 
 def extract(name, predict, audio):
