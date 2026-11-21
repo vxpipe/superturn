@@ -72,7 +72,7 @@ def _compact_initializers(path):
     onnx.save(graph, path)
 
 
-def export(checkpoint, *, limit=True):
+def export(checkpoint, *, limit=True, spectrum="stft"):
     checkpoint = Path(checkpoint)
     saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
     config = saved["config"]
@@ -84,14 +84,31 @@ def export(checkpoint, *, limit=True):
     rng = np.random.default_rng(42)
     audio = rng.normal(0, 0.15, (2, model.samples)).astype("float32")
     gap = np.asarray([[200], [500]], dtype="float32")
+    if spectrum == "convolution":
+        cases = np.tile(audio, (4, 1))
+        cases[2, :-4800] = 0
+        cases[3, -4800:] = 0
+        cases[4] *= .001
+        cases[5] = 0
+        phase = 2 * np.pi * 160 * np.arange(model.samples) / 16000
+        cases[6] = .2 * np.sin(phase)
+        cases[7] = .03 * np.sin(2 * phase) + .01 * cases[7]
+        audio = cases
+        gap = np.tile(gap, (4, 1))
+    elif spectrum != "stft":
+        raise ValueError(f"unsupported export spectrum {spectrum!r}")
+    with torch.inference_mode():
+        expected = model(torch.from_numpy(audio), torch.from_numpy(gap)).numpy().flatten()
+    if spectrum == "convolution":
+        from .spectral import ConvolutionSpectrum
+
+        model.features = ConvolutionSpectrum().eval()
     inputs = (torch.from_numpy(audio[:1]), torch.from_numpy(gap[:1]))
     torch.onnx.export(model, inputs, float_path, input_names=["audio", "silence_ms"],
                       output_names=["p_complete"], opset_version=17, dynamo=False,
                       do_constant_folding=True, dynamic_axes={
                           "audio": {0: "batch"}, "silence_ms": {0: "batch"}, "p_complete": {0: "batch"},
                       })
-    with torch.inference_mode():
-        expected = model(torch.from_numpy(audio), torch.from_numpy(gap)).numpy().flatten()
     observed = _predict(_session(float_path), audio, gap)
     parity = float(np.max(np.abs(expected - observed)))
     if not np.isfinite(parity) or parity >= 1e-3:
@@ -106,6 +123,8 @@ def export(checkpoint, *, limit=True):
     size = quant_path.stat().st_size
     details = {"float_max_abs_error": parity, "int8_bytes": size, "parameters": saved["parameters"],
                "threshold": saved["metrics"]["threshold"], "config": config}
+    if spectrum != "stft":
+        details["spectrum"] = spectrum
     quant_path.with_name("export.json").write_text(json.dumps(details, indent=2) + "\n")
     if limit and (size > 1_000_000 or not 100000 <= saved["parameters"] <= 1_000_000):
         raise ValueError(f"export has {size} bytes and {saved['parameters']} parameters")

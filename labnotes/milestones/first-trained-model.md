@@ -152,6 +152,9 @@ Last updated 2026-11-21.
 - Validation-only exports of the 1, 3 and 6 s 150k GRUs were about
   302 KB. One-core p99 latency was 0.93, 2.60 and 5.11 ms.
   STFT contributed the most time in the two longer windows.
+- The optional convolution export measured 1.20 ms one-core p99 at
+  3 s with a 713 KB int8 graph. It preserved the decisions on 89
+  G.711 calibration clips. The 6 s variant measured 2.31 ms.
 
 ### Next step
 
@@ -163,8 +166,8 @@ The current sources and variants have weak recall at low false-positive
 rates. Asked whether to add up to 1 GB of speaker-stratified HarperValleyBank
 training data on Vast.ai while retaining the original evaluation sets.
 Use the existing evidence to guide the experiment queue without changing
-the acceptance targets. The longer windows also need a faster spectral
-front end to fit the 2 ms latency gate.
+the acceptance targets. The 3 s convolution export is available for
+latency checks on an eventual candidate.
 Preserve the original test shards and record the mixture decision before
 resuming the staged experiment matrix. Measure selected artifacts on the frozen test set,
 including the AMI reference diagnostic and telephone speech level and
@@ -189,6 +192,7 @@ destroy it unless the user asks to keep it.
 - [AMI future-activity pretraining](../20261121-0712-ami-activity-pretraining.md)
 - [AMI meeting-group cross-validation](../20261121-0720-ami-group-crossvalidation.md)
 - [Additional AMI turns](../20261121-0736-ami-additional-turns.md)
+- [ONNX spectral latency](../20261121-0743-onnx-spectral-latency.md)
 - [Local turn pipeline](../20261121-0112-local-turn-pipeline.md)
 - [Dataset sizes and scaffold](../20261120-1600-dataset-sizes-and-scaffold.md)
 - [Campaign runbook](../../docs/campaign-plan.md)

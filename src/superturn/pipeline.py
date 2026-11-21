@@ -432,6 +432,9 @@ def register(sub):
             parser.add_argument("--name", required=True)
         if name in {"export", "benchmark", "benchmark-volume"}:
             parser.add_argument("model", type=Path)
+        if name == "export":
+            parser.add_argument("--spectrum", choices=("stft", "convolution"), default="stft",
+                                help="spectral implementation in the exported graph")
         if name in {"benchmark", "benchmark-volume"}:
             parser.add_argument("--threshold", type=float)
         if name == "benchmark":
@@ -500,7 +503,7 @@ def command(args):
         from .evaluate import benchmark, export
 
         if name == "export":
-            print(export(args.model))
+            print(export(args.model, spectrum=args.spectrum))
         else:
             threshold = args.threshold
             if threshold is None:

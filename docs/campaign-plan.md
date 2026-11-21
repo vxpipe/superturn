@@ -193,6 +193,12 @@ bin/vast-run -n ami-more-turns 'uv run --no-sync python -m superturn.ami_more_tu
 This keeps fold speakers and optimizer steps fixed. Results are under
 `ami-more-turns/`.
 
+For an export-only latency comparison, copy the checkpoint into a separate
+output directory and run `superturn export CHECKPOINT --spectrum convolution`.
+This option stores the fixed Fourier filter bank as float coefficients in
+the int8 artifact. Check the artifact size, validation parity and one-core
+p99 for the specific model before selecting it.
+
 ## Later campaigns
 
 A later campaign runs `bin/sync pull` after bootstrap and starts from the

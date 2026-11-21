@@ -57,7 +57,9 @@ def test_generated_shards_are_fixed_and_frozen(tmp_path, monkeypatch):
 def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture):
     torch = pytest.importorskip("torch")
     pytest.importorskip("onnxruntime")
-    pytest.importorskip("onnx")
+    onnx = pytest.importorskip("onnx")
+    import shutil
+
     from superturn.evaluate import benchmark, export, quantization_auc
     from superturn.train import completed_run, train
 
@@ -79,9 +81,20 @@ def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture)
     assert report["latency_ms"]["condition"] == "telephone"
     assert report["acceptance"]["artifact"]["passed"]
     assert "conversation_telephone_300ms" in report["acceptance"]
+    alternative = tmp_path / "alternative" / "best.pt"
+    alternative.parent.mkdir()
+    shutil.copyfile(checkpoint, alternative)
+    accelerated = export(alternative, spectrum="convolution")
+    assert accelerated.stat().st_size < 1_000_000
+    graph = onnx.load(accelerated).graph
+    assert all(node.op_type != "STFT" for node in graph.node)
+    convolution_weights = {node.input[1] for node in graph.node if node.op_type == "Conv"}
+    assert any(node.op_type == "Constant" and node.output[0] in convolution_weights
+               and any(attr.t.data_type == onnx.TensorProto.FLOAT and tuple(attr.t.dims) == (258, 1, 400)
+                       for attr in node.attribute)
+               for node in graph.node)
     if architecture == "a":
         import json
-        import shutil
 
         from superturn import ami_benchmark
         from superturn.labels import write_rows
