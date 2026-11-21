@@ -28,7 +28,7 @@ LEGACY = "smart-turn-3s-legacy-right-padding"
 NATIVE_SMART_TURN_SAMPLES = 128_000
 
 
-def reference_history(rows, truth, values):
+def reference_history(rows, truth, values, prefix_peaks):
     elapsed = np.asarray([(row[1] + GAP) / RATE for row in rows])
     scores = {name: np.asarray(data) for name, data in values.items()}
     global_thresholds = {name: cutoff_at_budget(score, truth) for name, score in scores.items()}
@@ -39,7 +39,10 @@ def reference_history(rows, truth, values):
         max_difference = None
         if len(y):
             max_difference = float(np.max(np.abs(selected["smart-turn-3s"] - selected["smart-turn-8s"])))
-        cell = {"holds": int((~y).sum()), "shifts": int(y.sum()), "max_absolute_score_difference": max_difference}
+        peaks = np.asarray(prefix_peaks)[choose]
+        cell = {"holds": int((~y).sum()), "shifts": int(y.sum()), "max_absolute_score_difference": max_difference,
+                "rows_with_nonzero_render_before_last_3s": int(np.count_nonzero(peaks)),
+                "max_render_amplitude_before_last_3s": float(peaks.max()) if len(peaks) else None}
         if y.any() and not y.all():
             cell["matched_within_bin_recall"] = {
                 model: float(decisions(score, y)[y].mean()) for model, score in selected.items()
@@ -47,9 +50,14 @@ def reference_history(rows, truth, values):
             cell["global_threshold_shifts"] = {
                 model: int((score[y] >= global_thresholds[model]).sum()) for model, score in selected.items()
             }
+            cell["global_threshold_false_completes"] = {
+                model: int((score[~y] >= global_thresholds[model]).sum()) for model, score in selected.items()
+            }
         results[name] = cell
     return {"scope": "elapsed from extracted clip start; no deployment weighting",
-            "median_elapsed_seconds": float(np.median(elapsed)), "bins": results}
+            "median_elapsed_seconds": float(np.median(elapsed)),
+            "whole_cohort_thresholds": {model: float(threshold) for model, threshold in global_thresholds.items()},
+            "bins": results}
 
 
 def run(root):
@@ -72,12 +80,14 @@ def run(root):
     agree(archive, labels, turns, "en")
     truth = np.asarray(labels, dtype=bool)
     values = {name: [] for name in (*REFERENCES, LEGACY)}
+    prefix_peaks = []
     meter = Progress(REPORT, len(rows), "pauses")
     try:
         for pcm, edge, _, _ in rows:
             clip = decision_audio(pcm, edge, "telephone")
             if len(clip) != NATIVE_SMART_TURN_SAMPLES:
                 raise ValueError("the 8-second benchmark clip does not already have the native fixed length")
+            prefix_peaks.append(float(np.abs(clip[:-REFERENCES["smart-turn-3s"]]).max()))
             for name, size in REFERENCES.items():
                 audio = np.pad(clip[-size:], (NATIVE_SMART_TURN_SAMPLES - size, 0))
                 values[name].append(score(audio))
@@ -110,7 +120,8 @@ def run(root):
                "reference_padding": "3s re-aligned at the end of the model's 8s input; legacy right-pad for reproduction",
                "epoch20_mean_recall": float(np.mean([points[name]["shift_recall"] for name in candidate])),
                "epoch20_minus_smart_turn": effects,
-               "smart_turn_history_strata": reference_history(rows, truth, {name: values[name] for name in REFERENCES})}
+               "smart_turn_history_strata": reference_history(rows, truth, {name: values[name] for name in REFERENCES},
+                                                               prefix_peaks)}
     _write_json(root / "reports" / f"{REPORT}.json", results)
     print(json.dumps({key: results[key] for key in ("epoch20_mean_recall", "epoch20_minus_smart_turn",
                                                     "smart_turn_history_strata")}, indent=2))
