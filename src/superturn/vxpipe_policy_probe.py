@@ -9,9 +9,10 @@ import pyarrow.parquet as pq
 import torch
 
 from .ami_calibration import _write_json
+from .ami_external_baselines import load_detectors, load_smart_turn
 from .audio import RATE, read_audio, silero
 from .dense_teacher import file_digest
-from .eot_domain_probe import GAP, load_validated_models
+from .eot_domain_probe import GAP, decision_audio, load_validated_models
 from .harper_valley_audit import audit_call
 from .labels import Speech, turns
 from .multilingual_teacher_probe import DATA
@@ -128,12 +129,12 @@ def policy(truth, duration, censored, decision, reply, grace, confirm):
     }
 
 
-def compare(rows, scores, fixed):
+def compare(rows, scores, fixed, fixed_name="fixed-AMI"):
     truth = np.asarray([item[0] for item in rows], dtype=bool)
     duration = np.asarray([item[2] for item in rows])
     censored = np.asarray([item[3] for item in rows], dtype=bool)
     order, ends, thresholds, shifts, holds = operating_points(scores, truth)
-    candidates = {"fixed-AMI": fixed,
+    candidates = {fixed_name: fixed,
                   "matched-5pct-raw": thresholds[np.flatnonzero(holds <= .05 * (~truth).sum())[-1]],
                   "matched-80pct-recall": thresholds[np.flatnonzero(shifts >= .80 * truth.sum())[0]]}
     scenarios = {}
@@ -174,7 +175,37 @@ def compare(rows, scores, fixed):
             "censored_holds": int((censored & ~truth).sum()), "scenarios": scenarios}
 
 
-def run(root, replay, *, extend=False):
+def reference_views(root, boundaries):
+    predict, presets, smart_hash = load_detectors(root)
+    smart, _ = load_smart_turn(root)
+    expected = json.loads((root / "reports/s1-a-150000-29-eot-domain-probe.json").read_text())
+    if expected["smart_turn_sha256"] != smart_hash:
+        raise ValueError("the Smart Turn benchmark checkpoint changed")
+    scores = {name: [] for name in (*presets, "smart-turn-3s")}
+    presets["smart-turn-3s"] = presets["smart-turn-v3.2"]
+    meter = Progress("vxpipe-reference-english", len(boundaries), "pauses")
+    try:
+        for pcm, edge, _, _, _ in english_spans(root):
+            audio = decision_audio(pcm, edge, "telephone")
+            for name, value in predict({"pause_start": edge}, 300, audio, turn_samples=edge + GAP).items():
+                scores[name].append(value)
+            scores["smart-turn-3s"].append(smart(audio[-48000:]))
+            meter.advance(1)
+    except BaseException:
+        meter.finish("failed")
+        raise
+    meter.finish()
+    results = {name: {"english": compare(boundaries, np.asarray(values), presets[name], "preset")}
+               for name, values in scores.items()}
+    for name, recall in (("smart-turn-3s", .2525), ("smart-turn-v3.2", .355), ("livekit-v1.1-mini", .4675)):
+        replayed = results[name]["english"]["scenarios"]["reply-300-grace-200-confirm-0"]
+        actual = replayed["thresholds"]["matched-5pct-raw"]["single-decision"]["early_shift_recall"]
+        if actual != recall:
+            raise ValueError(f"the archived matched-5% benchmark did not reproduce for {name}")
+    return results
+
+
+def run(root, replay, *, extend=False, references=False):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("development replay stays on Vast")
     boundaries = {"english": english(root), "harper": harper(root)}
@@ -203,9 +234,13 @@ def run(root, replay, *, extend=False):
             continue
         report_path = root / "reports" / f"{stem}.json"
         if not report_path.is_file():
+            if name in replay:
+                raise ValueError(f"requested replay is missing the locked report for {name}")
             continue
         report = json.loads(report_path.read_text())
         if "multilingual_paired_rows" not in report:
+            if name in replay:
+                raise ValueError(f"requested replay is missing the paired report for {name}")
             continue
         paired = report["multilingual_paired_rows"]
         pair_path = root / paired["path"]
@@ -241,6 +276,9 @@ def run(root, replay, *, extend=False):
                 model[lang] = compare(boundaries[lang], np.asarray(row["scores"][name]), fixed)
         result["models"][name] = model
         _write_json(output, result)
+    if references:
+        result["models"].update(reference_views(root, boundaries["english"]))
+        _write_json(output, result)
     return result
 
 
@@ -248,7 +286,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--replay", choices=MODELS, nargs="*", default=list(MODELS))
     parser.add_argument("--extend", action="store_true", help="add teacher English and HarperValley replays to an existing table")
+    parser.add_argument("--references", action="store_true", help="also replay the archived English vendor benchmarks")
     torch.set_num_threads(2)
     args = parser.parse_args()
-    summary = run(data_root(), args.replay, extend=args.extend)
+    summary = run(data_root(), args.replay, extend=args.extend, references=args.references)
     print(json.dumps({"models": list(summary["models"]), "cohorts": list(next(iter(summary["models"].values()), {}))}))
