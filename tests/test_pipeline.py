@@ -81,6 +81,7 @@ def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture)
     assert "conversation_telephone_300ms" in report["acceptance"]
     if architecture == "a":
         import json
+        import shutil
 
         from superturn import ami_benchmark
         from superturn.labels import write_rows
@@ -112,6 +113,19 @@ def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture)
         assert reference["threshold"] == .5 and reference["examples"] == 2
         assert len(reference["groups"]) == 3
         assert all(row["holds"] == 1 and row["shifts"] == 1 for row in reference["groups"])
+        shutil.copytree(checkpoint.parent, tmp_path / "runs" / "s1-fixture")
+
+        def supported_validation(root, offered, *, pause_limits):
+            assert all(row.split == "validation" for row in offered)
+            pause_limits.update((row, 4800) for row in offered)
+            return dict.fromkeys(offered, "supported")
+
+        monkeypatch.setattr(ami_benchmark, "audit_sample", supported_validation)
+        comparison = json.loads(ami_benchmark.compare_validation(tmp_path).read_text())
+        assert comparison["split"] == "validation"
+        assert [row["name"] for row in comparison["checkpoints"]] == ["s1-fixture"]
+        assert all(row["annotation_supported"]["holds"] == 1 and row["annotation_supported"]["shifts"] == 1
+                   for row in comparison["checkpoints"][0]["thresholds"])
 
 
 @pytest.mark.parametrize("architecture", ["a", "b"])

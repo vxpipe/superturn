@@ -363,6 +363,7 @@ def register(sub):
         "benchmark": "report quality and single-core CPU latency",
         "benchmark-volume": "measure level and SNR sensitivity on held-out conversations",
         "benchmark-ami-reference": "score validation-selected models on supported English AMI test pauses",
+        "compare-ami-validation": "compare completed Stage 1 checkpoints on AMI telephone validation",
         "smoke": "exercise the pipeline on a downloaded sample",
         "experiments": "run the first campaign experiment matrix",
         "listening": "sample labelled audio and score human judgments",
@@ -421,6 +422,10 @@ def command(args):
             print(prepare(root))
         else:
             benchmark_selected(root)
+    elif name == "compare-ami-validation":
+        from .ami_benchmark import compare_validation
+
+        print(compare_validation(root))
     elif name == "audit-labels":
         from .label_audit import audit, label_hashes
 

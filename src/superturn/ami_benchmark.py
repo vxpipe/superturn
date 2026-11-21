@@ -23,12 +23,12 @@ def _case_id(audio, boundary, label):
     return hashlib.sha256(key.encode()).hexdigest()
 
 
-def _test_cases(root, condition, *, with_pcm=False):
+def _cases(root, split, condition, *, with_pcm=False):
     columns = ["audio", "pause_start", "label"]
     if with_pcm:
         columns.extend(("pause_samples", "pcm"))
     filters = [("source", "=", "ami"), ("pause_samples", ">=", DECISION_MS * 16)]
-    for path in sorted((root / "shards" / "test" / condition).glob("*.parquet")):
+    for path in sorted((root / "shards" / split / condition).glob("*.parquet")):
         for row in pq.read_table(path, columns=columns, filters=filters).to_pylist():
             yield _case_id(row["audio"], row["pause_start"], row["label"]), row
 
@@ -41,7 +41,7 @@ def prepare(root):
     rows = [row for row in read_rows(label_path) if row.split == "test"]
     pause_limits = {}
     votes = audit_sample(root, rows, pause_limits=pause_limits)
-    available = {key for key, _ in _test_cases(root, "clean")}
+    available = {key for key, _ in _cases(root, "test", "clean")}
     included = [
         (_case_id(row.audio, row.pause_start, row.label), row)
         for row, vote in votes.items() if vote == "supported" and pause_limits[row] >= DECISION_MS * 16
@@ -88,7 +88,7 @@ def benchmark_selected(root):
     case_ids = set(scope["case_ids"])
     conditions = {}
     for condition in CONDITIONS:
-        matched = {key: row for key, row in _test_cases(root, condition, with_pcm=True) if key in case_ids}
+        matched = {key: row for key, row in _cases(root, "test", condition, with_pcm=True) if key in case_ids}
         if matched.keys() != case_ids:
             raise ValueError(f"AMI reference case membership changed in {condition}")
         conditions[condition] = [matched[key] for key in scope["case_ids"]]
@@ -116,3 +116,83 @@ def benchmark_selected(root):
             "groups": groups,
         }, indent=2) + "\n")
         print(out)
+
+
+def compare_validation(root):
+    """Compare complete Stage 1 checkpoints before making a selection decision."""
+    import numpy as np
+    import torch
+
+    from .augment import condition
+    from .model import build
+    from .progress import Progress
+    from .train import _input, _stats, _threshold, completed_run
+
+    files = []
+    for directory in sorted((root / "runs").glob("s1-*")):
+        marker = directory / "finished.json"
+        if marker.is_file():
+            signature = json.loads(marker.read_text())["signature"]
+            checkpoint = completed_run(root, directory.name, signature["config"], signature["device"])
+            if checkpoint is not None:
+                files.append(checkpoint)
+    if not files:
+        raise ValueError("no verified Stage 1 checkpoints are available")
+
+    annotations = [row for row in read_rows(root / "labels" / "ami.jsonl") if row.split == "validation"]
+    limits = {}
+    votes = audit_sample(root, annotations, pause_limits=limits)
+    supported = {_case_id(row.audio, row.pause_start, row.label)
+                 for row, vote in votes.items() if vote == "supported" and limits[row] >= DECISION_MS * 16}
+    rows = list(_cases(root, "validation", "clean", with_pcm=True))
+    confirmed = [index for index, (key, _) in enumerate(rows) if key in supported]
+    truth = [int(row["label"] == "shift") for _, row in rows]
+    confirmed_truth = [truth[index] for index in confirmed]
+    if len(set(truth)) != 2 or len(set(confirmed_truth)) != 2:
+        raise ValueError("AMI validation needs both holds and shifts in each label scope")
+    telephone = [{**row, "pcm": condition(np.frombuffer(row["pcm"], "<i2"), "telephone", 0).tobytes()}
+                 for _, row in rows]
+    torch.set_num_threads(1)
+    results = []
+    meter = Progress("stage1-ami-validation", len(files), "checkpoints")
+    try:
+        for checkpoint in files:
+            saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
+            model = build(saved["config"]).eval()
+            model.load_state_dict(saved["state"])
+            scores = []
+            with torch.inference_mode():
+                for start in range(0, len(telephone), 16):
+                    batch = telephone[start:start + 16]
+                    audio = np.stack([_input(row, model.samples, DECISION_MS) for row in batch])
+                    normalized = torch.from_numpy(audio.astype("float32") / 32768)
+                    scores.extend(model(normalized, torch.full((len(batch), 1), float(DECISION_MS))).flatten().tolist())
+            thresholds = {"pooled_clean_validation": saved["metrics"]["threshold"],
+                          "ami_telephone_validation_fit": _threshold(scores, truth)}
+            confirmed_scores = [scores[index] for index in confirmed]
+            results.append({
+                "name": checkpoint.parent.name,
+                "epoch": saved["metrics"]["epoch"],
+                "checkpoint_sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
+                "thresholds": [{
+                    "origin": origin,
+                    "threshold": threshold,
+                    "all_ami": _stats(scores, truth, threshold),
+                    "annotation_supported": _stats(confirmed_scores, confirmed_truth, threshold),
+                } for origin, threshold in thresholds.items()],
+            })
+            meter.advance(1)
+    except BaseException:
+        meter.finish("failed")
+        raise
+    else:
+        meter.finish()
+    out = root / "reports" / "stage1-ami-validation.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    manifest = json.loads((root / "shards" / "manifest.json").read_text())
+    out.write_text(json.dumps({
+        "split": "validation", "source": "ami", "condition": "telephone",
+        "validation_sha256": manifest["sha256_by_split"]["validation"],
+        "decision_ms": DECISION_MS, "checkpoints": results,
+    }, indent=2) + "\n")
+    return out

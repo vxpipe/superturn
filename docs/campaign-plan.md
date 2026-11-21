@@ -90,6 +90,10 @@ but not redistribution.
    listening packet remains available for manual follow-up.
    The experiment queue can reuse a finished training run when the shard
    fingerprints, configuration, device, Torch version and training code match.
+   Use `superturn compare-ami-validation` on the training server to compare
+   completed Stage 1 checkpoints on held-out AMI telephone audio. The report
+   includes each saved threshold and an AMI validation fit for diagnosing
+   the effect of threshold calibration.
    Each job runs in the tmux session `vxpipe`, logs under
    `$REMOTE_DATA/logs/`, and records its exit status under
    `$REMOTE_DATA/jobs/`. Keep the watcher running for estimate, stall,
