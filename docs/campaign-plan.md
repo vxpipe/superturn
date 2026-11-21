@@ -21,7 +21,7 @@ machine for anything that will be repeated; add or fix a script instead.
   downloads nothing.
 - Access is in place: Emilia access terms accepted for the Hugging Face
   account in `HF_TOKEN`. All other sources are public.
-- `.env` filled from `.env.example`: tokens and the SSH key registered with
+- `.env` filled from `env.sample`: tokens and the SSH key registered with
   vast.ai; optionally a storage remote.
 
 ## Machine

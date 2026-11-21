@@ -67,7 +67,7 @@ The current milestone, with a handover section on where work stands, is in
 - Never commit audio, transcripts, shards, checkpoints or recordings from real
   customer calls. Use customer calls only for local evaluation.
 - Never commit secrets. Tokens and keys go in `.env` (git-ignored); see
-  `.env.example`.
+  `env.sample`.
 - Report results per language and per audio condition (wideband, telephone,
   noisy). The headline metric is the false "complete" rate at a fixed pause
   length: how often the model ends a turn the caller had not finished.
