@@ -79,7 +79,7 @@ def run(root, device):
     return report
 
 
-def score_languages(root, models, device, *, teacher=None):
+def score_languages(root, models, device, *, teacher=None, paired_rows=None, fixed_thresholds=None):
     folder = root / "raw" / "livekit_multilingual_diagnostic" / "data"
     sources = {}
     for language, digest in DATA.items():
@@ -98,8 +98,15 @@ def score_languages(root, models, device, *, teacher=None):
         with ThreadPoolExecutor(max_workers=4) as workers:
             for language, source in sources.items():
                 scores, truth = defaultdict(list), []
+                groups, turn_offset = [], 0
                 for batch in source.iter_batches(batch_size=8, columns=["audio", "language", "cohort", "silence_spans"]):
-                    examples = list(clips_and_labels(batch.to_pylist(), language))
+                    examples = []
+                    for index, row in enumerate(batch.to_pylist()):
+                        pauses = list(clips_and_labels((row,), language))
+                        examples.extend(pauses)
+                        if paired_rows is not None:
+                            groups.extend([turn_offset + index] * len(pauses))
+                    turn_offset += batch.num_rows
                     if examples:
                         clips, labels = zip(*examples, strict=True)
                         truth.extend(labels)
@@ -118,8 +125,11 @@ def score_languages(root, models, device, *, teacher=None):
                     raise ValueError(f"{language} has missing labels or invalid scores")
                 results[language] = {"turns": source.metadata.num_rows, "holds": len(truth) - sum(truth),
                                      "shifts": sum(truth), "models": {
-                                         name: summarize(values, truth, [0.5], roc_limits=True)
+                                         name: summarize(values, truth, [0.5 if fixed_thresholds is None
+                                                                         else fixed_thresholds[name]], roc_limits=True)
                                          for name, values in scores.items()}}
+                if paired_rows is not None:
+                    paired_rows[language] = {"turn_ordinals": groups, "labels": truth, "scores": dict(scores)}
                 if teacher is not None:
                     _write_json(root / "reports" / "multilingual-teacher-progress.json",
                                 {"complete_languages": sorted(results), "languages": results})

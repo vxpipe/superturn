@@ -1,5 +1,6 @@
 """Compare two general speech encoders on the same caller-only labels."""
 
+import argparse
 from collections import defaultdict
 import hashlib
 import json
@@ -15,8 +16,8 @@ from .ami_calibration import _write_json
 from .dense_teacher import SAMPLES, file_digest
 from .elapsed_turn_probe import paired_intervals
 from .harper_history_probe import recall_area
-from .multilingual_teacher_probe import score_languages
-from .own_head_distillation import OwnSpeechHead, encoder
+from .multilingual_teacher_probe import DATA as MULTILINGUAL_SHA256, score_languages
+from .own_head_distillation import encoder, predictions
 from .progress import Progress
 from .sources import data_root
 from .train import _stats, _threshold
@@ -31,38 +32,51 @@ SIZE = 1_261_897_861
 ETAG = '"a0f92396cd9cc108d0cbfbb5e65b77ff-76"'
 DEPTH_SEEDS = (901, 902, 903, 904, 905)
 HUBERT_EPS = 1e-5
+WHISPER_SHA256 = "e5b1a55b89c1367dacf97e3e19bfd829a01529dbfdeefa8caeb59b3f1b81dadb"
+WHISPER_URL = f"https://openaipublic.azureedge.net/main/whisper/models/{WHISPER_SHA256}/large-v3.pt"
+WHISPER_SIZE = 3_087_371_615
+
+
+def checkpoint(root, name, url, size, *, etag=None, sha256=None):
+    folder = root / "cache/open-speech-encoder"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / url.rsplit("/", 1)[-1]
+    manifest = path.with_suffix(".json")
+    if not path.is_file() or not manifest.is_file():
+        temporary = path.with_suffix(".part")
+        meter = Progress(f"{name}-checkpoint", size, "bytes")
+        try:
+            headers = {"If-Match": etag} if etag else {}
+            with urlopen(Request(url, headers=headers), timeout=60) as response:
+                if ((etag and response.headers["ETag"] != etag)
+                        or int(response.headers["Content-Length"]) != size):
+                    raise ValueError("checkpoint publisher revision changed")
+                with temporary.open("wb") as stream:
+                    while chunk := response.read(4 * 1024 * 1024):
+                        stream.write(chunk)
+                        meter.advance(len(chunk))
+            digest = file_digest(temporary)
+            if temporary.stat().st_size != size or (sha256 and digest != sha256):
+                raise ValueError("checkpoint transfer is incomplete or has the wrong hash")
+            temporary.replace(path)
+            _write_json(manifest, {"url": url, "etag": etag, "bytes": size, "sha256": digest})
+        except BaseException:
+            meter.finish("failed")
+            raise
+        meter.finish()
+    provenance = json.loads(manifest.read_text())
+    digest = file_digest(path)
+    if (provenance != {"url": url, "etag": etag, "bytes": size, "sha256": digest}
+            or path.stat().st_size != size or (sha256 and digest != sha256)):
+        raise ValueError("cache differs from the pinned publisher revision")
+    return path, provenance
 
 
 def hubert(root):
     bundle = torchaudio.pipelines.HUBERT_LARGE
     if torchaudio.__version__.split("+")[0] != "2.8.0" or bundle._path != FILE or not bundle._normalize_waveform:
         raise ValueError("unexpected HuBERT conversion")
-    folder = root / "cache/open-speech-encoder"
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / FILE
-    manifest = path.with_suffix(".json")
-    if not path.is_file() or not manifest.is_file():
-        temporary = path.with_suffix(".part")
-        meter = Progress("hubert-checkpoint", SIZE, "bytes")
-        try:
-            with urlopen(Request(URL, headers={"If-Match": ETAG}), timeout=60) as response:
-                if response.headers["ETag"] != ETAG or int(response.headers["Content-Length"]) != SIZE:
-                    raise ValueError("HuBERT checkpoint publisher revision changed")
-                with temporary.open("wb") as stream:
-                    while chunk := response.read(4 * 1024 * 1024):
-                        stream.write(chunk)
-                        meter.advance(len(chunk))
-            if temporary.stat().st_size != SIZE:
-                raise ValueError("HuBERT checkpoint transfer is incomplete")
-            temporary.replace(path)
-            _write_json(manifest, {"url": URL, "etag": ETAG, "bytes": SIZE, "sha256": file_digest(path)})
-        except BaseException:
-            meter.finish("failed")
-            raise
-        meter.finish()
-    provenance = json.loads(manifest.read_text())
-    if provenance != {"url": URL, "etag": ETAG, "bytes": SIZE, "sha256": file_digest(path)} or path.stat().st_size != SIZE:
-        raise ValueError("HuBERT cache differs from the pinned publisher revision")
+    path, provenance = checkpoint(root, "hubert-large", URL, SIZE, etag=ETAG)
     model = torchaudio.models.wav2vec2_model(**bundle._params)
     state = torch.load(path, map_location="cpu", weights_only=True)
     model.load_state_dict(state, strict=True)
@@ -75,7 +89,60 @@ def hubert(root):
             public = torch.stack([pooled(layer, 320, 400) for layer in layers], dim=1)
             if not torch.equal(speech_features(model, audio, normalization_eps=HUBERT_EPS)[:, 1:], public):
                 raise ValueError("HuBERT pooled features diverge from the published single-clip path")
-    return model, provenance
+    return lambda audio: speech_features(model, audio, normalization_eps=HUBERT_EPS), provenance
+
+
+def whisper_large(root):
+    import whisper
+    from torch.nn.functional import gelu
+
+    if whisper.__version__ != "20250625" or whisper._MODELS["large-v3"] != WHISPER_URL:
+        raise ValueError("unexpected Whisper checkpoint configuration")
+    path, provenance = checkpoint(root, "whisper-large-v3", WHISPER_URL, WHISPER_SIZE, sha256=WHISPER_SHA256)
+    whisper_model = whisper.load_model(str(path), device="cpu")
+    core = whisper_model.encoder.eval().to("cuda")
+    n_mels = whisper_model.dims.n_mels
+    del whisper_model
+    if (n_mels, len(core.blocks), *core.positional_embedding.shape) != (128, 32, 1500, 1280):
+        raise ValueError("unexpected Whisper Large v3 encoder shape")
+
+    def mel(audio):
+        # Whisper applies a clip-relative log-energy floor.
+        return torch.stack([whisper.log_mel_spectrogram(samples, n_mels=n_mels,
+                                                       padding=whisper.audio.N_SAMPLES - SAMPLES)
+                            for samples in audio])
+
+    def states(features):
+        hidden = gelu(core.conv2(gelu(core.conv1(features)))).transpose(1, 2)
+        hidden = (hidden + core.positional_embedding).to(hidden.dtype)
+        yield hidden
+        for block in core.blocks[:-1]:
+            hidden = block(hidden)
+            yield hidden
+        yield core.ln_post(core.blocks[-1](hidden))
+
+    tone = torch.sin(torch.arange(SAMPLES, device="cuda", dtype=torch.float32) / 13)[None, :]
+    with torch.inference_mode():
+        features = mel(tone)
+        for traced in states(features):
+            pass
+        if not torch.equal(traced, core(features)):
+            raise ValueError("Whisper layer extraction must reproduce the official encoder")
+
+    def predict(audio):
+        # Whisper mel frames are centered every 160 samples, then subsampled by two.
+        return torch.cat([
+            torch.stack([pooled(layer[:, :SAMPLES // 320], 320, 1) for layer in states(mel(batch))], dim=1)
+            for batch in audio.split(8)
+        ])
+
+    with torch.inference_mode():
+        quiet = tone * 1e-3
+        separate = torch.cat((predict(tone), predict(quiet)))
+        joint = predict(torch.cat((tone, quiet)))
+        if not torch.allclose(separate, joint, rtol=1e-3, atol=5e-4):
+            raise ValueError("Whisper features changed when clips were batched together")
+    return predict, {**provenance, "whisper_version": whisper.__version__, "padded_input_samples": whisper.audio.N_SAMPLES}
 
 
 def depth_curve(name, features, truth, splits, groups, penalty):
@@ -146,7 +213,7 @@ def depth_curve(name, features, truth, splits, groups, penalty):
             "positive_draws": sum(delta > 0 for delta in gain)}
 
 
-def run(root):
+def run(root, candidate_name="hubert-large"):
     clips, truth, splits, groups = pinned_inputs(root)
     folds = caller_folds(groups["train"])
     source = root / "reports/wav2vec-harper-probe.json"
@@ -159,13 +226,16 @@ def run(root):
     provenance = {"wav2vec2-base": {"sha256": CHECKPOINT_SHA256}}
     scores, metrics, heads = {}, {}, {}
     outputs, teachers = {}, {}
-    for name in ("wav2vec2-base", "hubert-large"):
+    for name in ("wav2vec2-base", candidate_name):
         if name == "wav2vec2-base":
-            model = encoder(root, {"encoder_sha256": CHECKPOINT_SHA256})
+            base = encoder(root, {"encoder_sha256": CHECKPOINT_SHA256})
+            predict = lambda audio: speech_features(base, audio)
         else:
-            model, provenance[name] = hubert(root)
-        eps = HUBERT_EPS if name == "hubert-large" else 1e-7
-        features = extract(name, lambda audio: speech_features(model, audio, normalization_eps=eps), clips)
+            load = hubert if name == "hubert-large" else whisper_large
+            predict, provenance[name] = load(root)
+        torch.cuda.reset_peak_memory_stats()
+        features = extract(name, predict, clips)
+        heads_peak = torch.cuda.max_memory_allocated()
         feature_hash = hashlib.sha256(features.tobytes()).hexdigest()
         if name == "wav2vec2-base" and feature_hash != reference["heads"]["pretrained"]["pooled_features_sha256"]:
             raise ValueError("archived frozen features did not reproduce")
@@ -180,8 +250,12 @@ def run(root):
             raise
         meter.finish()
         heads[name]["pooled_features_sha256"] = feature_hash
-        heads[name]["normalization_eps"] = eps
-        teachers[name] = OwnSpeechHead(model, fitted, normalization_eps=eps)
+        heads[name]["extraction_peak_allocated_bytes"] = heads_peak
+        teachers[name] = lambda audio, elapsed, predict=predict, fitted=fitted: torch.as_tensor(
+            predictions(predict(audio).cpu().numpy(), fitted), device=audio.device,
+        )
+        if name == candidate_name:
+            candidate_heads = fitted
         score = scores[name]
         threshold = _threshold(score[cal], truth[cal])
         metrics[name] = {key: {**rates(score[idx], truth[idx]), "ami_threshold": threshold,
@@ -192,39 +266,47 @@ def run(root):
             replay = json.loads((root / "reports/harper-ami-transfer.json").read_text())
             if hashlib.sha256(score[evaluation].tobytes()).hexdigest() != replay["own_head_probability_sha256"]["caller"]:
                 raise ValueError("archived frozen predictions did not reproduce")
-    candidate, baseline = metrics["hubert-large"], metrics["wav2vec2-base"]
+    candidate, baseline = metrics[candidate_name], metrics["wav2vec2-base"]
     pairs = paired_intervals({key: value[en] for key, value in scores.items()}, truth[en], groups["english"],
-                             {"hubert-large": "wav2vec2-base"}, partial_auc=True)
+                             {candidate_name: "wav2vec2-base"}, partial_auc=True)
     en_new, en_old = candidate["english"], baseline["english"]
     gates = {
         "recall_gain_five_points": en_new["recalls_at_2_5_5_7_5pct"][1] + 1e-12 >= en_old["recalls_at_2_5_5_7_5pct"][1] + .05,
-        "paired_recall_gain": pairs["hubert-large"]["recall_delta_95"][0] > 0,
+        "paired_recall_gain": pairs[candidate_name]["recall_delta_95"][0] > 0,
         "english_partial_auc_gain": en_new["partial_auc"] > en_old["partial_auc"],
         "harper_partial_auc_within_tolerance": candidate["harper"]["partial_auc"] >= baseline["harper"]["partial_auc"] - .03,
     }
     report = {"decision_ms": 300, "pcm_sha256": pcm_hash, "reference_sha256": file_digest(source),
               "encoders": provenance, "heads": heads, "metrics": metrics, "paired_english": pairs,
               "advancement": gates, "advanced": all(gates.values())}
-    if report["advanced"]:
-        folder = root / "runs/open-speech-teacher"
-        folder.mkdir(parents=True, exist_ok=True)
-        path = folder / "hubert-head.pt"
-        temporary = path.with_suffix(".tmp")
-        torch.save({"heads": teachers["hubert-large"].heads, "seeds": HEAD_SEEDS,
-                    "encoder_sha256": provenance["hubert-large"]["sha256"], "normalization_eps": HUBERT_EPS,
-                    "decision_ms": 300, "samples": SAMPLES, "ensemble": "mean-probability"}, temporary)
-        payload = torch.load(temporary, map_location="cpu", weights_only=True)
-        p = np.mean([expit(predict_logits(outputs["hubert-large"][evaluation], head)) for head in payload["heads"]], axis=0)
-        if not np.array_equal(p, scores["hubert-large"][evaluation]):
-            raise ValueError("serialized HuBERT predictions did not reproduce")
-        temporary.replace(path)
-        report["checkpoint"] = {"path": path.relative_to(root).as_posix(), "sha256": file_digest(path),
-                                "evaluation_probability_sha256": hashlib.sha256(p.tobytes()).hexdigest()}
-    path = root / "reports/open-speech-teacher.json"
+    folder = root / "runs/open-speech-teacher"
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / f"{candidate_name}-head.pt"
+    temporary = path.with_suffix(".tmp")
+    torch.save({"heads": candidate_heads, "seeds": HEAD_SEEDS, "encoder": candidate_name,
+                "encoder_sha256": provenance[candidate_name]["sha256"],
+                "decision_ms": 300, "samples": SAMPLES, "ensemble": "mean-probability"}, temporary)
+    payload = torch.load(temporary, map_location="cpu", weights_only=True)
+    p = np.mean([expit(predict_logits(outputs[candidate_name][evaluation], head)) for head in payload["heads"]], axis=0)
+    if not np.array_equal(p, scores[candidate_name][evaluation]):
+        raise ValueError("serialized candidate predictions did not reproduce")
+    temporary.replace(path)
+    report["diagnostic_checkpoint"] = {"path": path.relative_to(root).as_posix(), "sha256": file_digest(path),
+                                       "evaluation_probability_sha256": hashlib.sha256(p.tobytes()).hexdigest()}
+    filename = "open-speech-teacher.json" if candidate_name == "hubert-large" else f"open-speech-{candidate_name}.json"
+    path = root / "reports" / filename
     _write_json(path, report)
-    report["multilingual_diagnostic"] = score_languages(root, teachers, "cuda")
+    paired_rows = {}
+    thresholds = {name: value["english"]["ami_threshold"] for name, value in metrics.items()}
+    report["multilingual_diagnostic"] = score_languages(
+        root, teachers, "cuda", paired_rows=paired_rows, fixed_thresholds=thresholds,
+    )
+    paired_path = path.with_name(f"{path.stem}-language-pairs.json")
+    _write_json(paired_path, {"dataset_sha256": MULTILINGUAL_SHA256, "languages": paired_rows})
+    report["multilingual_paired_rows"] = {"path": paired_path.relative_to(root).as_posix(),
+                                         "sha256": file_digest(paired_path)}
     _write_json(path, report)
-    selected = ("wav2vec2-base", "hubert-large") if report["advanced"] else ("wav2vec2-base",)
+    selected = ("wav2vec2-base", candidate_name) if report["advanced"] else ("wav2vec2-base",)
     report["depth"] = {key: depth_curve(key, outputs[key], truth, splits, groups, heads[key]["penalty"])
                        for key in selected}
     _write_json(path, report)
@@ -232,5 +314,7 @@ def run(root):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--candidate", choices=("hubert-large", "whisper-large-v3"), default="hubert-large")
     torch.set_num_threads(2)
-    print(json.dumps(run(data_root()), indent=2))
+    print(json.dumps(run(data_root(), parser.parse_args().candidate), indent=2))
