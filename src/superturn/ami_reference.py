@@ -81,17 +81,26 @@ def check_ami_reference(root, tolerance_ms=200):
     return destination
 
 
-def _manual_vote(row, spans, annotated):
+def _manual_vote(row, spans, annotated, end_tolerance, onset_tolerance, errors):
     edge = row.pause_start
-    if not any(span.speaker == row.speaker and abs(span.end - edge) <= 3200 for span in spans):
-        return "unresolved"
+    caller_end = min((span.end for span in spans if span.speaker == row.speaker),
+                     key=lambda end: abs(end - edge), default=None)
+    events = [span for span in spans if span.start >= edge + 1280]
+    if errors is not None and caller_end is not None and events:
+        delta_end = caller_end - edge
+        delta_onset = events[0].start - edge - row.pause_samples
+        if max(abs(delta_end), abs(delta_onset)) <= 9600:
+            errors.append((delta_end / 16, delta_onset / 16))
+    if caller_end is None or abs(caller_end - edge) > end_tolerance:
+        return "unresolved", "no caller word end within timing tolerance"
     speech_in_pause = sum(max(0, min(span.end, edge + 2880) - max(span.start, edge + 1280))
                           for span in spans)
     if speech_in_pause >= 640:
-        return "contradicted"
-    events = [span for span in spans if span.start >= edge + 1280]
-    if not events or abs(events[0].start - edge - row.pause_samples) > 4000:
-        return "unresolved"
+        return "contradicted", "speech inside the first 200 ms pause"
+    if not events:
+        return "unresolved", "no later annotated word"
+    if abs(events[0].start - edge - row.pause_samples) > onset_tolerance:
+        return "unresolved", "next word exceeds the onset timing tolerance"
     first = events[0]
     if first.speaker == row.speaker:
         expected = "hold"
@@ -105,17 +114,19 @@ def _manual_vote(row, spans, annotated):
         if marked:
             continuation = next((span for span in events if span.speaker != first.speaker), None)
             if continuation is None or continuation.start - words[-1].end > 3 * 16000:
-                return "unresolved"
+                return "unresolved", "continuation after annotated backchannel is unclear"
             expected = "hold" if continuation.speaker == row.speaker else "shift"
         elif words[-1].end - first.start < 16000:
             # A short response may be an acknowledgement without a lexical tag.
-            return "unresolved"
+            return "unresolved", "short other-speaker response without backchannel annotation"
         else:
             expected = "shift"
-    return "supported" if expected == row.label else "contradicted"
+    if expected == row.label:
+        return "supported", "timing and speaker order agree"
+    return "contradicted", f"manual speaker order implies {expected} for {row.label} label"
 
 
-def audit_sample(root, rows):
+def audit_sample(root, rows, *, explain=False, end_ms=200, onset_ms=250, errors=None):
     """Check every sampled AMI label against raw words and dialogue acts."""
     from .labels import ami_backchannels
 
@@ -138,5 +149,6 @@ def audit_sample(root, rows):
             annotated = {speaker: ami_backchannels(archive, meeting, agent, offset)
                          for speaker, agent in tracks.values()}
             for row in examples:
-                results[row] = _manual_vote(row, spans, annotated)
+                verdict = _manual_vote(row, spans, annotated, end_ms * 16, onset_ms * 16, errors)
+                results[row] = verdict if explain else verdict[0]
     return results
