@@ -27,7 +27,7 @@ TEACHERS = {"smart-turn-3s": SAMPLES, "smart-turn-8s": 8 * RATE}
 CONDITIONS = {"g711_reencoded": "telephone", "native_upsampled": "clean"}
 
 
-def pinned_validation(root):
+def pinned_split(root, split):
     path = root / "cache" / "harper-valley" / f"{REVISION}-selection.json"
     archived = root / "reports" / "harper-valley-label-audit-clock-recovery.json"
     report = json.loads(archived.read_text())
@@ -36,9 +36,13 @@ def pinned_validation(root):
     roles = json.loads(path.read_text())
     people = {split: {c[role] for c in cases for role in ("caller", "agent")}
               for split, cases in roles.items()}
-    if people["validation"] & (people["train"] | people["test"]):
-        raise ValueError("HarperValley validation identities overlap another split")
-    return roles["validation"], report["splits"]["validation"], file_digest(archived)
+    if any(people[split] & members for role, members in people.items() if role != split):
+        raise ValueError("HarperValley identities overlap another split")
+    return roles[split], report["splits"][split], file_digest(archived)
+
+
+def pinned_validation(root):
+    return pinned_split(root, "validation")
 
 
 def paired_intervals(scores, truth, callers):
