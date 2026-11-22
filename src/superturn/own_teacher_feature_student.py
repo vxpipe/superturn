@@ -173,8 +173,12 @@ def replace_history(audio, prefix, noise):
 def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active, arm, seed, *,
             shuffle_features=False, active_stats=False, score_history=None, parameters=150000, hop=HOP,
             select_final=False, progress_prefix="own-feature", epochs=EPOCHS, epoch_checkpoint=None,
-            checkpoint_epochs=None):
+            checkpoint_epochs=None, width=None, spectral_rate=16000):
     config = {"architecture": "a", "window": 3, "parameters": parameters}
+    if width is not None:
+        config["width"] = width
+    if spectral_rate != 16000:
+        config["spectral_rate"] = spectral_rate
     if hop != HOP:
         config["hop"] = hop
     tail_frames = teacher.shape[1]
@@ -205,6 +209,10 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
         name += "-history"
     if parameters != 150000:
         name += f"-{parameters}"
+    if width is not None:
+        name += f"-width{width}"
+    if spectral_rate != 16000:
+        name += f"-spectrum{spectral_rate}"
     if hop != HOP:
         name += f"-hop{hop}"
     meter = Progress(f"{progress_prefix}-{name}", epochs * ((len(fit) + BATCH - 1) // BATCH), "updates")

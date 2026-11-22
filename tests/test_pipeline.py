@@ -105,15 +105,19 @@ def test_generated_training_and_int8_export(tmp_path, monkeypatch, architecture)
         assert deferred["latency_ms"] is None
         assert validation["latency_ms"] is None
         assert deferred["acceptance"]["cpu_p99"] == {"passed": None, "milliseconds": None}
-        assert not deferred["acceptance"]["conversation_telephone_300ms"]["passed"]
+        assert not deferred["acceptance"]["conversation_telephone_300ms"]["historical_80_recall_at_5_false_complete"]
+        assert deferred["release_balanced_accuracy"]["passed"] is None
+        assert deferred["release_balanced_accuracy"]["macro_target"] == .80
         assert "CPU latency deferred" in (tmp_path / "reports/quality-first/report.md").read_text()
         with monkeypatch.context() as patch:
             patch.setattr(evaluate, "_acceptance",
-                          lambda path, report: {"conversation_telephone_300ms": {"passed": True},
+                          lambda path, report: {"conversation_telephone_300ms": {
+                              "historical_80_recall_at_5_false_complete": True},
                                                 "cpu_p99": {"passed": None, "milliseconds": None}})
-            patch.setattr(evaluate, "_measure_latency", lambda *args: {"p50": 1.0, "p99": 1.5})
-            qualified = benchmark(tmp_path, result, .5, name="qualified", quality_first=True)
-        assert qualified["acceptance"]["cpu_p99"] == {"passed": True, "milliseconds": 1.5}
+            patch.setattr(evaluate, "_measure_latency", lambda *args: pytest.fail("legacy metric unlocked latency"))
+            historical = benchmark(tmp_path, result, .5, name="historical", quality_first=True)
+        assert historical["release_balanced_accuracy"]["passed"] is None
+        assert historical["acceptance"]["cpu_p99"] == {"passed": None, "milliseconds": None}
 
         from superturn import ami_benchmark
         from superturn.labels import write_rows

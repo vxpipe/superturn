@@ -12,10 +12,18 @@ HOP = 160
 
 
 class AcousticFeatures(nn.Module):
-    def __init__(self, active_stats=False, *, hop=HOP):
+    def __init__(self, active_stats=False, *, hop=HOP, spectral_rate=16000):
         super().__init__()
+        if spectral_rate not in (8000, 16000):
+            raise ValueError("the acoustic frontend supports 8 kHz or 16 kHz analysis")
         self.active_stats = active_stats
         self.hop = hop
+        self.spectral_rate = spectral_rate
+        self.decimation = 16000 // spectral_rate
+        self.fft = FFT // self.decimation
+        self.frame = FRAME // self.decimation
+        self.frame_hop = hop // self.decimation
+        self.lag_start, lag_stop = 40 // self.decimation, 230 // self.decimation
         frequency = torch.arange(129) * (16000 / FFT)
         def mel(hz):
             return 2595 * torch.log10(1 + hz / 700)
@@ -25,7 +33,11 @@ class AcousticFeatures(nn.Module):
         filters = torch.minimum((bins - edges[:-2]) / (edges[1:-1] - edges[:-2]),
                                 (edges[2:] - bins) / (edges[2:] - edges[1:-1])).clamp_min(0)
         self.register_buffer("mel", filters, persistent=False)
-        self.register_buffer("window", torch.hann_window(FRAME), persistent=False)
+        self.register_buffer("window", torch.hann_window(self.frame), persistent=False)
+        if self.decimation == 2:
+            indices = torch.arange(-16, 17, dtype=torch.float32)
+            taps = .45 * torch.sinc(indices * .45) * torch.hann_window(33, periodic=False)
+            self.register_buffer("antialias", (taps / taps.sum()).reshape(1, 1, -1), persistent=False)
         if active_stats:
             self.activity_floor = 10 ** (-75 / 10)
             # Unnormalized, one-sided STFT power for the retained band.
@@ -34,34 +46,41 @@ class AcousticFeatures(nn.Module):
             self.register_buffer("mel_floor", (power_floor * filters.sum(dim=0) / len(frequency)).clamp_min(1e-8),
                                  persistent=False)
         self.register_buffer("bins", torch.arange(129, dtype=torch.float32), persistent=False)
-        self.register_buffer("lags", torch.arange(40, 230, dtype=torch.float32), persistent=False)
-        padded = F.pad(self.window, (0, FFT - FRAME))
-        window_correlation = torch.stack([(padded * padded.roll(lag)).sum() for lag in range(40, 230)])
+        self.register_buffer("lags", torch.arange(self.lag_start, lag_stop, dtype=torch.float32), persistent=False)
+        padded = F.pad(self.window, (0, self.fft - self.frame))
+        window_correlation = torch.stack([(padded * padded.roll(lag)).sum() for lag in range(self.lag_start, lag_stop)])
         self.register_buffer("lag_window", window_correlation / padded.square().sum(), persistent=False)
 
     def pitch_features(self, power):
         # DC and sub-pitch rumble can otherwise appear perfectly periodic.
         pitch_power = power[..., 2:]
-        harmonics = (self.bins[2:, None] * self.lags * (2 * math.pi / FFT)).cos()
+        harmonics = (self.bins[2:, None] * self.lags * (2 * math.pi / self.fft)).cos()
         strength = pitch_power.sum(dim=-1, keepdim=True)
         correlation = (pitch_power @ harmonics) / strength.clamp_min(1e-8)
         corrected = (correlation / self.lag_window).clamp(-1, 1)
-        lag_index = (corrected - self.lags * 0.0005).argmax(dim=-1, keepdim=True)
-        pitch = 16000 / (lag_index.to(power.dtype) + 40)
+        lag_index = (corrected - self.lags * (0.0005 * self.decimation)).argmax(dim=-1, keepdim=True)
+        pitch = self.spectral_rate / (lag_index.to(power.dtype) + self.lag_start)
         raw_peak = correlation.gather(-1, lag_index)
         floor = strength.amax(dim=1, keepdim=True) * 0.0003
         reliable = (strength >= floor.clamp_min(0.01)) & (raw_peak >= 0.18)
         confidence = corrected.gather(-1, lag_index).clamp(0, 1)
         return pitch, confidence * reliable.to(power.dtype)
 
-    def power_spectrum(self, audio):
-        # Left-align the 400-sample Hann window within the 512-point FFT.
-        window = F.pad(self.window, (0, FFT - FRAME))
+    def analysis_audio(self, audio):
         centered = audio - audio.mean(dim=1, keepdim=True)
-        padded = F.pad(centered, (0, FFT - FRAME))
-        spectrum = torch.stft(padded, n_fft=FFT, hop_length=self.hop, window=window,
+        if self.decimation == 2:
+            return F.conv1d(centered.unsqueeze(1), self.antialias, stride=2, padding=16).squeeze(1)
+        return centered
+
+    def power_spectrum(self, audio):
+        # Left-align the physical Hann window inside the FFT.
+        padding = (0, self.fft - self.frame)
+        window = F.pad(self.window, padding)
+        padded = F.pad(self.analysis_audio(audio), padding)
+        spectrum = torch.stft(padded, n_fft=self.fft, hop_length=self.frame_hop, window=window,
                               center=False, return_complex=False)
-        return spectrum[:, :129].square().sum(dim=-1).transpose(1, 2)
+        power = spectrum[:, :129].square().sum(dim=-1).transpose(1, 2)
+        return power if self.decimation == 1 else 4 * power
 
     def forward(self, audio):
         power = self.power_spectrum(audio)
@@ -132,11 +151,12 @@ class ConformerBlock(nn.Module):
 
 
 class TurnModel(nn.Module):
-    def __init__(self, architecture, width, window, layers=None, gru_hidden_size=None, *, active_stats=False, hop=HOP):
+    def __init__(self, architecture, width, window, layers=None, gru_hidden_size=None, *,
+                 active_stats=False, hop=HOP, spectral_rate=16000):
         super().__init__()
         self.architecture = architecture
         self.samples = round(window * 16000)
-        self.features = AcousticFeatures(active_stats=active_stats, hop=hop)
+        self.features = AcousticFeatures(active_stats=active_stats, hop=hop, spectral_rate=spectral_rate)
         self.stem = nn.Sequential(StemBlock(43, width // 2), StemBlock(width // 2, width))
         output_width = width
         if architecture == "a":
@@ -190,7 +210,8 @@ def build(config):
         width = min((value for value, size in sizes.items() if size <= 1_000_000),
                     key=lambda value: abs(sizes[value] - target))
     return TurnModel(config["architecture"], width, config["window"], config.get("layers"), gru_hidden_size,
-                     active_stats=config.get("active_stats", False), hop=hop)
+                     active_stats=config.get("active_stats", False), hop=hop,
+                     spectral_rate=config.get("spectral_rate", 16000))
 
 
 def parameter_count(architecture, width, window, layers=None):

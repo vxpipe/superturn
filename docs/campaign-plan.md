@@ -100,7 +100,8 @@ but not redistribution.
    The original experiment queue ranked configurations by recall on AMI telephone
    validation at up to 5% false completes, then by AUC on the same rows.
    Pooled clean validation scores broke ties. The legacy evaluator uses
-   that AMI calibration and the historical recall-at-5% gate for continuity.
+   that AMI calibration and reports historical recall at 5% false completes.
+   The legacy CLI leaves release balanced accuracy and latency pending.
    For release, freeze per-language thresholds on independent calibration
    before scoring held-out telephone calls from unseen voices at 300 ms.
    Defer CPU latency until balanced accuracy reaches at least 80% macro and
