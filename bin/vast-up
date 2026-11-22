@@ -2,7 +2,17 @@
 # Rent the campaign machine from an offer ID (see bin/vast-offers), wait until
 # it runs, push the repo and bootstrap it. Records the instance in .campaign/.
 source "$(dirname "$0")/_lib.sh"
-offer="${1:?usage: bin/vast-up OFFER_ID}"
+offer="${1:?usage: bin/vast-up OFFER_ID [--restore all|core|training|none]}"
+restore=all
+if [[ $# != 1 ]]; then
+  [[ $# == 3 && "$2" == --restore ]] || die "usage: bin/vast-up OFFER_ID [--restore all|core|training|none]"
+  restore="$3"
+fi
+[[ "$restore" == all || "$restore" == core || "$restore" == training || "$restore" == none ]] ||
+  die "unknown restore profile"
+if [[ ( "$restore" == core || "$restore" == training ) && -z "${SUPERTURN_REMOTE:-}" ]]; then
+  die "a targeted restore requires SUPERTURN_REMOTE"
+fi
 [[ -s "$STATE/instance" ]] && die "instance $(cat "$STATE/instance") already recorded; bin/vast-down it first"
 [[ "$offer" =~ ^[0-9]+$ ]] || die "offer ID must be numeric"
 offers="$(vast search offers "$VAST_QUERY $VAST_TARGET id=$offer" --storage "$VAST_DISK_GB" --raw)"
@@ -30,8 +40,12 @@ done
 sleep 20   # let sshd come up
 "$ROOT/bin/vast-push"
 remote "bash $REMOTE_REPO/bin/vast-bootstrap"
-if [[ -n "${SUPERTURN_REMOTE:-}" ]]; then
-  echo "pulling stored data from $SUPERTURN_REMOTE/superturn/ (empty on the first campaign)"
+if [[ -n "${SUPERTURN_REMOTE:-}" && "$restore" == all ]]; then
+  echo "pulling all standard campaign data from private storage"
   remote "cd $REMOTE_REPO && export SUPERTURN_DATA=$REMOTE_DATA && bin/sync pull" || die "pull from storage failed; instance $id kept"
+elif [[ "$restore" == core || "$restore" == training ]]; then
+  echo "restoring the $restore profile from private storage"
+  remote "cd $REMOTE_REPO && export SUPERTURN_DATA=$REMOTE_DATA && bin/campaign-handoff pull $restore" ||
+    die "pull from storage failed; instance $id kept"
 fi
 echo "instance $id ready. Next: bin/vast-run -n smoke 'bin/campaign-smoke --device cuda'"

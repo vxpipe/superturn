@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# Save or restore the private release-candidate state without rolling back data.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+requested_data="${SUPERTURN_DATA:-}"
+if [[ -f .env ]]; then
+  set -a; source .env; set +a
+fi
+if [[ -n "$requested_data" ]]; then export SUPERTURN_DATA="$requested_data"; fi
+: "${SUPERTURN_DATA:?set SUPERTURN_DATA}"
+: "${SUPERTURN_REMOTE:?set SUPERTURN_REMOTE}"
+[[ -f "$SUPERTURN_DATA/.campaign-machine" ]] || { echo "campaign machine required" >&2; exit 2; }
+[[ "$SUPERTURN_REMOTE" =~ ^[A-Za-z0-9_-]+:[A-Za-z0-9._-]+/?$ ]] || exit 2
+root="${SUPERTURN_REMOTE%/}/superturn"
+metadata=manifests/rental-handoff
+stage="$(mktemp -d)"
+trap 'rm -rf "$stage"' EXIT
+cd "$SUPERTURN_DATA"
+
+case "${1:-}" in
+  push)
+    [[ $# == 1 ]] || exit 2
+    python3 - "$stage" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+stage = Path(sys.argv[1])
+base = Path(".")
+types = {".pt", ".ckpt", ".onnx", ".json", ".jsonl", ".md", ".txt", ".csv", ".npz", ".npy"}
+# Keep experiment checkpoints and receipts. Preserve review media separately
+# so unrelated rendered audio does not enter a normal restore.
+core = {
+    path for path in (base / "runs").rglob("*")
+    if path.is_file() and path.suffix in types and
+    (path.suffix not in {".npy", ".npz"} or "scores" in path.name or "targets" in path.name)
+}
+for folder in ("reports", "logs", "manifests", "exports", "resume"):
+    core.update(path for path in (base / folder).rglob("*") if path.is_file()
+                and not path.name.startswith(("hindi-review", "campaign-handoff"))
+                and "rental-handoff" not in path.parts)
+review = base / "runs/paired-call-floor-review"
+for name in ("packet-v1", "continuous-spring-v1", "continuous-datahive-v2", "continuous-harper-v1"):
+    folder = review / name / "listening"
+    core.update(folder.rglob("*.wav"))
+core.add(review / "hindi-review-a/packet.json")
+core.add(base / "shards/dense-teacher/pool.json")
+
+lock = json.loads(Path("reports/own-student-fidelity-confirmation-lock.json").read_text())
+export = json.loads(Path("reports/e20-onnx-quality.json").read_text())
+artifacts = {"best_retained_float": lock["fits"]["193"]["epoch20_checkpoint"],
+             "compact_int8": export["compact"]["candidate"],
+             "compact_export_parent": export["artifacts"]["protocol"]["checkpoint"]}
+for obj in artifacts.values():
+    path = Path(obj["path"])
+    with path.open("rb") as stream:
+        digest = hashlib.sha256()
+        for block in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(block)
+        if digest.hexdigest() != obj["sha256"]:
+            raise ValueError("the candidate disagrees with its recorded checkpoint hash")
+    core.add(path)
+training = set(core)
+for folder in ("cache/own-teacher-targets", "cache/own-teacher-pool",
+               "raw/harper-valley", "raw/livekit_eot_diagnostic", "raw/livekit_multilingual_diagnostic",
+               "raw/spring-hindi-paired-pilot", "raw/datahive-conversation-pilot"):
+    source = base / folder
+    if not source.is_dir():
+        raise ValueError(f"missing required restore directory {source}")
+    training.update(path for path in source.rglob("*") if path.is_file() and not path.name.endswith((".partial", ".part")))
+for name in ("large-v3.pt", "large-v3.json"):
+    training.add(base / "cache/open-speech-encoder" / name)
+record = {"artifacts": artifacts, "profiles": {}}
+for profile, paths in (("core", core), ("training", training)):
+    files = "".join(f"{path.as_posix()}\n" for path in sorted(paths))
+    (stage / f"{profile}.files").write_text(files)
+    record["profiles"][profile] = {"files": len(paths), "bytes": sum(path.stat().st_size for path in paths),
+                                   "list_sha256": hashlib.sha256(files.encode()).hexdigest()}
+(stage / "receipt.json").write_text(json.dumps(record, indent=2) + "\n")
+print(json.dumps(record, indent=2))
+PY
+    rclone copy . "$root" --files-from-raw "$stage/training.files" --checksum --stats 30s --stats-one-line
+    rclone check --one-way . "$root" --files-from-raw "$stage/training.files" --log-level ERROR
+    python3 - "$stage/receipt.json" <<'PY' > "$stage/artifacts"
+import json
+import sys
+for info in json.load(open(sys.argv[1]))["artifacts"].values():
+    print(info["sha256"], info["path"])
+PY
+    while read -r expected item; do
+      actual="$(rclone cat "$root/$item" --log-level ERROR | sha256sum | cut -d' ' -f1)"
+      [[ "$actual" == "$expected" ]] || { echo "R2 artifact digest differs" >&2; exit 1; }
+      printf 'Verified R2 artifact %s %s\n' "$actual" "$item"
+    done < "$stage/artifacts"
+    mkdir -p "$metadata"
+    for file in core.files training.files receipt.json; do
+      rclone copyto "$stage/$file" "$root/$metadata/$file"
+      [[ "$(sha256sum < "$stage/$file")" == "$(rclone cat "$root/$metadata/$file" | sha256sum)" ]]
+      cp "$stage/$file" "$metadata/$file"
+    done
+    echo "Verified both private restore profiles"
+    ;;
+  pull|verify)
+    action="$1"
+    profile="${2:-}"
+    [[ $# == 2 && ( "$profile" == core || "$profile" == training ) ]] || exit 2
+    rclone copyto "$root/$metadata/receipt.json" "$stage/receipt.json"
+    rclone copyto "$root/$metadata/$profile.files" "$stage/$profile.files"
+    python3 - "$stage" "$profile" <<'PY'
+import hashlib
+import json
+from pathlib import Path
+import sys
+
+stage, profile = Path(sys.argv[1]), sys.argv[2]
+expected = json.loads((stage / "receipt.json").read_text())["profiles"][profile]
+files = (stage / f"{profile}.files").read_bytes()
+if hashlib.sha256(files).hexdigest() != expected["list_sha256"]:
+    raise ValueError("restore file list changed")
+print(f"Restoring {profile}: {expected['files']} files, {expected['bytes']} bytes")
+PY
+    if [[ "$action" == pull ]]; then
+      rclone copy "$root" . --files-from-raw "$stage/$profile.files" --checksum --stats 30s --stats-one-line
+      rclone check --one-way "$root" . --files-from-raw "$stage/$profile.files" --log-level ERROR
+    else
+      while IFS= read -r item; do
+        [[ -f "$item" ]] || { echo "missing handoff input $item" >&2; exit 1; }
+      done < "$stage/$profile.files"
+      rclone check --one-way . "$root" --files-from-raw "$stage/$profile.files" --log-level ERROR
+    fi
+    python3 - "$stage/receipt.json" <<'PY' > "$stage/artifacts"
+import json
+import sys
+for info in json.load(open(sys.argv[1]))["artifacts"].values():
+    print(info["sha256"], info["path"])
+PY
+    sha256sum --check --strict "$stage/artifacts"
+    if [[ "$action" == pull ]]; then
+      mkdir -p "$metadata"
+      cp "$stage/receipt.json" "$stage/$profile.files" "$metadata/"
+    fi
+    ;;
+  *) echo "usage: bin/campaign-handoff push | pull core|training | verify core|training" >&2; exit 2 ;;
+esac

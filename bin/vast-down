@@ -6,10 +6,23 @@
 source "$(dirname "$0")/_lib.sh"
 id="$(instance_id)"
 [[ "${1:-}" == "--yes" ]] || die "this destroys instance $id and its disk (raw data, labels and shards are lost unless SUPERTURN_REMOTE is set); rerun with --yes"
-"$ROOT/bin/vast-fetch" || die "fetching results failed; instance kept"
-if [[ -n "${SUPERTURN_REMOTE:-}" ]]; then
-  remote "cd $REMOTE_REPO && export SUPERTURN_DATA=$REMOTE_DATA && bin/sync push" || die "push to storage failed; instance kept"
+if [[ "${2:-}" == --verified-handoff && $# == 2 ]]; then
+  review="$ROOT/data/review/paired-call-floor-review"
+  [[ -f "$review/SHA256SUMS" && $(grep -c '\.wav$' "$review/SHA256SUMS") == 121 ]] ||
+    die "the local review packet is missing; instance kept"
+  (cd "$review" && grep '\.wav$' SHA256SUMS | sha256sum --check --strict --quiet) ||
+    die "local review audio verification failed; instance kept"
+  remote "cd $REMOTE_REPO && export SUPERTURN_DATA=$REMOTE_DATA && bin/campaign-handoff verify training" ||
+    die "private training handoff verification failed; instance kept"
+  result="local review packet and verified private R2 handoff"
+else
+  [[ $# == 1 ]] || die "usage: bin/vast-down --yes [--verified-handoff]"
+  "$ROOT/bin/vast-fetch" || die "fetching results failed; instance kept"
+  if [[ -n "${SUPERTURN_REMOTE:-}" ]]; then
+    remote "cd $REMOTE_REPO && export SUPERTURN_DATA=$REMOTE_DATA && bin/sync push" || die "push to storage failed; instance kept"
+  fi
+  result="results in data/campaigns/$id"
 fi
 vast destroy instance "$id"
 rm -f "$STATE/instance"
-echo "instance $id destroyed; results in data/campaigns/$id"
+echo "instance $id destroyed; $result"

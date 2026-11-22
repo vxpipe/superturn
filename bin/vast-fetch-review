@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Fetch just the blind review media and ballot templates requested for local review.
+source "$(dirname "$0")/_lib.sh"
+
+destination="$ROOT/data/review/paired-call-floor-review"
+[[ ! -e "$destination" ]] || die "review directory already exists; preserve the local ballots"
+mkdir -p "$(dirname "$destination")"
+stage="$(mktemp -d "$(dirname "$destination")/.review.XXXXXX")"
+trap 'rm -rf "$stage"' EXIT
+
+remote "cd $REMOTE_DATA/runs/paired-call-floor-review &&
+  find packet-v1/listening continuous-spring-v1/listening continuous-datahive-v2/listening continuous-harper-v1/listening hindi-review-a/packet.json -type f -print0 |
+    sort -z | xargs -0 sha256sum" > "$stage/SHA256SUMS"
+[[ $(grep -c '\.wav$' "$stage/SHA256SUMS") == 121 ]] || die "the sealed review audio count changed"
+remote "cd $REMOTE_DATA/runs/paired-call-floor-review &&
+  tar -czf - packet-v1/listening continuous-spring-v1/listening continuous-datahive-v2/listening continuous-harper-v1/listening hindi-review-a/packet.json" |
+  tar -xzf - -C "$stage"
+(cd "$stage" && sha256sum --check --strict --quiet SHA256SUMS)
+
+mv -T "$stage" "$destination"
+printf 'Verified 121 WAV files and their review metadata in %s\n' "$destination"
+du -sb "$destination"
