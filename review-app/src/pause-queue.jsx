@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
+import { AudioTimeline } from './audio-timeline.jsx';
 import { assistedCsv, judgmentDefaults, sides } from './ballot.js';
 import { Judgment, SelectField } from './judgment.jsx';
 
@@ -9,38 +10,6 @@ function NumberField({ label, value, update, min = 0, max = 30000, step = 1, pla
     <input type="number" inputMode="numeric" min={min} max={max} step={step}
       value={value} placeholder={placeholder} onChange={event => update(event.target.value)} />
   </label>;
-}
-
-function PauseAudio({ proposal }) {
-  const player = useRef(null);
-  const stopAt = useRef(null);
-  const [error, setError] = useState('');
-  const position = proposal.stop_ms / 1000;
-  const start = Math.max(0, position - 4);
-
-  function play(near) {
-    const audio = player.current;
-    stopAt.current = near ? position + 3 : null;
-    if (near) audio.currentTime = start;
-    audio.play().then(() => setError('')).catch(problem => setError(problem.message));
-  }
-
-  return <div className="pause-audio">
-    <audio ref={player} controls preload="metadata" src={`/api/audio/${proposal.recording}`}
-      aria-label="Recording playback"
-      onLoadedMetadata={() => { player.current.currentTime = start; }}
-      onTimeUpdate={() => {
-        if (stopAt.current !== null && player.current.currentTime >= stopAt.current) {
-          player.current.pause();
-          stopAt.current = null;
-        }
-      }} />
-    <div className="actions">
-      <button type="button" className="primary" onClick={() => play(true)}>Play around pause</button>
-      <button type="button" onClick={() => play(false)}>Continue playing</button>
-    </div>
-    {error && <p role="alert" className="error">Playback failed. {error}</p>}
-  </div>;
 }
 
 export function PauseQueue({ packet, draft, save, download }) {
@@ -120,7 +89,10 @@ export function PauseQueue({ packet, draft, save, download }) {
       </div>
       <p className="instruction">Listen for whether that speaker continues or the other speaker takes over.
         A brief acknowledgment followed by the original speaker continuing is a resume.</p>
-      <PauseAudio key={proposal.id} proposal={proposal} />
+      <AudioTimeline key={proposal.recording} recording={proposal.recording} selected={proposal}
+        durationHint={receipt.recordings[proposal.recording].duration_ms / 1000}
+        markers={visible.filter(pause => pause.recording === proposal.recording)}
+        reveal={Boolean(row.first_outcome)} reviewed={ratings} onSelect={setMarked} />
       <Judgment row={row} update={update} compact>
         <div className="actions">
           <button disabled={index === 0} onClick={() => setMarked(visible[index - 1].id)}>Previous</button>

@@ -12,13 +12,21 @@ npm start
 ```
 
 Open `http://127.0.0.1:8765/`, or `http://rocksalt:8765/` on the
-configured tailnet. Use the same URL to keep your browser drafts. The
-app reads earlier drafts and offers a separate export for manual marks.
+configured tailnet. Ratings save automatically to
+`hindi-review-a/ballots/<reviewer-id>.json` in the local data bundle.
+Use the same browser and address to reopen your draft. Wait for
+**Saved to rocksalt** before closing a tab. CSV downloads are optional.
+Old drafts in the same browser migrate automatically. Each browser
+session has its own review file.
 
 In **Suggested pauses**, set the minimum and maximum detected silence
 in milliseconds, then play around a pause and select the outcome you
 heard. The filter only changes which items are displayed. Exports
 include all saved ratings, including ones outside the current filter.
+The stereo timeline marks each suggestion in the current recording.
+Click a marker to select it or scrub the timeline to seek. The highlighted
+band initially shows the 300 ms decision window. The full detected gap
+and following waveform appear after the first rating.
 The assisted CSV keeps the detector stop as its time origin. Its audit
 JSON records detector settings, audio checksums, timing corrections, and
 the first and latest outcomes. Keep assisted and manual ballots separate.
@@ -34,6 +42,10 @@ Set `REVIEW_BUNDLE` to an absolute path if the copied
 `hindi-review-a` packet and `packet-v1/listening/reviewer-a.csv` in that
 directory. The app serves the review manifest and allowlisted audio IDs
 over loopback.
+
+Set `REVIEW_BALLOTS` to an alternate local ballot directory when
+testing. The normal directory is git-ignored and private to the server
+account.
 
 ## Prepare suggestions
 
