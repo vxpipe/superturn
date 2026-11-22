@@ -7,7 +7,7 @@ const formatTime = seconds => {
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, '0')}`;
 };
 
-function WavePeaks({ waveform, cutoff, focal }) {
+function WavePeaks({ waveform, focal }) {
   const canvas = useRef(null);
   useEffect(() => {
     const { width, height } = canvas.current;
@@ -17,14 +17,13 @@ function WavePeaks({ waveform, cutoff, focal }) {
     for (const [lane, peaks] of waveform.channels.entries()) {
       const center = height * (lane + 0.5) / 2;
       const step = width / peaks.length;
-      const limit = cutoff === undefined ? peaks.length : Math.floor(cutoff / waveform.duration * peaks.length);
       ctx.fillStyle = focal === ['left', 'right'][lane] ? '#a1d6c0' : '#6c9c91';
-      for (let bin = 0; bin < Math.min(limit, peaks.length); bin++) {
+      for (let bin = 0; bin < peaks.length; bin++) {
         const amplitude = 1 + Math.sqrt(peaks[bin] / 128) * height * 0.19;
         ctx.fillRect(bin * step, center - amplitude, Math.max(1, step * 0.62), amplitude * 2);
       }
     }
-  }, [waveform, cutoff, focal]);
+  }, [waveform, focal]);
   return <canvas ref={canvas} width="960" height="176" aria-hidden="true" />;
 }
 
@@ -95,7 +94,6 @@ export function AudioTimeline({ recording, durationHint, selected, markers = [],
   }
 
   const visibleMarkers = selected && !onSelect ? [selected] : markers;
-  const cutoff = selected && !reveal ? edge : undefined;
   const ticks = duration >= 20 ? [0, 5, 10, 15, 20, 25, duration] : [0, duration / 2, duration];
 
   return <section className="timeline-player" aria-label={label}>
@@ -110,7 +108,7 @@ export function AudioTimeline({ recording, durationHint, selected, markers = [],
     <div className="timeline-plot">
       {ticks.slice(1, -1).map(time =>
         <span key={time} className="timeline-grid" style={{ left: percent(time, duration) }} aria-hidden="true" />)}
-      <WavePeaks waveform={waveform} cutoff={cutoff} focal={selected?.focal_channel} />
+      <WavePeaks waveform={waveform} focal={selected?.focal_channel} />
       <div className="timeline-channels" aria-hidden="true"><span>L</span><span>R</span></div>
       {visibleMarkers.map(marker => {
         const active = marker.id === selected?.id;

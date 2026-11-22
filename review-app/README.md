@@ -23,10 +23,10 @@ In **Suggested pauses**, set the minimum and maximum detected silence
 in milliseconds, then play around a pause and select the outcome you
 heard. The filter only changes which items are displayed. Exports
 include all saved ratings, including ones outside the current filter.
-The stereo timeline marks each suggestion in the current recording.
+The stereo timeline shows the whole recording and marks each suggestion.
 Click a marker to select it or scrub the timeline to seek. The highlighted
 band initially shows the 300 ms decision window. The full detected gap
-and following waveform appear after the first rating.
+appears after the first rating.
 The assisted CSV keeps the detector stop as its time origin. Its audit
 JSON records detector settings, audio checksums, timing corrections, and
 the first and latest outcomes. Keep assisted and manual ballots separate.
