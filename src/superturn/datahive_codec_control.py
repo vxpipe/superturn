@@ -114,7 +114,7 @@ def observe_call(raw, call, member, detect, *, word_context=None):
                      and span.end - left >= 3 * RATE and span.end + gap + 2 * RATE <= right]
         observed.update(tracks=tracks, reference=reference)
         if word_context is not None:
-            for key, stream in (("words", words), ("omissions", omissions)):
+            for key, stream in (("words", words), ("omissions", omissions), ("activity", primary)):
                 word_context[key] = [Speech("0" if span.speaker == "caller" else "1",
                                             max(span.start, left) - left, min(span.end, right) - left)
                                      for span in stream if span.start < right and left < span.end]
