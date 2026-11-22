@@ -91,14 +91,13 @@ Telephone channel: resample to 8 kHz, G.711 μ-law/A-law round trip, band-pass
 300–3400 Hz, packet loss and jitter, level changes. Production callers arrive
 over the phone, so this matters more than room noise.
 
-## Our own calls
+## Project-collected calls
 
-Production call recordings may support training and evaluation when the
-customer terms and applicable consent cover that use and release of the
-trained weights. Confirm permitted processing and storage locations before
-copying calls. Split by customer and caller and reserve held-out customers for
-evaluation. Keep the recordings and identifiable derivatives in approved
-private storage. Publish aggregate evaluation results.
+Collect separate caller and partner tracks with consent for training,
+evaluation and release of the trained weights. Verify capture timing on
+the two tracks. Keep speakers disjoint across splits and reserve a group
+of previously unseen speakers for evaluation. Store the recordings and
+identifiable derivatives privately and publish aggregate results.
 
 ## Download plan and sizes
 

@@ -141,14 +141,11 @@ full runbook.
   (`src/superturn/splits.py`). Never split by clip. Never tune on test sets.
 - Guard speaker variety: count speakers per source and language from the
   data, cap examples per speaker, and report metrics on unseen voices only.
-- Customer calls may be used for training and evaluation when the applicable
-  consent and terms cover that use and publication of trained weights.
-  Confirm the authorized processing and storage locations before copying calls.
-  Split by customer and caller before sampling pauses, and reserve held-out
-  customers for evaluation. Retain customer audio, transcripts, labels with
-  identifiers, and checkpoints in approved private storage. Keep them out of
-  Git, shared notes, public reports and notifications.
-- Obtain consent covering the same uses for project-collected recordings.
+- Use permissively licensed public data and project-collected recordings
+  whose consent covers training, evaluation and publication of the trained
+  weights. Confirm approved processing and storage before copying project
+  recordings. Keep recordings, identifying derivatives and private
+  checkpoints out of Git, shared notes, public reports and notifications.
   Use Open Yap 1K only after the authorized recipient accepts its agreement
   and obtains access. Keep its source files and reconstructible derivatives
   in storage allowed by that agreement.

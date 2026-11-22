@@ -138,7 +138,7 @@ on verified real labels before using its output.
   `superturn plan-conversation-splits PAUSES.jsonl SPLITS.json --source SOURCE`.
   Give each row a unique `pause_id`, a `recording`, a normalized `language`,
   and a `speakers` list of pseudonymous people whose voices must stay together.
-  Include a pseudonymous `customer` for customer calls. Set `prior_turn_ms`
+  Set `prior_turn_ms`
   from the observed turn start to the pause, or use null when that timing
   is missing. The planner targets 80/10/10 pause shares within each language
   and length combination, with bands under 1.2 s, 1.2–2.7 s, 2.7–6 s,
@@ -146,7 +146,7 @@ on verified real labels before using its output.
   for each combination. Sparse combinations and large speaker groups can
   limit balance. Keep the receipt in approved private storage. Existing
   frozen benchmarks retain their original assignments. For an expanded
-  cohort that can share callers or customers with an earlier cohort,
+  cohort that can share speakers with an earlier cohort,
   include the earlier manifest rows with `fixed_split` set. The planner
   preserves those assignments and rejects a connected component with
   conflicting assignments.
