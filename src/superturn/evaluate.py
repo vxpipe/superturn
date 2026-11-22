@@ -74,15 +74,20 @@ def _compact_initializers(path):
     onnx.save(graph, path)
 
 
-def export(checkpoint, *, limit=True, spectrum="stft"):
+def export(checkpoint, *, limit=True, spectrum="stft", destination=None):
     checkpoint = Path(checkpoint)
     saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
     config = saved["config"]
     model = build(config).eval()
     model.load_state_dict(saved["state"])
+    parameters = saved.get("parameters")
+    if parameters is None:
+        parameters = sum(value.numel() for value in model.parameters())
     torch.set_num_threads(1)
-    float_path = checkpoint.with_name("float.onnx")
-    quant_path = checkpoint.with_name("int8.onnx")
+    directory = checkpoint.parent if destination is None else Path(destination)
+    directory.mkdir(parents=True, exist_ok=True)
+    float_path = directory / "float.onnx"
+    quant_path = directory / "int8.onnx"
     rng = np.random.default_rng(42)
     audio = rng.normal(0, 0.15, (2, model.samples)).astype("float32")
     gap = np.asarray([[200], [500]], dtype="float32")
@@ -124,13 +129,13 @@ def export(checkpoint, *, limit=True, spectrum="stft"):
     if not np.isfinite(quantized).all():
         raise ValueError("nonfinite scores from int8 model")
     size = quant_path.stat().st_size
-    details = {"float_max_abs_error": parity, "int8_bytes": size, "parameters": saved["parameters"],
-               "threshold": saved["metrics"]["threshold"], "config": config}
+    details = {"float_max_abs_error": parity, "int8_bytes": size, "parameters": parameters,
+               "threshold": saved.get("metrics", {}).get("threshold"), "config": config}
     if spectrum != "stft":
         details["spectrum"] = spectrum
     quant_path.with_name("export.json").write_text(json.dumps(details, indent=2) + "\n")
-    if limit and (size > 1_000_000 or not 100000 <= saved["parameters"] <= 1_000_000):
-        raise ValueError(f"export has {size} bytes and {saved['parameters']} parameters")
+    if limit and (size > 1_000_000 or not 100000 <= parameters <= 1_000_000):
+        raise ValueError(f"export has {size} bytes and {parameters} parameters")
     return quant_path
 
 
