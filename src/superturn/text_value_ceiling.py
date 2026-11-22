@@ -110,7 +110,7 @@ def unpack(packed):
     return " ".join("".join(c if c.isalnum() else " " for c in text).split())
 
 
-def scorer(root, variants):
+def scorer(root, variants, *, text_of=unpack):
     from transformers import AutoProcessor, Qwen2AudioForConditionalGeneration
 
     folder = root / "audit-models/qwen2-audio" / REVISION
@@ -120,17 +120,16 @@ def scorer(root, variants):
     processor = AutoProcessor.from_pretrained(folder, local_files_only=True)
     tokenizer = processor.tokenizer
     tokenizer.padding_side = "left"
-    loaded = Qwen2AudioForConditionalGeneration.from_pretrained(
-        folder, local_files_only=True, use_safetensors=True, dtype=torch.bfloat16, device_map="cuda",
-    ).eval()
-    model = loaded.language_model
+    model = Qwen2AudioForConditionalGeneration.from_pretrained(
+        folder, local_files_only=True, use_safetensors=True, dtype=torch.bfloat16,
+    ).to("cuda").eval()
     candidates = [tokenizer.encode(letter, add_special_tokens=False) for letter in ("A", "B")]
     if any(len(tokens) != 1 for tokens in candidates):
         raise ValueError("the fixed answers need single distinct tokens")
     a, b = (tokens[0] for tokens in candidates)
     if a == b:
         raise ValueError("the text answers are indistinguishable")
-    texts = sorted(set(CHECKS) | {text for view in variants.values() for clip in view if (text := unpack(clip))})
+    texts = sorted(set(CHECKS) | {text for view in variants.values() for clip in view if (text := text_of(clip))})
     values = {"": 0.}
     masses = []
     meter = Progress("text-value-frozen-scorer", len(texts), "unique prefixes")
@@ -156,7 +155,7 @@ def scorer(root, variants):
         meter.finish("failed")
         raise
     meter.finish()
-    result = {name: np.asarray([values[unpack(clip)] for clip in view], dtype=np.float64)
+    result = {name: np.asarray([values[text_of(clip)] for clip in view], dtype=np.float64)
               for name, view in variants.items()}
     diagnostics = {"answer_probability_mass_p10_p50_p90": np.quantile(masses, [.1, .5, .9]).tolist(),
                    "finished_example_log_odds": float(values[CHECKS[0]]),
