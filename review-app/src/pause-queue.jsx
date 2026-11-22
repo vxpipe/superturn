@@ -5,6 +5,17 @@ import { Judgment, SelectField } from './judgment.jsx';
 
 export const defaultRange = { min: '500', max: '5000' };
 
+export function getPauseQueue(proposals, range, ratings) {
+  const min = Number(range.min);
+  const max = Number(range.max);
+  const valid = Number.isInteger(min) && Number.isInteger(max) && min >= 300 && max <= 30000 && max >= min;
+  const visible = valid ? proposals.filter(proposal => {
+    const gap = proposal.next_onset_ms - proposal.stop_ms;
+    return gap >= min && gap <= max;
+  }) : [];
+  return { valid, visible, rated: visible.filter(proposal => ratings[proposal.id]?.outcome).length };
+}
+
 function NumberField({ label, value, update, min = 0, max = 30000, step = 1, placeholder }) {
   return <label>{label}
     <input type="number" inputMode="numeric" min={min} max={max} step={step}
@@ -12,7 +23,7 @@ function NumberField({ label, value, update, min = 0, max = 30000, step = 1, pla
   </label>;
 }
 
-export function PauseQueue({ packet, draft, save, download }) {
+export function PauseQueue({ packet, queue, draft, save, download }) {
   const { receipt, windows } = packet;
   const [marked, setMarked] = useState('');
   const [error, setError] = useState('');
@@ -22,14 +33,7 @@ export function PauseQueue({ packet, draft, save, download }) {
   </section>;
 
   const { assisted: ratings, pauseRange: range } = draft;
-  const min = Number(range.min);
-  const max = Number(range.max);
-  const valid = Number.isInteger(min) && Number.isInteger(max) && min >= 300 && max <= 30000 && max >= min;
-  const visible = valid ? receipt.proposals.filter(proposal => {
-    const gap = proposal.next_onset_ms - proposal.stop_ms;
-    return gap >= min && gap <= max;
-  }) : [];
-  const rated = visible.filter(proposal => ratings[proposal.id]?.outcome).length;
+  const { valid, visible, rated } = queue;
   const proposal = visible.find(pause => pause.id === marked)
     ?? visible.find(pause => !ratings[pause.id]?.outcome) ?? visible[0];
   const index = visible.indexOf(proposal);

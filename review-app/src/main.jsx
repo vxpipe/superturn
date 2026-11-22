@@ -3,7 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { AudioTimeline } from './audio-timeline.jsx';
 import { candidateCsv, continuousCsv, judgmentDefaults } from './ballot.js';
 import { Judgment } from './judgment.jsx';
-import { defaultRange, PauseQueue } from './pause-queue.jsx';
+import { defaultRange, getPauseQueue, PauseQueue } from './pause-queue.jsx';
 import { useReviewDraft } from './use-review-draft.js';
 import './review.css';
 
@@ -58,9 +58,10 @@ function Reviewer({ packet, serverDraft }) {
   const [practiceOpen, setPracticeOpen] = useState(false);
   const [legacyError, setLegacyError] = useState('');
   const hasManualDraft = Object.values(draft.windows).some(recording => recording.events?.length);
+  const queue = getPauseQueue(packet.receipt?.proposals ?? [], draft.pauseRange, draft.assisted);
   const steps = [
-    ['assisted', 'Suggested pauses', packet.receipt?.proposals.map(proposal => proposal.id) ?? []],
-    ['clips', 'Short clips', packet.clips],
+    ['assisted', 'Suggested pauses', queue.rated, queue.visible.length],
+    ['clips', 'Short clips', packet.clips.filter(id => draft.clips[id]?.outcome).length, packet.clips.length],
   ];
 
   function exportManual() {
@@ -86,9 +87,9 @@ function Reviewer({ packet, serverDraft }) {
     <div className="workspace">
       <aside>
         <nav aria-label="Review steps">
-          {steps.map(([key, label, items]) =>
+          {steps.map(([key, label, reviewed, total]) =>
             <button key={key} aria-current={view === key ? 'step' : undefined} onClick={() => setView(key)}>
-              <span>{label}</span><span>{items.filter(id => draft[key][id]?.outcome).length} / {items.length}</span>
+              <span>{label}</span><span>{reviewed} / {total}</span>
             </button>)}
         </nav>
         <details onToggle={event => setPracticeOpen(event.currentTarget.open)}>
@@ -103,7 +104,7 @@ function Reviewer({ packet, serverDraft }) {
         </details>}
       </aside>
       {view === 'assisted'
-        ? <PauseQueue packet={packet} draft={draft} save={save} download={download} />
+        ? <PauseQueue packet={packet} queue={queue} draft={draft} save={save} download={download} />
         : <ShortClips packet={packet} draft={draft} save={save} />}
     </div>
     <footer>
