@@ -30,12 +30,16 @@ MODELS = {"whisper-large-v3": "open-speech-whisper-large-v3",
           "hubert-large": "open-speech-hubert-large"}
 
 
-def english(root):
-    return [(label, group, (end - edge) * 1000 / RATE, end == len(pcm))
-            for pcm, edge, end, label, group in english_spans(root)]
+def english(root, *, ordered_keys=None):
+    result = []
+    for ordinal, (pcm, edge, end, label, group) in enumerate(english_spans(root)):
+        result.append((label, group, (end - edge) * 1000 / RATE, end == len(pcm)))
+        if ordered_keys is not None:
+            ordered_keys.append((group, ordinal, edge))
+    return result
 
 
-def languages(root):
+def languages(root, *, ordered_keys=None):
     result = {}
     paths = {lang: root / f"raw/livekit_multilingual_diagnostic/data/{lang}/validation-00000-of-00001.parquet"
              for lang in DATA}
@@ -46,12 +50,13 @@ def languages(root):
             if file_digest(paths[lang]) != DATA[lang]:
                 raise ValueError(f"unverified development audio for {lang}")
             found, group = [], 0
+            keys = [] if ordered_keys is not None else None
             for batch in source.iter_batches(batch_size=8, columns=["audio", "cohort", "language", "silence_spans"]):
                 for row in batch.to_pylist():
                     if (row["language"], row["cohort"]) != (lang, "general"):
                         raise ValueError("unexpected language diagnostic cohort")
                     length = len(read_audio(row["audio"]["bytes"]))
-                    for span in row["silence_spans"]:
+                    for ordinal, span in enumerate(row["silence_spans"]):
                         edge = round(span["start"] * RATE)
                         end = min(length, round(span["end"] * RATE))
                         if not 0 <= edge <= end or end - edge < GAP:
@@ -59,9 +64,13 @@ def languages(root):
                         if span["label"] not in {"eot", "hold"}:
                             raise ValueError("unexpected development pause label")
                         found.append((int(span["label"] == "eot"), group, (end - edge) * 1000 / RATE, end == length))
+                        if keys is not None:
+                            keys.append((group, ordinal, edge))
                     group += 1
                 meter.advance(batch.num_rows)
             result[lang] = found
+            if ordered_keys is not None:
+                ordered_keys[lang] = keys
     except BaseException:
         meter.finish("failed")
         raise
@@ -69,9 +78,14 @@ def languages(root):
     return result
 
 
-def harper(root):
+def harper(root, *, ordered_keys=None, caller_resume=False):
     archived = json.loads((root / "reports/harper-valley-development-stratified-provenance.json").read_text())
     detect, result = silero(), []
+    if ordered_keys is not None:
+        from .harper_valley_benchmark import pinned_validation
+
+        calls, _, _ = pinned_validation(root)
+        callers = {row["id"]: row["caller"] for row in calls}
     for group, row in enumerate(archived):
         if not row["fixed_pauses"]:
             continue
@@ -82,7 +96,13 @@ def harper(root):
                        for part in vad if max(left, part.start) < min(right, part.end)]
             for span, gap, label in turns(clipped, decision_ms=300):
                 if span.speaker == "caller":
-                    duration[span.end - origins["caller"], label] = gap * 1000 / RATE
+                    observed, censored = gap, False
+                    if caller_resume and label == "hold":
+                        next_caller = min((part.start for part in clipped if part.speaker == "caller"
+                                           and part.start > span.end), default=None)
+                        censored = next_caller is None
+                        observed = (right if censored else next_caller) - span.end
+                    duration[span.end - origins["caller"], label] = (observed * 1000 / RATE, censored)
 
         reproduced = []
         audit_call(root / "raw/harper-valley", row["call"], detect, recover_clock=True,
@@ -90,7 +110,10 @@ def harper(root):
         if [list(item) for item in reproduced] != row["fixed_pauses"]:
             raise ValueError("the archived HarperValley pause membership did not reproduce")
         for edge, label in reproduced:
-            result.append((int(label == "shift"), group, duration[edge, label], False))
+            if ordered_keys is not None:
+                ordered_keys.append((callers[row["call"]], len(result), edge))
+            observed, censored = duration[edge, label]
+            result.append((int(label == "shift"), group, observed, censored))
     return result
 
 
