@@ -33,13 +33,20 @@ async function start() {
     throw new Error('Duplicate review audio IDs');
   }
   await Promise.all([...ids].map(id => access(join(audioDir, `${id}.wav`))));
+  const receipt = await readFile(join(bundle, 'hindi-review-a/suggested-pauses.json'), 'utf8')
+    .then(JSON.parse)
+    .catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
+  if (receipt && (receipt.schema !== 1 || receipt.mode !== 'assisted'
+      || !receipt.proposals.every(proposal => windows.includes(proposal.recording)))) {
+    throw new Error('Unexpected suggested-pause receipt');
+  }
 
   const dist = join(appDir, 'dist');
   if (!dev) await access(join(dist, 'index.html'));
   await server.register(fastifyStatic, { root: dist, serve: !dev });
   server.get('/api/packet', async (_request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    return { clips, windows, ballotIds };
+    return { clips, windows, ballotIds, receipt };
   });
   server.get('/api/audio/:id', async (request, reply) => {
     const { id } = request.params;

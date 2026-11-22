@@ -40,13 +40,13 @@ summary { cursor: pointer; font-weight: 550; }
 details p { color: var(--muted); margin-top: .6rem; }
 
 .sheet { border: 1px solid var(--line); padding: 1.6rem; background: #fff; border-radius: .8rem; }
-.sheet-top, .event-title { display: flex; gap: .75rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+.sheet-top { display: flex; gap: .75rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
 .instruction { margin: .8rem 0 1rem; color: var(--muted); max-width: 68ch; }
 audio { display: block; width: 100%; min-width: 0; margin: .5rem 0; }
 .fields, .choices, .actions { display: flex; gap: .65rem; flex-wrap: wrap; align-items: center; }
 .fields { align-items: end; column-gap: 1rem; }
 label { display: grid; gap: .25rem; font-size: .875rem; font-weight: 550; }
-.inline, .jump { display: flex; align-items: center; gap: .5rem; }
+.jump { display: flex; align-items: center; gap: .5rem; }
 button, select, input[type=number] {
   padding: .45rem .65rem;
   min-height: 2.4rem;
@@ -81,11 +81,13 @@ legend { font-size: .875rem; font-weight: 650; padding: 0; margin-bottom: .5rem;
 .choices label:has(input:checked) { color: #254a34; border-color: var(--accent); background: #eaf2e9; }
 .choices label:hover { background: #f0f5ef; }
 .choices input { margin: 0; }
-.event { margin-top: 1.2rem; padding-block: 1rem; border-top: 1px solid var(--line); }
-.event .fields { margin-top: .7rem; }
-.timestamp { display: flex; flex-wrap: wrap; gap: .4rem; align-items: end; }
-.timestamp input { width: 6.6rem; }
-.window-actions, .sheet-bottom { margin-top: 1.25rem; }
+.filter { margin-block: .9rem; }
+.filter input, .annotation-details input { width: 8rem; }
+.proposal-title { border-top: 1px solid var(--line); padding-top: 1rem; }
+.queue-count { color: var(--muted); font-size: .875rem; font-variant-numeric: tabular-nums; }
+.annotation-details .fields { margin-top: .65rem; }
+.clear-rating { margin-top: .8rem; }
+.sheet-bottom { margin-top: 1.25rem; }
 .sheet-bottom { border-top: 1px solid var(--line); padding-top: 1.2rem; }
 .error { color: #8c2b1c; font-weight: 550; margin-top: .7rem; }
 footer { margin-top: 1.5rem; }

@@ -51,3 +51,26 @@ export function continuousCsv(windows, recordings) {
   });
   return csv(['recording', ...eventFields], rows);
 }
+
+export function assistedCsv(windows, proposals, ratings) {
+  const recordings = {};
+  for (const proposal of proposals) {
+    const rating = ratings[proposal.id];
+    if (!rating?.outcome) continue;
+    const { recording, focal_channel, stop_ms } = proposal;
+    const nextOnset = rating.next_onset_ms ?? proposal.next_onset_ms;
+    const nextChannel = rating.next_channel ?? proposal.next_channel;
+    const corrected = rating.rater_stop_ms;
+    const invalid = rating.outcome === 'invalid_pause'
+      || (corrected && Math.abs(Number(corrected) - stop_ms) > 100)
+      || (nextOnset !== '' && Number(nextOnset) - Math.max(stop_ms, Number(corrected || stop_ms)) < 300);
+    const entry = {
+      ...rating, focal_channel, stop_ms,
+      outcome: invalid ? 'invalid_pause' : rating.outcome,
+      next_onset_ms: invalid ? '' : nextOnset,
+      next_channel: invalid ? '' : nextChannel,
+    };
+    (recordings[recording] ??= { events: [] }).events.push(entry);
+  }
+  return continuousCsv(windows, recordings);
+}
