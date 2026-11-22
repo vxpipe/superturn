@@ -22,6 +22,12 @@ PRE = 3 * RATE
 POST = 3 * RATE
 QUIET = 300 * RATE // 1000
 PER_CALL = 12
+CONTINUOUS_REPORTS = {
+    "continuous": "continuous-spring-floor-review",
+    "continuous-datahive": "continuous-datahive-floor-review",
+    "continuous-control": "continuous-harper-floor-review",
+}
+WINDOW_FIELDS = ("recording", "reviewed", "left_language", "right_language")
 
 GUIDE = """# Review a conversational pause
 
@@ -187,31 +193,135 @@ def prepare(root):
     print(json.dumps(report, indent=2))
 
 
-def prepare_continuous_spring(root):
+def spring_slices(root):
     from .spring_hindi_clock import load_tracks, read_inputs
 
-    plan, receipt, folder, _, receipt_sha = read_inputs(root)
+    plan, receipt, folder, _, digest = read_inputs(root)
+    return [(tile["recording"], tile["start_native_sample"], "hi",
+             lambda tile=tile: load_tracks(folder, receipt, tile), {}) for tile in plan["selection"]], digest
+
+
+def datahive_slices(root):
+    import torch
+
+    from .dral_label_pilot import isolation
+
+    torch.set_num_threads(2)
+    detector = silero()
+    window = 30 * RATE
+    receipt = root / "reports/datahive-conversation-pilot.json"
+    slices = []
+    for source, name, language, _, load in staged_calls(root):
+        if source != "datahive":
+            continue
+        tracks = load()
+        activity = [detector(track) for track in tracks]
+        if not isolation(tracks, activity)["passed"]:
+            continue
+        grid = range(window, tracks.shape[1] - window + 1, window)
+
+        def eligible(start):
+            return all(sum(max(0, min(b, start + window) - max(a, start)) for a, b in spans)
+                       >= 2 * RATE for spans in activity)
+
+        for start in sorted(grid, key=lambda point: seed_for(JOB, "datahive", name, point)):
+            if eligible(start):
+                clip = tracks[:, start:start + window].copy()
+                slices.append((name, start, language, lambda clip=clip: clip, {}))
+                break
+    return slices, file_digest(receipt)
+
+
+def harper_slice(root):
+    import torch
+
+    from .datahive_codec_control import observe_call
+    from .harper_transcript_coverage import MEMBERSHIP
+    from .yodas_mono_control import JOB as COHORT, pcm_digest
+
+    path = root / "runs" / COHORT / "membership.json"
+    report = json.loads((root / "reports" / f"{COHORT}-cohort.json").read_text())
+    digest = file_digest(path)
+    if digest != report["cohort_sha256"]:
+        raise ValueError("the sealed HarperValley control changed")
+    cohort = json.loads(path.read_text())
+    if cohort["scope"] != "HarperValley train roles only" or cohort["archive_membership_sha256"] != MEMBERSHIP:
+        raise ValueError("the anchor must use the existing training-only cohort")
+    window = 30 * RATE
+    choices = []
+    outcomes = {("hold", "caller"): "resume", ("shift", "agent"): "handoff"}
+    for call in cohort["calls"]:
+        name = call["call"]
+        for start in range(0, call["samples"] - window + 1, RATE):
+            known = [{"stop_ms": round((ref["edge_sample"] - start) * 1000 / RATE),
+                      "onset_ms": round((ref["next_onset_sample"] - start) * 1000 / RATE),
+                      "outcome": outcomes[ref["floor_label"], ref["next_role"]]}
+                     for ref in call["reference"]
+                     if (ref["floor_label"], ref["next_role"]) in outcomes
+                     and start + PRE <= ref["edge_sample"] and ref["next_onset_sample"] + POST <= start + window]
+            count = Counter(row["outcome"] for row in known)
+            if min(count["resume"], count["handoff"]) > 0:
+                choices.append((-min(count.values()), -len(known), seed_for(JOB, "harper", name, start), start, call, known))
+    if not choices:
+        raise ValueError("no training slice contains verified examples of both floor outcomes")
+    _, _, _, start, call, known = min(choices, key=lambda row: row[:3])
+    name = call["call"]
+    members = json.loads((root / "reports/harper-history-replication-membership.json").read_text())
+    archived = {(edge, label) for identifier, edge, label in members if identifier == name}
+    torch.set_num_threads(2)
+    tracks, _ = observe_call(root / "raw/harper-valley", name, archived, silero())
+    if [pcm_digest(track) for track in tracks] != call["source_pcm_sha256"]:
+        raise ValueError("the known-answer stereo rendering changed")
+    return [(name, start, "en", lambda: tracks[:, start:start + window], {"known_answers": known})], digest
+
+
+def prepare_continuous(root, source="spring"):
+    if not (root / ".campaign-machine").is_file():
+        raise ValueError("review audio stays on Vast")
+    picker, guide = ({
+        "spring": (spring_slices, CONTINUOUS_GUIDE),
+        "datahive": (datahive_slices, CONTINUOUS_GUIDE.replace(
+            "IIT Madras SPRING-INX Hindi R1 (CC BY 4.0)", "DataHive multilingual conversation samples (CC BY 4.0)"
+        ).replace("https://asr.iitm.ac.in/", "https://huggingface.co/datasets/datahiveai/multilingual-conversations-sample")),
+        "harper": (harper_slice, CONTINUOUS_GUIDE.replace(
+            "IIT Madras SPRING-INX Hindi R1 (CC BY 4.0)", "HarperValleyBank (CC BY 4.0)"
+        ).replace("https://asr.iitm.ac.in/", "https://github.com/cricketclub/gridspace-stanford-harper-valley")
+                   + "\nThis optional English control checks channel and timing conventions.\n"),
+    })[source]
     parent = root / "runs" / JOB
     parent.mkdir(parents=True, exist_ok=True)
-    destination = parent / "continuous-spring-v1"
+    version = "v2" if source == "datahive" else "v1"
+    destination = parent / f"continuous-{source}-{version}"
     if destination.exists():
         raise ValueError("the sealed continuous packet is preserved")
+    slices, receipt_sha = picker(root)
+    if not slices:
+        raise ValueError("no continuous paired windows passed the screen")
     key = {}
-    meter = Progress("continuous-spring-floor-review", len(plan["selection"]), "slices")
+    job = f"continuous-{source}-floor-review"
+    meter = Progress(job, len(slices), "slices")
     with TemporaryDirectory(dir=parent) as tmp:
         packet = Path(tmp) / "packet"
         listening = packet / "listening"
         (listening / "audio").mkdir(parents=True)
-        (listening / "GUIDE.md").write_text(CONTINUOUS_GUIDE)
+        if source == "datahive":
+            guide += """
+First complete the windows form without consulting any pause proposals.
+Use reviewed=yes after listening to the full window, even if there are
+no qualifying pauses. Report each channel's audible language. Use mixed,
+unknown, or no_speech where applicable. Then mark pause events in the
+separate event form. Leave incomplete windows blank in both forms.
+"""
+        (listening / "GUIDE.md").write_text(guide)
         try:
-            for tile in plan["selection"]:
-                name, start = tile["recording"], tile["start_native_sample"]
+            for name, start, language, load, extra in slices:
                 identifier = f"call-{seed_for(JOB, 'continuous', name, start):016x}"
                 path = listening / "audio" / f"{identifier}.wav"
-                tracks = load_tracks(folder, receipt, tile)
+                tracks = load()
                 write_stereo(path, tracks)
                 key[identifier] = {"recording": name, "native_start_sample": start,
-                                   "samples": tracks.shape[1], "clip_sha256": file_digest(path)}
+                                   "samples": tracks.shape[1], "clip_sha256": file_digest(path),
+                                   "nominal_language": language, **extra}
                 meter.advance(1)
         except BaseException:
             meter.finish("failed")
@@ -224,6 +334,11 @@ def prepare_continuous_spring(root):
             with (listening / f"reviewer-{reviewer}.csv").open("w", newline="") as stream:
                 csv.writer(stream).writerow(("recording", "focal_channel", "stop_ms", "next_onset_ms",
                                             "next_channel", "outcome", "brief_ack", "language", "confidence"))
+            if source == "datahive":
+                with (listening / f"reviewer-{reviewer}-windows.csv").open("w", newline="") as stream:
+                    writer = csv.writer(stream)
+                    writer.writerow(WINDOW_FIELDS)
+                    writer.writerows((identifier, "", "", "") for identifier in order)
         _write_json(packet / "private-key.json", key)
         packet.rename(destination)
     report = {"scope": "independent continuous annotation before reading candidate clips",
@@ -231,14 +346,25 @@ def prepare_continuous_spring(root):
               "source_receipt_sha256": receipt_sha,
               "key_sha256": file_digest(destination / "private-key.json"),
               "packet": str(destination.relative_to(root) / "listening")}
-    _write_json(root / "reports" / "continuous-spring-floor-review.json", report)
+    if source == "datahive":
+        report["selection"] = ("one hashed 30-second non-opening grid slot per staged isolated call; each "
+                               "channel has at least 2 seconds of Silero activity; feasibility only")
+        report["slices_by_nominal_language"] = Counter(item["nominal_language"] for item in key.values())
+        report["window_ballot_required"] = True
+    elif source == "harper":
+        report["scope"] = "optional English protocol control, separate from training and non-English feasibility"
+        report["known_answer_counts"] = Counter(row["outcome"] for item in key.values() for row in item["known_answers"])
+    _write_json(root / "reports" / f"{job}.json", report)
     print(json.dumps(report, indent=2))
 
 
-def verify(root):
+def verify(root, reports=None):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("review audio stays on Vast")
-    reports = (JOB, "continuous-spring-floor-review")
+    if reports is None:
+        reports = [JOB, CONTINUOUS_REPORTS["continuous"]]
+        reports.extend(name for mode, name in CONTINUOUS_REPORTS.items() if mode != "continuous"
+                       and (root / "reports" / f"{name}.json").exists())
     for report_name in reports:
         report = json.loads((root / "reports" / f"{report_name}.json").read_text())
         listening = root / report["packet"]
@@ -266,12 +392,18 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     actions = parser.add_mutually_exclusive_group()
     actions.add_argument("--continuous-spring", action="store_true")
+    actions.add_argument("--continuous-datahive", action="store_true")
+    actions.add_argument("--continuous-control", action="store_true")
     actions.add_argument("--verify", action="store_true")
     args = parser.parse_args()
     root = data_root()
     if args.verify:
         verify(root)
     elif args.continuous_spring:
-        prepare_continuous_spring(root)
+        prepare_continuous(root)
+    elif args.continuous_datahive:
+        prepare_continuous(root, "datahive")
+    elif args.continuous_control:
+        prepare_continuous(root, "harper")
     else:
         prepare(root)
