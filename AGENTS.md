@@ -159,9 +159,19 @@ full runbook.
   `git diff --cached` before every commit; if a secret is ever committed,
   tell the user at once so it can be revoked, since rewriting history does
   not unpublish it.
-- Report results per language and per audio condition (wideband, telephone,
-  noisy). The headline metric is the false "complete" rate at a fixed pause
-  length: how often the model ends a turn the caller had not finished.
+- At 300 ms on held-out telephone calls from unseen speakers, require
+  macro balanced accuracy of at least 80% and at least 70% per supported
+  language. Balanced accuracy is the mean of shift recall and hold
+  specificity. Fit each language threshold on separate calibration data
+  and freeze it before testing.
+- Use a standard scorecard for every model result. Include the macro,
+  English, each language, the six languages absent from supervision and
+  HarperValley-88 when scored. Report balanced accuracy, recall and false
+  completes at the calibration threshold, recall at up to 5% false
+  completes, AUC, pAUC to 10% and pipeline metrics when available. Report
+  calibration and evaluation counts, student seed mean and range, the
+  owned teacher and eligible benchmark results. Include audio conditions
+  (wideband, telephone, noisy) and identify development results.
 - Include a matched failure-strata comparison for each model experiment.
   Report counts and paired turn intervals for short histories, single-pause
   turns, first holds, rising source-pitch endings, Mandarin, and languages

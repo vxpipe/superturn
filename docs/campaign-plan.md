@@ -97,14 +97,14 @@ but not redistribution.
    completed Stage 1 checkpoints on held-out AMI telephone audio. The report
    includes each saved threshold and an AMI validation fit for diagnosing
    the effect of threshold calibration.
-   The experiment queue ranks configurations by recall on AMI telephone
+   The original experiment queue ranked configurations by recall on AMI telephone
    validation at up to 5% false completes, then by AUC on the same rows.
-   Pooled clean validation scores break ties. The final ONNX threshold is
-   fitted to AMI telephone validation. The pooled float-to-int8 AUC
-   tolerance remains the export check. The benchmark computes turn quality
-   before CPU latency. It measures latency only when the held-out telephone
-   conversations reach at least 80% recall with no more than 5% false
-   completes at 300 ms. Deferred latency is recorded as an open gate.
+   Pooled clean validation scores broke ties. The legacy evaluator uses
+   that AMI calibration and the historical recall-at-5% gate for continuity.
+   For release, freeze per-language thresholds on independent calibration
+   before scoring held-out telephone calls from unseen voices at 300 ms.
+   Defer CPU latency until balanced accuracy reaches at least 80% macro and
+   70% per supported language. Keep the pooled float-to-int8 AUC export check.
    Each job runs in the tmux session `vxpipe`, logs under
    `$REMOTE_DATA/logs/`, and records its exit status under
    `$REMOTE_DATA/jobs/`. The watcher logs estimates, stalls and step

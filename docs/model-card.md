@@ -31,14 +31,16 @@ ONNX file size, probability threshold and single-core CPU latency.
 The audio-only budgets are 1 MB int8 and under 2 ms one-core p99.
 The combined budgets are 2 MB int8 and at most 3 ms one-core p99.
 Report standalone and masked-input results by language.
-Final thresholds are fitted on English AMI telephone validation pauses.
-The benchmark applies that threshold across languages and audio conditions.
+Fit separate thresholds per supported language on independent calibration
+data. Freeze those thresholds before scoring telephone test calls from
+unseen speakers. The release requires at least 80% macro balanced accuracy
+and at least 70% in each supported language.
 
 ## Measured operating range
 
-The release will report the false-complete rate and complete recall on
-speaker-disjoint conversation examples at 300 ms. The controlled telephone
-sweeps reuse the same examples and the same validation-selected threshold.
+The release will report balanced accuracy, false-complete rate and shift
+recall on speaker-disjoint conversation examples at 300 ms. The controlled
+telephone sweeps reuse the same examples and frozen language thresholds.
 
 | Telephone condition | To report after evaluation |
 |---|---|
