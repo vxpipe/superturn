@@ -7,3 +7,5 @@ __pycache__/
 .env
 .campaign/
 .pytest_cache/
+/review-app/node_modules/
+/review-app/dist/
