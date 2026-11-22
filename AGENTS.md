@@ -146,9 +146,9 @@ full runbook.
   weights. Confirm approved processing and storage before copying project
   recordings. Keep recordings, identifying derivatives and private
   checkpoints out of Git, shared notes, public reports and notifications.
-  Use Open Yap 1K only after the authorized recipient accepts its agreement
-  and obtains access. Keep its source files and reconstructible derivatives
-  in storage allowed by that agreement.
+  Prioritize conversational supervision in Arabic, Hindi, Indonesian,
+  Dutch, Portuguese and Turkish. Use only recordings eligible for the
+  model's commercial release.
 - This is a public GitHub repository, including its history and docs.
   Keep secrets out of both the public repository and the shared notes
   repository:

@@ -334,34 +334,14 @@ The University of Edinburgh's [manual annotations v1.6.2](https://groups.inf.ed.
 are CC BY 4.0. The 22,887,865-byte ZIP is included in the full and smoke
 plans. Labelling uses the headset-to-speaker map and dialogue acts.
 
-### Open Yap sample
+### Archived Open Yap English pilot
 
 The pinned Open Yap sample contains 16 opt-in English conversations from
 eight voices, delivered as paired 48 kHz tracks on a shared timeline.
 The sample's CC BY 4.0 grant is separate from the full corpus's access
 agreement. Respect the release's requests about speaker privacy and
-reproduction. The selected conversations can support a timing and
-label-yield diagnostic. Their Deepgram word timing is machine-generated
-and requires cross-checking against the native tracks. Use the published
-speaker IDs to keep connected speakers together.
+reproduction. The selected conversations were used in a timing and label-yield
+diagnostic. The project ended the English acquisition track to focus on
+underrepresented languages.
 [Dataset card](https://huggingface.co/datasets/TheAgenticDataCompany/open-yap-1k/blob/cae5c0617b2e225422076599ef99516b73c637e3/README.md)
 · [Licence](https://huggingface.co/datasets/TheAgenticDataCompany/open-yap-1k/blob/cae5c0617b2e225422076599ef99516b73c637e3/LICENSE.txt)
-
-### Full Open Yap 1K
-
-The recipient-restricted full release is registered separately. Its
-version 1 agreement permits model training and publication and limits
-redistribution of the recordings and reconstructible derivatives.
-Keep persistent copies encrypted, with a private location record.
-Keep portal credentials in local `.env` as `OPEN_YAP_TOKEN`; ordinary
-code pushes omit the credential.
-
-Select the review using publisher metadata and actual transfer costs.
-Use the pinned public sample index to verify both track IDs and
-exclude the eight sample speakers. Prioritize independently retrievable
-3–4 minute slices with four to eight distinct-pair complete calls for
-drift, at most two calls per speaker, at most ten hours, and at most
-5 GB within the cumulative cap. Freeze speaker splits before scoring.
-The selected files and location records stay private. Generic campaign
-sync excludes this custody-managed prefix.
-[Publisher data agreement](https://raw.githubusercontent.com/The-Agentic-Data-Co/open-yap-1k/main/docs/data-use-agreement.txt)

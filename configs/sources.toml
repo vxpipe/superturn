@@ -210,16 +210,6 @@ selection_command = "python -m superturn.open_yap_preflight"
 max_total_bytes = 16000000
 order = 3
 
-[sources.open-yap-full]
-kind = "http"
-licence = "Open Yap 1K Data Use Agreement, version 1, recipient-restricted"
-attribution = "The Agentic Data Company. Open Yap 1K: channel-separated English natural two-speaker conversations. 2026. Version 1.0."
-role = "train-conversation"
-opt_in = true
-selection_command = "python -m superturn.open_yap_full_plan"
-max_total_bytes = 5000000000
-order = 3
-
 [sources.datahive-conversation-pilot]
 kind = "hf_files"
 repo = "datahiveai/multilingual-conversations-sample"
