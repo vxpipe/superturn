@@ -18,7 +18,7 @@ from .dense_teacher import file_digest
 from .harper_transcript_coverage import MEMBERSHIP
 from .harper_valley_audit import audit_call
 from .harper_valley_benchmark import pinned_split
-from .labels import turns
+from .labels import Speech, turns
 from .open_speech_teacher_probe import WHISPER_SHA256
 from .progress import Progress
 from .shards import seed_for
@@ -102,7 +102,7 @@ def paired(reference, native, mp3):
     return counts, shifts
 
 
-def observe_call(raw, call, member, detect):
+def observe_call(raw, call, member, detect, *, word_context=None):
     observed = {}
 
     def seal(audio, origins, primary, words, omissions, left, right):
@@ -113,6 +113,11 @@ def observe_call(raw, call, member, detect):
                      if span.speaker == "caller" and (span.end - origins["caller"], label) in member
                      and span.end - left >= 3 * RATE and span.end + gap + 2 * RATE <= right]
         observed.update(tracks=tracks, reference=reference)
+        if word_context is not None:
+            for key, stream in (("words", words), ("omissions", omissions)):
+                word_context[key] = [Speech("0" if span.speaker == "caller" else "1",
+                                            max(span.start, left) - left, min(span.end, right) - left)
+                                     for span in stream if span.start < right and left < span.end]
 
     reproduced = []
     audit_call(raw, call, detect, recover_clock=True, pauses=reproduced, observe=seal)
