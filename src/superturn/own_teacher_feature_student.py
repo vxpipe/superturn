@@ -173,7 +173,7 @@ def replace_history(audio, prefix, noise):
 def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active, arm, seed, *,
             shuffle_features=False, active_stats=False, score_history=None, parameters=150000, hop=HOP,
             select_final=False, progress_prefix="own-feature", epochs=EPOCHS, epoch_checkpoint=None,
-            checkpoint_epochs=None, width=None, spectral_rate=16000):
+            checkpoint_epochs=None, width=None, spectral_rate=16000, supplement=None):
     config = {"architecture": "a", "window": 3, "parameters": parameters}
     if width is not None:
         config["width"] = width
@@ -218,6 +218,11 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
     meter = Progress(f"{progress_prefix}-{name}", epochs * ((len(fit) + BATCH - 1) // BATCH), "updates")
     if checkpoint_epochs is None:
         checkpoint_epochs = (EPOCHS, epochs)
+    if supplement is not None:
+        extra_pcm, extra_scores, probabilities = supplement
+        extra_pcm = torch.as_tensor(extra_pcm, device=DEVICE, dtype=torch.float32) / 32768
+        extra_scores = torch.as_tensor(extra_scores, device=DEVICE)
+        extra_elapsed = torch.full((32, 1), DEADLINE, device=DEVICE, dtype=torch.float32)
     try:
         for epoch in range(1, epochs + 1):
             model.train()
@@ -227,6 +232,8 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
             score_losses, feature_losses = [], []
             feature_positions = np.zeros(tail_frames)
             position_counts = np.zeros(tail_frames)
+            if supplement is not None and use_scores:
+                extra_rng = np.random.default_rng(seed_for("staged-language-exposure", seed, epoch))
             for start in range(0, len(order), BATCH):
                 rows = order[start:start + BATCH]
                 audio, elapsed = batch(pcm, rows, j[:len(rows)], DEVICE, DEADLINES)
@@ -242,6 +249,11 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
                 if use_scores:
                     y = torch.as_tensor(truth, device=DEVICE)
                     score_loss = F.binary_cross_entropy_with_logits(logits, y, weight=weight)
+                    if supplement is not None:
+                        sampled = extra_rng.choice(len(probabilities), size=len(extra_elapsed), p=probabilities)
+                        extra_logits = model.logits(extra_pcm[sampled], extra_elapsed).flatten()
+                        extra_loss = F.binary_cross_entropy_with_logits(extra_logits, extra_scores[sampled])
+                        score_loss = .9 * score_loss + .1 * extra_loss
                     losses.append(score_loss)
                     score_losses.append(score_loss.detach())
                 if use_features:

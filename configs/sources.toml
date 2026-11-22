@@ -326,6 +326,18 @@ sample_languages = ["DE"]
 sample_max_bytes_per_file = 20_000_000
 order = 3
 
+[sources.yodas-audio-prefix-probe]
+kind = "http"
+repo = "espnet/yodas"
+revision = "0cad6a0ebec75e945fef92084052be69457fe9d1"
+licence = "CC BY 3.0"
+attribution = "YODAS, ESPnet and the original video uploaders (CC BY 3.0)"
+role = "metadata"
+opt_in = true
+selection_command = "python -m superturn.yodas_audio_prefix_probe"
+max_total_bytes = 50331648
+order = 3
+
 [sources.voxpopuli]
 kind = "hf_rowgroups"
 repo = "facebook/voxpopuli"
@@ -337,6 +349,20 @@ role = "train-spontaneous"
 files = ["es/train-00000-of-*.parquet", "it/train-00000-of-*.parquet", "pl/train-00000-of-*.parquet"]
 max_bytes_per_file = 1
 sample_files = ["sl/train-00000-of-*.parquet"]
+order = 3
+
+[sources.voxpopuli-dutch-exposure]
+kind = "http"
+repo = "facebook/voxpopuli"
+revision = "42f01879c780b4a2e90ec0b4f616c2ece526e4f1"
+licence = "CC0"
+attribution = "VoxPopuli, Meta AI and the European Parliament (CC0)"
+role = "train-spontaneous"
+opt_in = true
+max_total_bytes = 450000000
+selection_command = "python -m superturn.voxpopuli_dutch_inventory --stage"
+files = ["nl/train-00002-of-00003.parquet"]
+row_groups = [6]
 order = 3
 
 [sources.common_voice]

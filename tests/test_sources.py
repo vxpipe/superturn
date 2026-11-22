@@ -1,6 +1,6 @@
 from superturn.sources import expand, load_sources, matches, read_url_list
 
-PERMISSIVE_MARKERS = ("CC0", "CC BY 4.0", "Apache 2.0")
+PERMISSIVE_MARKERS = ("CC0", "CC BY 3.0", "CC BY 4.0", "Apache 2.0")
 
 
 def test_every_source_has_a_permissive_licence_and_attribution():

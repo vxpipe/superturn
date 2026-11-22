@@ -232,6 +232,29 @@ Partial streams and how their risks are handled:
   filtering, so it is mostly clean; noise comes from augmentation for every
   source.
 
+### Captioned YODAS feasibility probe
+
+The captioned YODAS v1 probe uses ESPnet revision
+`0cad6a0ebec75e945fef92084052be69457fe9d1` under CC BY 3.0.
+The dataset publishes video pseudonyms for grouping. The publisher
+confirms that those keys cannot resolve to YouTube watch URLs.
+The bounded gzip probe can check transfer and caption-member geometry.
+Original uploader attribution remains unavailable in the published
+indices. Keep the probe outside training.
+[Publisher dataset card](https://huggingface.co/datasets/espnet/yodas/blob/0cad6a0ebec75e945fef92084052be69457fe9d1/README.md)
+[Publisher clarification on video keys](https://huggingface.co/datasets/espnet/yodas/discussions/9)
+
+### Dutch VoxPopuli exposure
+
+The opt-in Dutch pilot selects row group 6 in the pinned third Dutch
+training shard. The source is CC0 European Parliament speech. The
+selection uses published speaker IDs, excludes Dutch publisher validation
+and test voices plus known VoxPopuli non-train voices, and caps each
+speaker at 20 clips. Its limit is 450 MB of transfer. Stage it with
+`python -m superturn.voxpopuli_dutch_inventory --stage` on Vast.
+Examples can support a fit-only soft-score experiment after pause screening.
+[Publisher dataset card](https://huggingface.co/datasets/facebook/voxpopuli)
+
 ## Speaker variety
 
 The model must work for voices it has never heard, so every source needs many
