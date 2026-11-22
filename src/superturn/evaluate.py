@@ -1,6 +1,7 @@
 """Export ONNX artifacts and measure quality and single-core latency."""
 
 from collections import defaultdict
+import hashlib
 import json
 import math
 import os
@@ -27,7 +28,8 @@ CONVERSATION_SOURCES = {"ami", "indic_diarbench"}
 def _session(path):
     options = ort.SessionOptions()
     options.intra_op_num_threads = options.inter_op_num_threads = 1
-    return ort.InferenceSession(str(path), options, providers=["CPUExecutionProvider"])
+    model = path if isinstance(path, bytes) else str(path)
+    return ort.InferenceSession(model, options, providers=["CPUExecutionProvider"])
 
 
 def _predict(session, audio, gaps):
@@ -444,3 +446,161 @@ def quantization_auc(root, model_path, threshold):
     else:
         meter.finish()
     return aucs
+
+
+def release_quality(root, model_path, plan_path, fit_roster_path, cohort_path, audio_path, *,
+                    role, text_path=None, plan_sha256, calibration_sha256=None):
+    """Collect 300 ms scores with the same ORT engine as the legacy benchmark."""
+    from fractions import Fraction
+    from .balanced_development_scorecard import METRICS, balanced_threshold, evaluate
+    from .release_cohort import (
+        CONTRACT, DEADLINE, digest, ensure_disjoint, identities, validate_manifest,
+        validate_plan, verified_json, write_once,
+    )
+
+    if not (root / ".campaign-machine").is_file():
+        raise ValueError("private telephone recordings stay on Vast")
+    plan = verified_json(plan_path, plan_sha256)
+    validate_plan(plan)
+    artifact_bytes = Path(model_path).read_bytes()
+    if role not in ("calibration", "test") or hashlib.sha256(artifact_bytes).hexdigest() != plan["artifact_sha256"]:
+        raise ValueError("unknown role or the registered ONNX candidate changed")
+    fit = verified_json(fit_roster_path, plan["fit_roster_sha256"])
+    if fit["identity_namespace"] != plan["identity_namespace"] or not fit["coverage_receipt"]:
+        raise ValueError("fit and model-selection identities must use the same verified roster")
+    fit_ids = identities(fit["speakers"])
+    if not fit_ids:
+        raise ValueError("the model-fit identity roster is empty")
+    private = root / "runs" / "release-quality" / plan["panel"] / plan["interface"]
+    private.mkdir(parents=True, exist_ok=True)
+    panel = {key: plan[key] for key in ("contract", "languages", "identity_namespace",
+                                       "calibration_manifest_sha256", "test_manifest_sha256")}
+    panel_path = private.parent / "panel.json"
+    if role == "calibration":
+        write_once(panel_path, panel)
+    elif json.loads(panel_path.read_text()) != panel:
+        raise ValueError("the registered panel changed across candidate interfaces")
+    lock_path = private / "calibration.json"
+    attempt = {"contract": CONTRACT, "plan_sha256": plan_sha256, "onnxruntime": ort.__version__}
+    lock = None
+    if role == "test":
+        lock = verified_json(lock_path, calibration_sha256)
+        if lock["attempt"] != attempt:
+            raise ValueError("test requires an unchanged calibration lock for this artifact and runtime")
+    elif lock_path.exists():
+        registered = json.loads(lock_path.read_text())
+        if registered["attempt"] != attempt:
+            raise ValueError("an incompatible release attempt already exists")
+
+    cohort = verified_json(cohort_path, plan[f"{role}_manifest_sha256"])
+    indexes, membership = validate_manifest(cohort, plan, role)
+    if lock is None:
+        ensure_disjoint(fit_ids, membership)
+    else:
+        ensure_disjoint(fit_ids, [set(values) for values in lock["private_membership"]], membership)
+
+    if digest(audio_path) != cohort["audio_sha256"]:
+        raise ValueError("the sealed telephone PCM collection changed")
+    pcm = np.load(audio_path, mmap_mode="r", allow_pickle=False)
+    if pcm.shape != (len(cohort["pauses"]), 48_000) or pcm.dtype != np.dtype("<i2"):
+        raise ValueError("expected one three-second int16 window per pause")
+    combined = plan["interface"] == "audio-text"
+    partials = None
+    if combined:
+        if text_path is None or digest(text_path) != cohort["text_sha256"]:
+            raise ValueError("the sealed decision-time text collection changed")
+        partials = np.load(text_path, mmap_mode="r", allow_pickle=False)
+        if partials.shape != (len(pcm), 128) or partials.dtype != np.uint8:
+            raise ValueError("expected one 128-byte packed partial per pause")
+    elif text_path is not None:
+        raise ValueError("the registered audio-only artifact takes no text")
+    graph = onnx.load_model_from_string(artifact_bytes)
+    tensors = onnx.external_data_helper._get_all_tensors(graph)
+    if any(onnx.external_data_helper.uses_external_data(value) for value in tensors):
+        raise ValueError("the frozen ONNX candidate must embed its weights")
+    session = _session(artifact_bytes)
+    expected_inputs = {"audio": ("tensor(float)", 48_000), "silence_ms": ("tensor(float)", 1)}
+    if combined:
+        expected_inputs["text_bytes"] = ("tensor(int32)", 128)
+    def batch_one(item):
+        return len(item.shape) == 2 and (not isinstance(item.shape[0], int) or item.shape[0] == 1)
+
+    actual_inputs = {item.name: (item.type, item.shape[1]) for item in session.get_inputs() if batch_one(item)}
+    outputs = session.get_outputs()
+    if (actual_inputs != expected_inputs or len(session.get_inputs()) != len(expected_inputs) or len(outputs) != 1
+            or outputs[0].name != "p_complete" or outputs[0].type != "tensor(float)"
+            or not batch_one(outputs[0]) or outputs[0].shape[1] != 1):
+        raise ValueError("ONNX graph does not implement the registered release interface")
+
+    modes = ("combined", "masked_text", "masked_audio") if combined else ("audio",)
+    scores = defaultdict(list)
+    truth = np.asarray([row["label"] == "shift" for row in cohort["pauses"]])
+    elapsed = np.full((1, 1), DEADLINE, dtype=np.float32)
+    meter = Progress(f"release-quality-{plan['panel']}-{role}", len(pcm), "pauses")
+    try:
+        for index, (row, clip) in enumerate(zip(cohort["pauses"], pcm, strict=True)):
+            if hashlib.sha256(clip.tobytes()).hexdigest() != row["pcm_sha256"]:
+                raise ValueError("pause order or rendered PCM digest changed")
+            audio = clip[None].astype(np.float32) / 32768
+            if combined:
+                text = partials[index:index + 1].astype(np.int32)
+                for mode, signal, tokens in (("combined", audio, text), ("masked_text", audio, np.zeros_like(text)),
+                                             ("masked_audio", np.zeros_like(audio), text)):
+                    value, = session.run(["p_complete"], {"audio": signal, "silence_ms": elapsed, "text_bytes": tokens})
+                    scores[mode].append(float(value.item()))
+            else:
+                value, = _predict(session, audio, elapsed)
+                scores["audio"].append(float(value))
+            meter.advance(1)
+        scores = {mode: np.asarray(scores[mode], dtype=np.float64) for mode in modes}
+        if any(not np.all(np.isfinite(values) & (0 <= values) & (values <= 1)) for values in scores.values()):
+            raise ValueError("release artifact returned invalid probabilities")
+    except BaseException:
+        meter.finish("failed")
+        raise
+    meter.finish()
+
+    counts = {language: {"holds": int((~truth[rows]).sum()), "shifts": int(truth[rows].sum()),
+                         "calls": len({cohort["pauses"][index]["call"] for index in rows}),
+                         "focal_speakers": len({cohort["pauses"][index]["speaker"] for index in rows})}
+              for language, rows in indexes.items()}
+    if lock is None:
+        def cutoff(score, labels):
+            boundary = balanced_threshold(score, labels)
+            return None if boundary > score.max() else boundary
+
+        receipt = {"attempt": attempt, "counts": counts, "threshold_rule": "max Youden; highest tied cutoff; null always holds",
+                   "private_membership": [sorted(value) for value in membership],
+                   "thresholds": {mode: {lang: cutoff(values[rows], truth[rows]) for lang, rows in indexes.items()}
+                                  for mode, values in scores.items() if mode != "masked_text"}}
+        write_once(lock_path, receipt)
+        return {"status": "calibrated", "calibration_sha256": digest(lock_path)}
+    primary_mode = modes[0]
+    results = {}
+    primary_ba = {}
+    for mode, values in scores.items():
+        thresholds = lock["thresholds"][primary_mode] if mode == "masked_text" else lock["thresholds"][mode]
+        languages = {}
+        for lang, rows in indexes.items():
+            threshold = thresholds[lang]
+            effective = np.inf if threshold is None else threshold
+            labels = truth[rows]
+            predicted = values[rows] >= effective
+            tp, fp = int((labels & predicted).sum()), int((~labels & predicted).sum())
+            languages[lang] = {**counts[lang], "threshold": threshold, "correct_shifts": tp, "false_completes": fp,
+                               **evaluate(values[rows], labels, effective)}
+            if mode == primary_mode:
+                holds, shifts = counts[lang]["holds"], counts[lang]["shifts"]
+                primary_ba[lang] = (Fraction(tp, shifts) + Fraction(holds - fp, holds)) / 2
+        macro = {metric: float(np.mean([cell[metric] for cell in languages.values()])) for metric in METRICS}
+        results[mode] = {"macro": macro, "languages": languages}
+    passed = (sum(primary_ba.values()) / len(primary_ba) >= Fraction(4, 5)
+              and min(primary_ba.values()) >= Fraction(7, 10))
+    report = {"attempt": attempt, "artifact_sha256": plan["artifact_sha256"], "decision_ms": DEADLINE,
+              "calibration_sha256": calibration_sha256, "calibration_counts": lock["counts"], "models": results,
+              "balanced_accuracy_pass": bool(passed), "latency_ms": None,
+              "scope": "held-out telephone point estimate conditional on supplied adjudication and rosters"}
+    destination = root / "reports" / "release-quality" / plan["panel"] / plan["interface"]
+    destination.mkdir(parents=True, exist_ok=True)
+    write_once(destination / "test.json", report)
+    return report

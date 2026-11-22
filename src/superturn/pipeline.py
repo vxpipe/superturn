@@ -422,6 +422,7 @@ def register(sub):
         "train": "train a model from a JSON configuration",
         "export": "export and check float and int8 ONNX",
         "benchmark": "report quality and single-core CPU latency",
+        "benchmark-release-quality": "lock calibration or score held-out telephone quality at 300 ms",
         "benchmark-volume": "measure level and SNR sensitivity on held-out conversations",
         "benchmark-ami-reference": "score validation-selected models on supported English AMI test pauses",
         "compare-ami-validation": "compare completed Stage 1 checkpoints on AMI telephone validation",
@@ -473,6 +474,13 @@ def register(sub):
         if name == "benchmark":
             parser.add_argument("--split", choices=("validation", "test"), default="test")
             parser.add_argument("--samples", type=int, default=250)
+        if name == "benchmark-release-quality":
+            parser.add_argument("role", choices=("calibration", "test"))
+            for argument in ("model", "plan", "fit_roster", "cohort", "audio"):
+                parser.add_argument(argument, type=Path)
+            parser.add_argument("--text", type=Path)
+            parser.add_argument("--plan-sha256", required=True)
+            parser.add_argument("--calibration-sha256")
         if name == "benchmark-ami-reference":
             parser.add_argument("--prepare", action="store_true", help="freeze the reference scope before seeing model scores")
 
@@ -488,6 +496,12 @@ def command(args):
         label(root, args.only, _device(args.device), args.workers)
     elif name == "shard":
         shard(root, args.only)
+    elif name == "benchmark-release-quality":
+        from .evaluate import release_quality
+
+        print(json.dumps(release_quality(root, args.model, args.plan, args.fit_roster, args.cohort, args.audio,
+                                         role=args.role, text_path=args.text, plan_sha256=args.plan_sha256,
+                                         calibration_sha256=args.calibration_sha256), indent=2))
     elif name == "benchmark-volume":
         from .volume import benchmark_volume
 
