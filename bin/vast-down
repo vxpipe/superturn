@@ -23,6 +23,9 @@ else
   fi
   result="results in data/campaigns/$id"
 fi
-vast destroy instance "$id"
+vast destroy instance "$id" --yes
+vast show instances --raw | jq -e --arg id "$id" '
+  type == "array" and all(.[]; (.id | tostring) != $id)
+' >/dev/null || die "Vast still lists the instance or could not be checked; instance record kept"
 rm -f "$STATE/instance"
 echo "instance $id destroyed; $result"
