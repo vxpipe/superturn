@@ -87,8 +87,7 @@ export function PauseQueue({ packet, draft, save, download }) {
           </select>
         </label>
       </div>
-      <p className="instruction">Listen for whether that speaker continues or the other speaker takes over.
-        A brief acknowledgment followed by the original speaker continuing is a resume.</p>
+      <p className="instruction">Listen for whether that speaker continues or the other speaker takes over.</p>
       <AudioTimeline key={proposal.recording} recording={proposal.recording} selected={proposal}
         durationHint={receipt.recordings[proposal.recording].duration_ms / 1000}
         markers={visible.filter(pause => pause.recording === proposal.recording)}

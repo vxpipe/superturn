@@ -34,8 +34,8 @@ def read_rows(path, expected):
 
 def validate_judgment(row):
     if (row["outcome"] not in OUTCOMES or row["brief_ack"] not in {"", "yes", "no"}
-            or row["confidence"] not in {"1", "2", "3"} or not row["language"]):
-        raise ValueError("each judgment needs a valid outcome, language and confidence")
+            or row["confidence"] not in {"", "1", "2", "3"} or not row["language"]):
+        raise ValueError("each judgment needs a valid outcome and language, and any confidence must be 1–3")
     row["language"] = LANGUAGES.get(row["language"], row["language"])
 
 

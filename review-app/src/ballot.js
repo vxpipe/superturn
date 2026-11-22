@@ -1,15 +1,9 @@
-export const outcomeOptions = [
-  ['resume', 'Resume / hold'], ['handoff', 'Handoff / shift'],
-  ['interruption', 'Interruption'], ['uncertain', 'Uncertain'],
-];
-export const clipOptions = [...outcomeOptions, ['invalid_pause', 'Invalid pause']];
 export const languages = [
   ['hindi', 'Hindi'], ['urdu', 'Urdu'], ['mixed', 'Mixed'],
   ['other', 'Other'], ['unknown', 'Unknown'],
 ];
-export const confidenceOptions = [['2', 'Medium'], ['1', 'Low'], ['3', 'High']];
 export const sides = [['left', 'Left'], ['right', 'Right']];
-export const judgmentDefaults = { outcome: '', brief_ack: 'no', language: 'hindi', confidence: '2' };
+export const judgmentDefaults = { outcome: '', brief_ack: '', language: 'hindi', confidence: '' };
 export const eventDefaults = {
   focal_channel: 'left', stop_ms: '', next_onset_ms: '', next_channel: '', ...judgmentDefaults,
 };
