@@ -6,6 +6,11 @@ PERMISSIVE_MARKERS = ("CC0", "CC BY 4.0", "Apache 2.0")
 def test_every_source_has_a_permissive_licence_and_attribution():
     for source in load_sources().values():
         assert source.attribution
+        if source.name == "open-yap-full":
+            assert source.licence == "Open Yap 1K Data Use Agreement, version 1, recipient-restricted"
+            assert source.get("opt_in")
+            assert source.get("selection_command") == "python -m superturn.open_yap_full_plan"
+            continue
         assert (source.licence.startswith(PERMISSIVE_MARKERS)
                 or source.licence == "Singapore Open Data Licence v1.0"), source.name
 

@@ -7,9 +7,9 @@ import sys
 from .progress import Progress
 
 
-def copy(step, source, destination):
+def copy(step, source, destination, *flags):
     command = ["rclone", "copy", "--transfers", "16", "--check-first", "--use-json-log",
-               "--stats", "10s", "--stats-log-level", "NOTICE", source, destination]
+               "--stats", "10s", "--stats-log-level", "NOTICE", *flags, source, destination]
     meter = None
     last_bytes = 0
     with subprocess.Popen(command, stderr=subprocess.PIPE, text=True) as process:

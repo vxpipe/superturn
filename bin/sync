@@ -35,17 +35,19 @@ done
 
 bin/collect-manifests
 for d in "${dirs[@]}"; do
+  exclude=()
+  [[ "$d" != raw ]] || exclude=(--exclude '/open-yap/**')
   if [[ "$direction" == push ]]; then
     [[ -d "$SUPERTURN_DATA/$d" ]] || continue
     echo "push $d"
-    uv run --no-sync python -m superturn.sync_progress "sync-push-$d" "$SUPERTURN_DATA/$d" "$root/$d"
+    uv run --no-sync python -m superturn.sync_progress "sync-push-$d" "$SUPERTURN_DATA/$d" "$root/$d" "${exclude[@]}"
   elif [[ "$direction" == pull ]]; then
     rclone lsf --max-depth 1 "$root/$d" >/dev/null 2>&1 || continue
     echo "pull $d"
-    uv run --no-sync python -m superturn.sync_progress "sync-pull-$d" "$root/$d" "$SUPERTURN_DATA/$d"
+    uv run --no-sync python -m superturn.sync_progress "sync-pull-$d" "$root/$d" "$SUPERTURN_DATA/$d" "${exclude[@]}"
   else
     [[ -d "$SUPERTURN_DATA/$d" ]] || continue
     echo "verify $d"
-    rclone check --one-way --size-only "$SUPERTURN_DATA/$d" "$root/$d"
+    rclone check --one-way --size-only "${exclude[@]}" "$SUPERTURN_DATA/$d" "$root/$d"
   fi
 done

@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# Copy the working tree (without data, .venv or git internals) and .env to the
-# campaign machine. Rerun after changing code locally.
+# Copy the working tree and campaign settings to the rented machine.
+# The private Open Yap portal token stays local during ordinary pushes.
 source "$(dirname "$0")/_lib.sh"
 ssh_target
 mapfile -t opts < <(ssh_opts)
 remote "mkdir -p $REMOTE_REPO"
 rsync -az --delete -e "ssh ${opts[*]}" \
-  --exclude data/ --exclude .venv/ --exclude .campaign/ --exclude .git/ \
+  --exclude data/ --exclude .venv/ --exclude .campaign/ --exclude .git/ --exclude /.env \
   "$ROOT/" "$SSH_HOST:$REMOTE_REPO/"
+if [[ -f "$ROOT/.env" ]]; then
+  settings="$(mktemp)"
+  trap 'rm -f -- "$settings"' EXIT
+  awk '!/^[[:space:]]*(export[[:space:]]+)?OPEN_YAP_TOKEN[[:space:]]*=/' "$ROOT/.env" > "$settings"
+  rsync -az -e "ssh ${opts[*]}" "$settings" "$SSH_HOST:$REMOTE_REPO/.env"
+fi
