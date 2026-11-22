@@ -36,8 +36,11 @@ function ShortClips({ packet, draft, save }) {
         </select>
       </label>
     </div>
-    <p className="instruction">The focal speaker is on the left. Choose Invalid pause if they did not stop near
-      3.000 s, or if either channel has speech between 3.000 and 3.300 s.</p>
+    <p className="instruction">
+      The highlight is the fixed 300 ms scoring window (3.000–3.300 s). Silence can continue beyond it.
+      Listen to the whole clip and label what happens after the left speaker pauses.
+      Choose Invalid pause if they did not stop near 3.000 s, or if either person speaks in the highlighted window.
+    </p>
     <AudioTimeline key={id} recording={id} durationHint={6} label={`Clip ${index + 1} playback`}
       selected={{ id, stop_ms: 3000, focal_channel: 'left' }} reveal={Boolean(clip.outcome)} />
     <Judgment row={clip} update={update} />
