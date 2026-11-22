@@ -1,5 +1,6 @@
 """Train and score the sealed six-language exposure and extra-Emilia arms."""
 
+import argparse
 from collections import Counter, defaultdict
 import json
 
@@ -22,12 +23,14 @@ from .own_student_wider_e20 import avg_english_three, by_turn, sample_partition
 from .own_teacher_feature_student import DEVICE, fit_arm, read_inputs, targets_for_features
 from .own_teacher_targets import teacher
 from .sources import data_root
-from .staged_language_exposure import JOB as SEAL
+from .staged_language_exposure import FULL_JOB as FULL_SEAL, JOB as SEAL
 from .turn1_mini_probe import english_rows, harper_rows
 from .wav2vec_harper_probe import extract, pause_rows
 
 JOB = "staged-exposure-training"
 ARMS = ("exposure", "extra-emilia")
+FULL_JOB = "staged-exposure-training-full"
+FULL_ARMS = ("exposure", "shuffled")
 DRAWS = 500
 
 
@@ -43,13 +46,33 @@ def slot_weights(rows):
     return weights / weights.sum()
 
 
-def load_slots(root, directory, pool_report):
-    seal, seal_sha = read_receipt(root, SEAL)
+def shuffle_targets(rows, targets):
+    groups = defaultdict(list)
+    for index, row in enumerate(rows):
+        groups[row["language"], row["source"], row["gap_kind"], bool(row["missing_history_samples"])].append(index)
+    result = targets.copy()
+    rng = np.random.default_rng(140097)
+    for indices in groups.values():
+        order = rng.permutation(indices)
+        result[order] = targets[np.roll(order, 1)]
+    by_source = defaultdict(Counter)
+    for (language, source, _, _), indices in groups.items():
+        coverage = by_source[f"{language}/{source}"]
+        coverage["rows"] += len(indices)
+        coverage["different_targets"] += int(np.count_nonzero(result[indices] != targets[indices]))
+        coverage["singleton_rows"] += len(indices) == 1
+    return result, dict(sorted(by_source.items()))
+
+
+def load_slots(root, directory, pool_report, *, full):
+    seal_name = FULL_SEAL if full else SEAL
+    arms = FULL_ARMS if full else ARMS
+    seal, seal_sha = read_receipt(root, seal_name)
     if seal["missing_languages"] or seal["base_pool_sha256"] != pool_report["inputs"]["pool_sha256"]:
         raise ValueError("the six-language match is incomplete or the base pool changed")
     pcms, members = {}, {}
-    for arm in ARMS:
-        folder = root / "runs" / SEAL
+    for arm in ("exposure",) if full else ARMS:
+        folder = root / "runs" / seal_name
         record = seal["control" if arm == "extra-emilia" else arm]
         audio = folder / f"{arm}.npy"
         manifest = folder / f"{arm}.json"
@@ -57,14 +80,22 @@ def load_slots(root, directory, pool_report):
             raise ValueError("supplement inputs have changed since sealing")
         pcms[arm] = np.load(audio, allow_pickle=False)
         members[arm] = json.loads(manifest.read_text())
-    weights = slot_weights(members["exposure"])
-    metadata = {"seal_sha256": seal_sha, "rows": len(weights), "loss_mass": .1, "batch_slots": 32}
+    rows = len(members["exposure"])
+    weights = np.full(rows, 1 / rows) if full else slot_weights(members["exposure"])
+    base_rows = pool_report["normalizers"]["global"]["fit_rows"]
+    mass = rows / (base_rows + rows) if full else .1
+    metadata = {"seal_sha256": seal_sha, "rows": rows, "loss_mass": mass, "batch_slots": 32}
+    if full:
+        pcms["shuffled"] = pcms["exposure"]
+        members["shuffled"] = members["exposure"]
+        metadata.update({"original_fit_rows": base_rows,
+                         "control": "within language, source and pause geometry target shuffle"})
     receipt_path = directory / "targets.json"
     if receipt_path.exists():
         receipt = json.loads(receipt_path.read_text())
         if receipt["slot_protocol"] != metadata:
             raise ValueError("the archived supplemental targets use other slots")
-        targets = {arm: np.load(read_verified(root, receipt[arm]["artifact"]), allow_pickle=False) for arm in ARMS}
+        targets = {arm: np.load(read_verified(root, receipt[arm]["artifact"]), allow_pickle=False) for arm in arms}
     else:
         selection, _ = read_receipt(root, "own-teacher-language-selection")
         name, descriptor, predict, heads, _ = teacher(root, selection)
@@ -73,13 +104,19 @@ def load_slots(root, directory, pool_report):
         receipt = {"slot_protocol": metadata, "teacher": name, "targets": "fit-only global logit normalization"}
         norm = pool_report["normalizers"]["global"]
         targets = {}
-        for arm in ARMS:
-            feats = extract(f"{JOB}-{arm}", predict, normalize(pcms[arm]))
-            raw = predictions(feats, heads)
-            if not np.isfinite(raw).all() or np.ptp(raw) < .05:
-                raise ValueError(f"{arm} teacher targets are invalid or collapsed")
-            target = expit((logit(raw.astype(np.float64).clip(1e-6, 1 - 1e-6)) -
-                            norm["mean"]) / norm["std"]).astype(np.float32)
+        for arm in arms:
+            if arm == "shuffled":
+                target, coverage = shuffle_targets(members[arm], targets["exposure"])
+                if not any(row["different_targets"] for row in coverage.values()):
+                    raise ValueError("the shuffled soft targets are identical to the exposure arm")
+                receipt["shuffle_by_language_and_source"] = coverage
+            else:
+                feats = extract(f"{JOB}-{arm}", predict, normalize(pcms[arm]))
+                raw = predictions(feats, heads)
+                if not np.isfinite(raw).all() or np.ptp(raw) < .05:
+                    raise ValueError(f"{arm} teacher targets are invalid or collapsed")
+                target = expit((logit(raw.astype(np.float64).clip(1e-6, 1 - 1e-6)) -
+                                norm["mean"]) / norm["std"]).astype(np.float32)
             path = directory / f"{arm}-scores.npy"
             np.save(path, target, allow_pickle=False)
             masses = defaultdict(float)
@@ -92,15 +129,16 @@ def load_slots(root, directory, pool_report):
                             "target_quantiles": np.quantile(target, [.01, .1, .5, .9, .99]).tolist()}
             targets[arm] = target
         _write_json(receipt_path, receipt)
-    return {arm: (pcms[arm], targets[arm], weights) for arm in ARMS}, artifact(root, receipt_path)
+    return {arm: (pcms[arm], targets[arm], weights) for arm in arms}, artifact(root, receipt_path), mass
 
 
-def train(root):
+def train(root, *, full):
+    job, arms = (FULL_JOB, FULL_ARMS) if full else (JOB, ARMS)
     control, digest = read_receipt(root, LOCK)
-    directory = root / "runs" / JOB / digest[:12]
+    directory = root / "runs" / job / digest[:12]
     directory.mkdir(parents=True, exist_ok=True)
     pool_report, _ = read_receipt(root, "own-teacher-distillation-targets")
-    extras, extra_receipt = load_slots(root, directory, pool_report)
+    extras, extra_receipt, mass = load_slots(root, directory, pool_report, full=full)
     cache, digests, pcm, scores, sources, roles, groups, target_hash = read_inputs(root)
     pca = root / "runs/own-teacher-feature-student" / target_hash[:12] / "pca.pt"
     if control["target_sha256"] != target_hash or control["pca_sha256"] != file_digest(pca):
@@ -111,7 +149,7 @@ def train(root):
     torch.use_deterministic_algorithms(True)
     checkpoints = {}
     for seed in NEW_SEEDS:
-        for arm in ARMS:
+        for arm in arms:
             name = f"{arm}-{seed}"
             receipt = directory / f"{name}.json"
             if receipt.exists():
@@ -132,7 +170,7 @@ def train(root):
                 _, _, fit_receipt = fit_arm(
                     pcm, scores, features, valid, sources, groups, fit, fidelity, active, "feature-first", seed,
                     parameters=1_000_000, epochs=20, epoch_checkpoint=checkpoint, checkpoint_epochs=(20,),
-                    progress_prefix=f"{JOB}-{arm}", supplement=extras[arm],
+                    progress_prefix=f"{job}-{arm}", supplement=extras[arm], supplement_mass=mass,
                 )
                 saved = {**fixed, "supplement": extra_receipt, "history": fit_receipt["history"]}
                 _write_json(receipt, saved)
@@ -140,7 +178,7 @@ def train(root):
     return directory, checkpoints, extra_receipt
 
 
-def paired_shift_draws(language, row, seed_draws, rng):
+def paired_shift_draws(language, row, seed_draws, rng, arms=ARMS):
     truth = np.asarray(row["labels"], dtype=bool)
     groups = np.asarray(row["turn_ordinals"])
     cut = calibration_split(groups, language)
@@ -157,24 +195,25 @@ def paired_shift_draws(language, row, seed_draws, rng):
             threshold = balanced_threshold(values[cut][fit], truth[cut][fit])
             return (values[~cut][test][labels] >= threshold).mean()
 
-        draws.append(np.mean([recall(ARMS[0], idx) - recall(ARMS[1], idx) for idx in seeds]))
+        draws.append(np.mean([recall(arms[0], idx) - recall(arms[1], idx) for idx in seeds]))
     return draws
 
 
-def summarize_arms(result):
+def summarize_arms(result, arms=ARMS):
     result["arms"] = {arm: summarize([result["models"][f"{arm}-{seed}"] for seed in NEW_SEEDS])
-                      for arm in ARMS}
+                      for arm in arms}
     return result
 
 
-def run(root):
+def run(root, *, full=False):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("this experiment requires the staged Vast data")
-    directory, checkpoints, extra_receipt = train(root)
+    job, arms = (FULL_JOB, FULL_ARMS) if full else (JOB, ARMS)
+    directory, checkpoints, extra_receipt = train(root, full=full)
     rows, trial, teacher_receipt = frozen(root)
     peers = {name: load_model(root, checkpoint) for name, checkpoint in checkpoints.items()}
     paired = {}
-    score_languages(root, peers, DEVICE, paired_rows=paired, progress_name=f"{JOB}-development")
+    score_languages(root, peers, DEVICE, paired_rows=paired, progress_name=f"{job}-development")
     clips, truth, groups = zip(*pause_rows(english_rows(root)), strict=True)
     audio = np.stack(clips)
     paired["en"] = {"labels": list(truth), "turn_ordinals": list(groups),
@@ -185,17 +224,17 @@ def run(root):
         agree(rows[name], list(row["labels"]), list(row["turn_ordinals"]), name)
         rows[name]["scores"].update(row["scores"])
 
-    cells = {name: summarize_arms(cell(row, name)) for name, row in rows.items() if name != "harper-88"}
-    overall = summarize_arms(macro(cells, sorted(cells)))
-    six = summarize_arms(macro(cells, UNSEEN_IN_FIT))
+    cells = {name: summarize_arms(cell(row, name), arms) for name, row in rows.items() if name != "harper-88"}
+    overall = summarize_arms(macro(cells, sorted(cells)), arms)
+    six = summarize_arms(macro(cells, UNSEEN_IN_FIT), arms)
 
     def delta(summary, metric):
-        return summary["arms"][ARMS[0]][metric]["mean"] - summary["arms"][ARMS[1]][metric]["mean"]
+        return summary["arms"][arms[0]][metric]["mean"] - summary["arms"][arms[1]][metric]["mean"]
 
     effect = delta(six, "shift_recall")
     seed_rng = np.random.default_rng(61937)
     draws = seed_rng.integers(len(NEW_SEEDS), size=(DRAWS, len(NEW_SEEDS)))
-    boot = [paired_shift_draws(lang, rows[lang], draws, seed_rng) for lang in UNSEEN_IN_FIT]
+    boot = [paired_shift_draws(lang, rows[lang], draws, seed_rng, arms) for lang in UNSEEN_IN_FIT]
     interval = np.quantile(np.mean(boot, axis=0), [.025, .975]).tolist()
     english_legacy = avg_english_three(rows["en"], [f"exposure-{seed}" for seed in NEW_SEEDS])
     english_legacy -= avg_english_three(rows["en"], STUDENTS)
@@ -207,11 +246,19 @@ def run(root):
     passed = (effect >= .03 and interval[0] > 0 and
               min(guards["six_language_ba_delta"], guards["macro_ba_delta"]) >= 0 and
               min(english_ba, english_legacy) >= -.01)
+    if full:
+        for prefix, summary, metric in (("six_ba", six, "balanced_accuracy"), ("six_recall", six, "shift_recall"),
+                                        ("macro_ba", overall, "balanced_accuracy")):
+            guards[f"{prefix}_vs_archived_base"] = (
+                summary["arms"]["exposure"][metric]["mean"] - summary["student_seed_mean_and_range"][metric]["mean"]
+            )
+        passed = (passed and guards["six_ba_vs_archived_base"] > 0 and guards["six_recall_vs_archived_base"] > 0
+                  and guards["macro_ba_vs_archived_base"] >= 0)
     path = directory / "paired-scores.json"
     _write_json(path, rows)
     report = {"scope": "staged-source diagnostic; standard development cohorts",
               "threshold_source": "fixed whole-turn calibration halves at 300 ms, separately for every fit",
-              "primary": "equal-six shift recall B minus C", "primary_delta": effect,
+              "primary": f"equal-six shift recall: {arms[0]} minus {arms[1]}", "primary_delta": effect,
               "paired_seed_calibration_turn_ci95": interval, "guards": guards, "passes": bool(passed),
               "trial_sha256": trial, "teacher_receipt_sha256": teacher_receipt, "inputs": extra_receipt,
               "macro": overall, "six_languages": six, "languages": cells,
@@ -224,7 +271,7 @@ def run(root):
     harper = {"labels": list(truth), "turn_ordinals": list(groups),
               "scores": {key: student_scores(model, audio).tolist() for key, model in (suite | peers).items()}}
     thresholds = {name: cells["en"]["models"][name]["threshold"] for name in harper["scores"]}
-    report["harper-88"] = summarize_arms(cell(harper, "en", thresholds))
+    report["harper-88"] = summarize_arms(cell(harper, "en", thresholds), arms)
     references, reference_sha = read_receipt(root, f"{SCORECARD}-references")
     if references["trial_sha256"] != trial:
         raise ValueError("benchmark aggregates use another baseline")
@@ -241,10 +288,12 @@ def run(root):
                                             if key.startswith(("smart-turn-", "livekit-"))}
     report["benchmark_scorecard_sha256"] = reference_sha
     _write_json(directory / "harper-88-scores.json", harper)
-    _write_json(root / "reports" / f"{JOB}.json", report)
+    _write_json(root / "reports" / f"{job}.json", report)
     print(json.dumps({"primary_delta": effect, "ci95": interval, "passed": bool(passed)}))
 
 
 if __name__ == "__main__":
     torch.set_num_threads(2)
-    run(data_root())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--full", action="store_true")
+    run(data_root(), full=parser.parse_args().full)

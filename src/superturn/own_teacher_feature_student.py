@@ -173,7 +173,7 @@ def replace_history(audio, prefix, noise):
 def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active, arm, seed, *,
             shuffle_features=False, active_stats=False, score_history=None, parameters=150000, hop=HOP,
             select_final=False, progress_prefix="own-feature", epochs=EPOCHS, epoch_checkpoint=None,
-            checkpoint_epochs=None, width=None, spectral_rate=16000, supplement=None):
+            checkpoint_epochs=None, width=None, spectral_rate=16000, supplement=None, supplement_mass=.1):
     config = {"architecture": "a", "window": 3, "parameters": parameters}
     if width is not None:
         config["width"] = width
@@ -219,6 +219,8 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
     if checkpoint_epochs is None:
         checkpoint_epochs = (EPOCHS, epochs)
     if supplement is not None:
+        if not 0 < supplement_mass < 1:
+            raise ValueError("supplement loss mass must be between zero and one")
         extra_pcm, extra_scores, probabilities = supplement
         extra_pcm = torch.as_tensor(extra_pcm, device=DEVICE, dtype=torch.float32) / 32768
         extra_scores = torch.as_tensor(extra_scores, device=DEVICE)
@@ -253,7 +255,7 @@ def fit_arm(pcm, scores, teacher, valid, sources, groups, fit, fidelity, active,
                         sampled = extra_rng.choice(len(probabilities), size=len(extra_elapsed), p=probabilities)
                         extra_logits = model.logits(extra_pcm[sampled], extra_elapsed).flatten()
                         extra_loss = F.binary_cross_entropy_with_logits(extra_logits, extra_scores[sampled])
-                        score_loss = .9 * score_loss + .1 * extra_loss
+                        score_loss = (1 - supplement_mass) * score_loss + supplement_mass * extra_loss
                     losses.append(score_loss)
                     score_losses.append(score_loss.detach())
                 if use_features:

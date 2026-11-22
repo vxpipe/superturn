@@ -1,6 +1,7 @@
 """Seal causal pause inputs for the staged six-language exposure comparison."""
 
 from collections import Counter, defaultdict
+import argparse
 import hashlib
 import json
 
@@ -19,6 +20,7 @@ from .shards import seed_for
 from .sources import data_root
 
 JOB = "staged-language-exposure-v2"
+FULL_JOB = "staged-language-exposure-full"
 QUIET = round(.3 * RATE)
 PER_CLIP = 2
 PER_CALL = 12
@@ -215,8 +217,8 @@ def matching_control(exposure, offers):
     return selected, control, audit
 
 
-def archive(root, name, selected):
-    directory = root / "runs" / JOB
+def archive(root, name, selected, *, job=JOB):
+    directory = root / "runs" / job
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / f"{name}.json"
     audio = directory / f"{name}.npy"
@@ -246,7 +248,7 @@ def archive(root, name, selected):
                                        for (source, language), keys in sorted(people.items())]}
 
 
-def run(root):
+def run(root, *, full=False):
     import torch
 
     if not (root / ".campaign-machine").is_file():
@@ -263,6 +265,16 @@ def run(root):
     b.extend(dutch(root, detector, {row["speaker"] for row in fidelity["voxpopuli"]}))
     phones, rejected = paired_calls(root, detector)
     b.extend(phones)
+    if full:
+        missing = sorted(set(UNSEEN_IN_FIT) - {row["language"] for row, _ in b})
+        report = {"scope": "all eligible staged fit-only pauses after existing source caps",
+                  "paired_call_scope": "training feasibility recordings only",
+                  "input_data_download_bytes": 0, "base_pool_sha256": pool_digest,
+                  "missing_languages": missing, "channel_filter_counts": dict(rejected),
+                  "exposure": archive(root, "exposure", b, job=FULL_JOB) if b else None}
+        _write_json(root / "reports" / f"{FULL_JOB}.json", report)
+        print(json.dumps(report, indent=2))
+        return
     used = {row["audio"] for _, row in rows}
     candidates = distinct_paths(root / "labels/emilia_yodas.jsonl", "emilia_yodas", used, fidelity["emilia_yodas"])
     b, c, matching = matching_control(b, single_files(root, "extra_emilia", candidates, detector))
@@ -279,4 +291,6 @@ def run(root):
 
 
 if __name__ == "__main__":
-    run(data_root())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--full", action="store_true")
+    run(data_root(), full=parser.parse_args().full)
