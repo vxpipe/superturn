@@ -19,7 +19,9 @@ a plausible pause, and the next substantive agent reply. Derive two
 training decisions from that conversation. The prefix followed by caller
 continuation is a hold. A complete caller turn followed by an actual
 handoff is a shift. Use the later short caller turn as the shift when
-the record contains one. Keep both decisions in one split and remove label,
+there is a preceding turn. For caller-first dialogues, use the completed
+opening as the shift so the first-turn marker stays label-balanced.
+Keep both decisions in one split and remove label,
 future turns, pause markers and catalogue metadata from the model input.
 Use synthetic-only material, distinct scenario descriptions from the
 source catalogue and fictional details.
@@ -28,18 +30,32 @@ Inspect the matrix with `uv run --no-sync python -m superturn.turn_generation --
 For an approved API run, load `GEMINI_API_KEY` from the ignored environment
 and supply the total spend cap with `--budget-usd`. The destination defaults
 to `data/turn-generation-v1`. Run the isolated `--smoke` option first to
-check one dialogue per native script. Restart with the same directory to continue
-unfilled slots. The runner keeps an atomic ledger and reserves budget before
+check one dialogue per native script. The full run can reuse accepted smoke
+rows and count their spend via `--seed-smoke data/turn-generation-smoke`.
+Restart with the same directory and total cap to continue unfilled slots.
+Increase `--attempts-per-slot` to retry only exhausted slots if necessary.
+The runner keeps an atomic ledger and reserves budget before
 sending each batch. The spend receipt uses uncached list prices and keeps a
 conservative charge for requests without usage receipts. The provider's
 billing statement is authoritative.
 
-Gemini 3.8 Flash generates structured text. Gemini Decision 1 checks
-scenario match, natural spoken language, the pause boundary and the
-substantive handoff. Local code normalizes punctuation and Unicode, checks
-script, rejects contact-like strings and deduplicates accepted samples.
+Gemini 3.8 Flash generates structured text. Local code normalizes
+punctuation and Unicode, checks script, rejects contact-like strings and
+deduplicates accepted samples. The main run uses one model call per batch.
 Accepted records and their receipt are candidates for publication after a
 synthetic spot check. The full runner ledger remains under ignored data.
 Review the provider terms for original generated content and the competitive
 use restriction before running.
 [Gemini terms](https://ai.google.dev/gemini-api/terms) · [Gemini pricing](https://ai.google.dev/gemini-api/docs/pricing)
+
+Export the completed matrix with
+`uv run --no-sync python -m superturn.turn_training_dataset data/turn-generation-v1 NEW_OUTPUT_DIRECTORY`.
+The exporter verifies the generation receipt, exact quota slots and cleaned
+text. It writes `train.jsonl`, `validation.jsonl`
+and a checksum manifest. All examples from one scenario, including all
+languages and both labels of each dialogue, stay in one split. Identical
+two-turn inputs join scenario groups before assigning the splits.
+The synthetic validation split is for diagnostics. Each model input is
+exactly two text lines. The first contains the preceding speaker's turn
+or `---` for a genuine first turn. The second contains the current caller
+turn. The exporter inserts the marker after generation.

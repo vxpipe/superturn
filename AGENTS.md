@@ -19,15 +19,17 @@ includes the handover.
   Start scoring when text is available at or after 300 ms of silence.
   Re-call every 100 ms with the latest partial while silence continues.
   Anchor each benchmark example at the Silero stop plus elapsed silence.
-- Use the previous turn tail, a separator and the caller's current partial.
-  Prioritize the current partial. Mark first turns and use only words
+- Use exactly two input lines. The first is the preceding speaker's turn
+  or `---` for a first turn. The second is the caller's current partial.
+  Add the marker during packing and prioritize the current partial. Use only words
   available as of the decision. Measure sensitivity to lagged STT.
-- Train on Gemini-generated telephone-style spoken transcripts in each
+- Train on Gemini 3.8 Flash telephone-style spoken transcripts in each
   language's native script. Document how production STT spells English
   words in other languages. Exclude barge-ins, interruptions and
   backchannels from the hold/shift examples. Under an explicit exception,
   commit only synthetic text and its generation receipts after reviewing
-  use terms and accepted examples. Check the approved dollar cap before
+  use terms and accepted examples. Use local validation for generation.
+  Check the approved dollar cap before
   generation, and report spend. Keep every real dataset out of training,
   generation prompts and Git.
 - Use openly accessible real conversations for reproducible benchmarks.

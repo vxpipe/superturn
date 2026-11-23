@@ -21,15 +21,13 @@ from .progress import Progress
 
 CATALOGUE = Path("configs/turn-generation-catalogue.json")
 GENERATOR = "gemini-3.8-flash"
-JUDGE = "gemini-decision-1"
 QUOTA = 2
 BATCH = 6
 RETRIES = 4
-RESERVE_USD = .05
+GEN_RESERVE_USD = .038
 OUTPUT_LIMIT = 3400
 CLEANER_VERSION = "turn-text-nfkc-v2"
 GEN_INPUT, GEN_OUTPUT = ((.75, 3.75) if date.today() <= date(2026, 12, 31) else (1.50, 7.50))
-JUDGE_INPUT = .10
 FIELDS = ("previous_agent", "caller_before_pause", "caller_after_pause", "next_agent",
           "short_caller_reply", "final_agent_reply")
 SYSTEM = """Generate original, fictional telephone-style spoken conversations, not formal written
@@ -57,12 +55,6 @@ SCRIPT_NAMES = {
     "Latn": ("LATIN",), "Deva": ("DEVANAGARI",), "Knda": ("KANNADA",),
     "Taml": ("TAMIL",), "Telu": ("TELUGU",), "Mlym": ("MALAYALAM",),
     "Hans": ("CJK UNIFIED IDEOGRAPH",), "Jpan": ("HIRAGANA", "KATAKANA", "CJK UNIFIED IDEOGRAPH"),
-}
-QUESTIONS = {
-    "speech": "Is this a natural, informal two-person phone exchange in the requested language?",
-    "scenario": "Does this exchange clearly fit its requested scenario?",
-    "pause": "Could the caller plausibly pause at the specified point and then continue the same turn? Assess the boundary and the continuation.",
-    "floor": "Does each agent reply take a substantive turn after the preceding caller utterance, without interrupting or serving only as a bare acknowledgment?",
 }
 
 
@@ -161,7 +153,7 @@ def generate_batch(specs, key, attempt):
     usage = response.get("usageMetadata", {})
     input_tokens = usage.get("promptTokenCount")
     output_tokens = usage.get("candidatesTokenCount", 0) + usage.get("thoughtsTokenCount", 0)
-    spend = .038 if input_tokens is None else (input_tokens * GEN_INPUT + output_tokens * GEN_OUTPUT) / 1_000_000
+    spend = GEN_RESERVE_USD if input_tokens is None else (input_tokens * GEN_INPUT + output_tokens * GEN_OUTPUT) / 1_000_000
     candidates = response.get("candidates", [])
     if candidates and candidates[0].get("finishReason") == "MAX_TOKENS":
         print(f"output limit reached for {specs[0]['language']} batch of {len(specs)}", flush=True)
@@ -182,29 +174,8 @@ def generate_batch(specs, key, attempt):
             continue
         cleaned = clean_sample(by_slot[spec["slot"]], spec)
         if cleaned is not None:
-            checked.append((spec, cleaned))
-    if not checked:
-        return [], spend
-    input_rows = [
-        {"record": i, "language": spec["language_name"], "situation": spec["situation"], **sample}
-        for i, (spec, sample) in enumerate(checked)
-    ]
-    questions = {
-        f"r{i}_{name}": {"type": "noul", "instructions": f"For record {i} only. {question}"}
-        for i in range(len(checked)) for name, question in QUESTIONS.items()
-    }
-    judged = request_json("decisions", key, {
-        "model": JUDGE, "input": json.dumps(input_rows, ensure_ascii=False), "questions": questions,
-    })
-    judge_tokens = judged.get("usage", {}).get("total_input_tokens")
-    spend += .01 if judge_tokens is None else judge_tokens * JUDGE_INPUT / 1_000_000
-    answers = judged.get("answers", {})
-    accepted = []
-    for i, (spec, sample) in enumerate(checked):
-        scores = {name: answers.get(f"r{i}_{name}", {}).get("noul") for name in QUESTIONS}
-        if all(isinstance(score, (float, int)) and score >= .65 for score in scores.values()):
-            accepted.append({**spec, **sample, "judge": scores, "generator_version": response.get("modelVersion")})
-    return accepted, spend
+            checked.append({**spec, **cleaned, "generator_version": response.get("modelVersion")})
+    return checked, spend
 
 
 def sample_key(row):
@@ -216,11 +187,29 @@ def paired_examples(row):
     hold = {"slot": row["slot"], "language": row["language"], "label": "hold",
             "previous_turn": row["previous_agent"], "current_turn": row["caller_before_pause"]}
     joiner = "" if row["language"] in {"zh", "ja"} else " "
-    short = row["short_caller_reply"]
+    # Use the completed opening for first-turn shifts so the formatting
+    # marker appears equally often in holds and shifts.
+    short = row["short_caller_reply"] if row["previous_agent"] else ""
     shift = {**hold, "label": "shift",
              "previous_turn": row["next_agent"] if short else row["previous_agent"],
              "current_turn": short or joiner.join((row["caller_before_pause"], row["caller_after_pause"]))}
     return hold, shift
+
+
+def plan_checksum(plan):
+    protocol = [plan, SYSTEM, SCHEMA, GENERATOR, CLEANER_VERSION]
+    return sha256(json.dumps(protocol).encode()).hexdigest()
+
+
+def smoke_plan(plan):
+    choices = {}
+    for spec in plan:
+        choices.setdefault(spec["native_script"], []).append(spec)
+    return [
+        next(spec for spec in options if spec["caller_first"] == (index % 4 < 2)
+             and spec["short_shift"] == (index % 2 == 1) and spec["domain"] != "banking")
+        for index, options in enumerate(choices.values())
+    ]
 
 
 def similar_sample(row, prior):
@@ -252,15 +241,43 @@ def schedule_batches(pending, attempts, available):
     return batches
 
 
-def run(plan, directory, budget, workers, key):
+def initial_state(plan, smoke_source):
+    state = {"plan_sha256": plan_checksum(plan), "spend_usd": 0., "attempts": {}, "accepted": {}}
+    if smoke_source is None:
+        return state
+    smoke = json.loads((smoke_source / "state.json").read_text())
+    receipt = json.loads((smoke_source / "receipt.json").read_text())
+    corpus = (smoke_source / "dialogues.jsonl").read_bytes()
+    eligible = {row["slot"]: row for row in smoke_plan(plan)}
+    rows = {row["slot"]: row for row in map(json.loads, corpus.splitlines())}
+    if (receipt["dialogues_sha256"] != sha256(corpus).hexdigest()
+            or receipt["generator_prompt_sha256"] != sha256(SYSTEM.encode()).hexdigest()
+            or receipt["generator"] != GENERATOR or receipt["cleaner_version"] != CLEANER_VERSION
+            or receipt["accepted_dialogues"] != len(rows) or smoke["accepted"] != rows):
+        raise ValueError("the smoke rows or receipt differ from the compatible generation protocol")
+    for slot, row in rows.items():
+        spec = eligible.get(slot)
+        cleaned = clean_sample(row, spec) if spec is not None else None
+        if (spec is None or any(row.get(key) != value for key, value in spec.items())
+                or cleaned is None):
+            raise ValueError("a smoke dialogue does not match its approved slot")
+        state["accepted"][slot] = {**spec, **cleaned, "generator_version": row.get("generator_version")}
+        state["attempts"][slot] = smoke["attempts"][slot]
+    state["spend_usd"] = smoke["spend_usd"]
+    state["seeded_from_smoke"] = len(state["accepted"])
+    return state
+
+
+def run(plan, directory, budget, workers, key, *, smoke_source=None, attempts_per_slot=RETRIES):
     directory.mkdir(parents=True, exist_ok=True)
     state_path = directory / "state.json"
-    digest = sha256(json.dumps([plan, SYSTEM, QUESTIONS, GENERATOR, JUDGE, CLEANER_VERSION]).encode()).hexdigest()
-    state = {"plan_sha256": digest, "spend_usd": 0., "attempts": {}, "accepted": {}}
+    digest = plan_checksum(plan)
     if state_path.exists():
         state = json.loads(state_path.read_text())
         if state["plan_sha256"] != digest:
             raise ValueError("this output directory belongs to a different generation plan")
+    else:
+        state = initial_state(plan, smoke_source)
     accepted, attempts = state["accepted"], state["attempts"]
     seen = {sample_key(row) for row in accepted.values()}
     by_criterion = defaultdict(list)
@@ -271,8 +288,9 @@ def run(plan, directory, budget, workers, key):
     stop = "attempt_limit"
     with ThreadPoolExecutor(max_workers=workers) as pool:
         while pending := [spec for spec in plan if spec["slot"] not in accepted
-                          and attempts.get(spec["slot"], 0) < RETRIES]:
-            available = min(workers, int((budget - state["spend_usd"] + 1e-9) / RESERVE_USD))
+                          and attempts.get(spec["slot"], 0) < attempts_per_slot]:
+            reserve = GEN_RESERVE_USD
+            available = min(workers, int((budget - state["spend_usd"] + 1e-9) / reserve))
             if available <= 0:
                 stop = "budget_cap"
                 break
@@ -281,7 +299,7 @@ def run(plan, directory, budget, workers, key):
                 for spec in batch:
                     slot = spec["slot"]
                     attempts[slot] = attempts.get(slot, 0) + 1
-            state["spend_usd"] += len(batches) * RESERVE_USD
+            state["spend_usd"] += len(batches) * reserve
             _write_json(state_path, state)
             jobs = [pool.submit(generate_batch, batch, key, max(attempts[spec["slot"]] for spec in batch))
                     for batch in batches]
@@ -292,8 +310,8 @@ def run(plan, directory, budget, workers, key):
                     print(str(error), flush=True)
                     stop = "provider_error"
                     continue
-                state["spend_usd"] += spend - RESERVE_USD
-                if spend > RESERVE_USD:
+                state["spend_usd"] += spend - reserve
+                if spend > reserve:
                     stop = "reservation_exceeded"
                 for row in rows:
                     fingerprint = sample_key(row)
@@ -326,13 +344,13 @@ def run(plan, directory, budget, workers, key):
         "plan_sha256": digest, "dialogues_sha256": sha256(payload.encode()).hexdigest(),
         "generator_prompt_sha256": sha256(SYSTEM.encode()).hexdigest(),
         "cleaner_version": CLEANER_VERSION,
-        "list_usd_per_million_tokens": {"generator_input": GEN_INPUT, "generator_output": GEN_OUTPUT,
-                                        "judge_input": JUDGE_INPUT},
-        "generator": GENERATOR, "judge": JUDGE, "target_per_criterion": QUOTA,
+        "list_usd_per_million_tokens": {"generator_input": GEN_INPUT, "generator_output": GEN_OUTPUT},
+        "generator": GENERATOR, "target_per_criterion": QUOTA,
         "target_dialogues": len(plan), "accepted_dialogues": len(ordered),
         "derived_example_counts": dict(Counter(example["label"] for example in examples)),
         "accepted_by_language": dict(Counter(row["language"] for row in ordered)),
         "accepted_by_pause_style": dict(Counter(row["pause_style"] for row in ordered)),
+        "seeded_from_smoke": state.get("seeded_from_smoke", 0),
         "attempted_by_pause_style": dict(attempts_by_style),
         "duplicates_rejected": state.get("duplicates_rejected", 0),
         "complete_criteria": sum(criteria[criterion] == count for criterion, count in targets.items()),
@@ -351,8 +369,10 @@ def main():
     parser.add_argument("--check-access", action="store_true", help="read model metadata only")
     parser.add_argument("--smoke", action="store_true", help="run an isolated one-dialogue-per-script probe")
     parser.add_argument("--directory", type=Path)
+    parser.add_argument("--seed-smoke", type=Path, help="reuse accepted dialogues and recorded spend from a smoke run")
     parser.add_argument("--budget-usd", type=float)
     parser.add_argument("--workers", type=int, default=6)
+    parser.add_argument("--attempts-per-slot", type=int, default=RETRIES)
     args = parser.parse_args()
     plan = make_plan(json.loads(CATALOGUE.read_text()))
     if args.plan:
@@ -363,17 +383,17 @@ def main():
     if not key:
         parser.error("set GEMINI_API_KEY")
     if args.check_access:
-        for model in (GENERATOR, JUDGE):
-            value = request_json(f"models/{model}", key)
-            print(value["name"])
+        value = request_json(f"models/{GENERATOR}", key)
+        print(value["name"])
         return
     if args.budget_usd is None or not math.isfinite(args.budget_usd) or args.budget_usd <= 0 or not 1 <= args.workers <= 10:
         parser.error("an approved positive --budget-usd and 1–10 workers are required")
+    if args.attempts_per_slot <= 0:
+        parser.error("--attempts-per-slot must be positive")
     if args.smoke:
-        scripts = {}
-        for row in plan:
-            scripts.setdefault(row["native_script"], row)
-        plan = list(scripts.values())
+        if args.seed_smoke is not None:
+            parser.error("--seed-smoke applies to the full plan only")
+        plan = smoke_plan(plan)
     if args.directory is None:
         args.directory = Path("data/turn-generation-smoke" if args.smoke else "data/turn-generation-v1")
     args.directory.mkdir(parents=True, exist_ok=True)
@@ -382,7 +402,8 @@ def main():
             flock(lock, LOCK_EX | LOCK_NB)
         except BlockingIOError:
             parser.error("another process is generating into this directory")
-        receipt = run(plan, args.directory, args.budget_usd, args.workers, key)
+        receipt = run(plan, args.directory, args.budget_usd, args.workers, key,
+                      smoke_source=args.seed_smoke, attempts_per_slot=args.attempts_per_slot)
     if receipt["stop"] != "complete":
         raise SystemExit(1)
 
