@@ -55,7 +55,7 @@ def tags(row, anchor, raw):
     return ending, continuation, prior, length, gap_band
 
 
-def length_auc(rows):
+def length_scores(rows):
     data = np.array([(row["words"], len(row["text"].split("\n", 1)[0].split())) for row in rows])
     labels = np.array([row["label"] for row in rows])
     turns = sorted({row["caller"] for row in rows}, key=lambda turn: seed_for("publisher-length-fold-v1", turn))
@@ -65,7 +65,11 @@ def length_auc(rows):
     for fold in range(5):
         test = folds == fold
         out[test], = fit(data[~test], labels[~test], [data[test]])
-    return auc(out, labels.tolist())
+    return out
+
+
+def length_auc(rows):
+    return auc(length_scores(rows), [row["label"] for row in rows])
 
 
 def summarize(rows, attributes, scores):
