@@ -16,6 +16,12 @@ from .turn_text_train import binary_metrics, digest, load_fit, predict, run as t
 SEEDS = (17, 29, 43, 71, 101)
 
 
+def report_path(root, *, score_only):
+    filename = "publisher-timed-english-length-trial"
+    suffix = "-ranking" if score_only else ""
+    return root / "reports" / f"{filename}{suffix}.json"
+
+
 def short_hold_delta(rows, unweighted, balanced):
     short = [index for index, row in enumerate(rows)
              if not row["label"] and 300 <= row["gap_ms"] < 800 and row["words"] >= 8]
@@ -141,11 +147,9 @@ def run(root, *, score_only=False):
                        "shift_recall": diff("all", "shift_recall") >= -.02,
                        "long_gap_auc": diff("long_gap", "auc") >= -.01,
                        "all_auc": diff("all", "auc") >= -.005}}
-    name = "publisher-timed-english-length-trial"
     if score_only:
         from .timed_text_visibility import number
 
-        name += "-ranking"
         ranking = matched_ranking(rows, arm_scores["replay"], arm_scores["balanced"])
         measures = ranking["metrics"]
         short = measures["matched_short_hold_false_complete"]
@@ -208,7 +212,7 @@ def run(root, *, score_only=False):
                 arm: [binary_metrics([(scores[i], rows[i]["label"]) for i in indices]) for scores in fits]
                 for arm, fits in arm_scores.items()
             }
-    _write_json(root / f"reports/{name}.json", report)
+    _write_json(report_path(root, score_only=score_only), report)
     print(json.dumps({key: value for key, value in report.items() if key != "trials"}, indent=2))
 
 
