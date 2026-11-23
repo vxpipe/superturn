@@ -26,6 +26,7 @@ CAUSAL = ("HuggingFaceTB/SmolLM2-135M-Instruct", "12fd25f77366fa6b3b4b768ec3050b
 SOURCES = {"me5": E5, "minilm-multi": MULTI, "minilm-en": ENGLISH, "smollm2": CAUSAL}
 LENGTHS = (16, 32, 64, 128)
 LANGUAGES = ("en", "hi", "ta", "te", "ml", "kn", "zh", "ja")
+E5_DEPTHS = {"me5-1": 1, "me5-6": 6}
 
 
 def stage(root, names):
@@ -108,13 +109,14 @@ def busy_cores(placement):
             worker.wait()
 
 
-def get_session(path):
+def get_session(model):
     import onnxruntime as ort
 
     options = ort.SessionOptions()
     options.intra_op_num_threads = options.inter_op_num_threads = 1
     options.execution_mode = ort.ExecutionMode.ORT_SEQUENTIAL
-    return ort.InferenceSession(str(path), sess_options=options, providers=["CPUExecutionProvider"])
+    source = model if isinstance(model, bytes) else str(model)
+    return ort.InferenceSession(source, sess_options=options, providers=["CPUExecutionProvider"])
 
 
 def graph_paths(root, name):
@@ -173,26 +175,33 @@ def e5_vocabulary_size(root, corpus, report_name):
     print(json.dumps(receipt, indent=2))
 
 
-def six_layer_paths(root):
+def e5_block_paths(root, name):
     import onnx
     from onnxruntime.quantization import QuantType, quantize_dynamic
 
     source = graph_paths(root, "me5")["fp32"]
-    target = root / "me5-6"
+    depth = E5_DEPTHS[name]
+    target = root / name
     target.mkdir(exist_ok=True)
     fp, quant = target / "model.onnx", target / "model_uint8.onnx"
+    parity_path = target / "probe-head-parity.json"
+    reference = None
     valid = False
     if fp.is_file():
         try:
             onnx.checker.check_model(str(fp))
-            valid = True
+            valid = depth != 1 or (parity_path.is_file() and quant.is_file() and
+                                  json.loads(parity_path.read_text())["artifacts"] == {
+                                      "base": digest(source), "fp32": digest(fp), "int8": digest(quant),
+                                  })
         except onnx.checker.ValidationError:
             pass
     if not valid:
         model = onnx.load(source)
-        layer = [node for node in model.graph.node if node.name == "/encoder/layer.5/output/LayerNorm/Add_1"]
+        layer = [node for node in model.graph.node
+                 if node.name == f"/encoder/layer.{depth - 1}/output/LayerNorm/Add_1"]
         if len(layer) != 1:
-            raise RuntimeError("could not locate mE5 block-6 output")
+            raise RuntimeError(f"could not locate mE5 block {depth} output")
         output = layer[0].output[0]
         info = next((item for item in model.graph.value_info if item.name == output), None)
         if info is None:
@@ -200,17 +209,98 @@ def six_layer_paths(root):
         info.CopyFrom(model.graph.output[0])
         info.name = output
         extracted = onnx.utils.Extractor(model).extract_model([item.name for item in model.graph.input], [output])
+        if depth == 1:
+            reference = extracted.SerializeToString()
+            add_e5_scalar_head(extracted)
         temporary = fp.with_name("model.partial.onnx")
         onnx.save(extracted, temporary)
         onnx.checker.check_model(str(temporary))
         temporary.replace(fp)
-    if not quant.is_file():
+    if not quant.is_file() or reference is not None:
         temporary = quant.with_name("model_uint8.partial.onnx")
         quantize_dynamic(fp, temporary, per_channel=True, weight_type=QuantType.QUInt8,
                          op_types_to_quantize=["MatMul", "Gather"])
         onnx.checker.check_model(str(temporary))
         temporary.replace(quant)
+    if reference is not None:
+        parity = verify_e5_scalar_head(root, reference, fp, quant)
+        parity["artifacts"] = {"base": digest(source), "fp32": digest(fp), "int8": digest(quant)}
+        _write_json(parity_path, parity)
     return {"fp32": fp, "int8": quant}
+
+
+def e5_probe_head_weights(width):
+    random = np.random.default_rng(19)
+    return (random.normal(0, (2 * width) ** -.5, (2 * width, 128)).astype(np.float32),
+            random.normal(0, 128 ** -.5, (128, 1)).astype(np.float32))
+
+
+def add_e5_scalar_head(model):
+    from onnx import TensorProto, helper, numpy_helper
+
+    graph = model.graph
+    state = graph.output[0]
+    width = state.type.tensor_type.shape.dim[-1].dim_value
+    if width <= 0:
+        raise ValueError("expected a fixed encoder hidden width")
+    first, second = e5_probe_head_weights(width)
+    graph.input.extend([
+        helper.make_tensor_value_info("caller_mask", TensorProto.FLOAT, ["batch_size", "sequence_length", 1]),
+        helper.make_tensor_value_info("last_caller", TensorProto.INT64, ["batch_size", 2]),
+    ])
+    graph.initializer.extend([numpy_helper.from_array(values, name) for name, values in (
+        ("probe_first", first), ("probe_second", second), ("probe_axis", np.array([1], dtype=np.int64)),
+    )])
+    graph.node.extend([helper.make_node(op, inputs, [output], name=output, **attrs)
+                       for op, inputs, output, attrs in (
+        ("GatherND", [state.name, "last_caller"], "probe_last", {}),
+        ("Mul", [state.name, "caller_mask"], "probe_masked", {}),
+        ("ReduceSum", ["probe_masked", "probe_axis"], "probe_sum", {"keepdims": 0}),
+        ("ReduceSum", ["caller_mask", "probe_axis"], "probe_count", {"keepdims": 0}),
+        ("Div", ["probe_sum", "probe_count"], "probe_mean", {}),
+        ("Concat", ["probe_last", "probe_mean"], "probe_summary", {"axis": 1}),
+        ("MatMul", ["probe_summary", "probe_first"], "probe_hidden", {}),
+        ("Relu", ["probe_hidden"], "probe_activation", {}),
+        ("MatMul", ["probe_activation", "probe_second"], "probe_logit", {}),
+        ("Sigmoid", ["probe_logit"], "score", {}),
+    )])
+    del graph.output[:]
+    graph.output.append(helper.make_tensor_value_info("score", TensorProto.FLOAT, ["batch_size", 1]))
+
+
+def verify_e5_scalar_head(root, reference, fp32, int8):
+    from tokenizers import Tokenizer
+
+    tokenizer = Tokenizer.from_file(str(root / "me5" / "tokenizer.json"))
+    tokenizer.no_padding()
+    tokenizer.no_truncation()
+    base, fp, quantized = (get_session(model) for model in (reference, fp32, int8))
+    base_inputs = {item.name for item in base.get_inputs()}
+    head_inputs = {item.name for item in fp.get_inputs()}
+    fixtures = (
+        "---\ncan you tell me when the next bus is due",
+        "which appointment works for you\nthe one next week after lunch please",
+        "आपको कौन सा समय चाहिए\nमैं अगले शुक्रवार को दोपहर के बाद आ सकता हूँ",
+        "你想约什么时候\n下周五下午比较方便",
+    )
+    differences = {"fp32": [], "int8": []}
+    for text in fixtures:
+        feed, caller = encoder_feed(tokenizer, text, 128, "me5-1", head_inputs)
+        hidden = base.run(None, {key: feed[key] for key in base_inputs})[0][0]
+        first, second = e5_probe_head_weights(hidden.shape[-1])
+        pooled = np.r_[hidden[caller[-1]], hidden[caller].mean(axis=0)]
+        logit = (np.maximum(pooled @ first, 0.) @ second).item()
+        expected = 1. / (1. + np.exp(-logit))
+        for key, session in (("fp32", fp), ("int8", quantized)):
+            actual = session.run(None, feed)[0].item()
+            if not np.isfinite(actual):
+                raise ValueError("the scalar head produced a non-finite probability")
+            differences[key].append(abs(actual - expected))
+    maximum = {key: max(values) for key, values in differences.items()}
+    if maximum["fp32"] > 2e-5 or maximum["int8"] > .08:
+        raise ValueError(f"E5 scalar probe failed score parity: {maximum}")
+    return {"fixture_count": len(fixtures), "maximum_absolute_score_delta": maximum,
+            "dummy_head_only": True, "fp32_tolerance": 2e-5, "int8_tolerance": .08}
 
 
 def causal_paths(root):
@@ -360,8 +450,26 @@ def native_p90_inputs(tokenizer, records, name, language, token_stats):
     return length, cases
 
 
+def encoder_feed(tokenizer, text, limit, name, inputs):
+    packed = pack_encoder(tokenizer, text, limit, name)
+    feed = {"input_ids": np.array([packed.ids], dtype=np.int64),
+            "attention_mask": np.array([packed.attention_mask], dtype=np.int64)}
+    if "token_type_ids" in inputs:
+        feed["token_type_ids"] = np.array([packed.type_ids], dtype=np.int64)
+    caller = np.flatnonzero(np.asarray([role == 1 for role in packed.sequence_ids]))
+    if not caller.size:
+        raise ValueError("expected at least one caller token")
+    if "caller_mask" in inputs:
+        mask = np.zeros((1, len(packed.ids), 1), dtype=np.float32)
+        mask[0, caller, 0] = 1
+        feed["caller_mask"] = mask
+        feed["last_caller"] = np.array([[0, caller[-1]]], dtype=np.int64)
+    return feed, caller
+
+
 def encoder_trials(session, tokenizer, texts, warmups, iterations, name, lengths=LENGTHS, *, exact=None):
     inputs = {item.name for item in session.get_inputs()}
+    has_scalar_head = "caller_mask" in inputs
     result = {}
     for length in lengths:
         fixtures = exact
@@ -377,19 +485,16 @@ def encoder_trials(session, tokenizer, texts, warmups, iterations, name, lengths
                         break
 
         def prepare(text):
-            packed = pack_encoder(tokenizer, text, length, name)
-            feed = {"input_ids": np.array([packed.ids], dtype=np.int64),
-                    "attention_mask": np.array([packed.attention_mask], dtype=np.int64)}
-            if "token_type_ids" in inputs:
-                feed["token_type_ids"] = np.array([packed.type_ids], dtype=np.int64)
-            caller_indices = np.flatnonzero(np.array([role == 1 for role in packed.sequence_ids]))
-            if len(packed.ids) != length or not caller_indices.size:
-                raise ValueError("synthetic fixture did not use the requested length and caller role")
+            feed, caller_indices = encoder_feed(tokenizer, text, length, name, inputs)
+            if feed["input_ids"].shape[1] != length:
+                raise ValueError("synthetic fixture did not use the requested length")
             return feed, caller_indices
 
         def predict(prepared):
             feed, caller_indices = prepared
             hidden, *_ = session.run(None, feed)
+            if has_scalar_head:
+                return float(hidden[0, 0])
             if hidden.ndim != 3 or hidden.shape[:2] != feed["input_ids"].shape:
                 raise ValueError("encoder did not return token states")
             # A representative scalar readout. The trained classifier is measured after L2.
@@ -495,7 +600,7 @@ def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTH
     os.sched_setaffinity(0, {placement[0]})
     try:
         for name in names:
-            original = "me5" if name == "me5-6" else name
+            original = "me5" if name in E5_DEPTHS else name
             tokenizer = Tokenizer.from_file(str(root / original / "tokenizer.json"))
             tokenizer.no_padding()
             tokenizer.no_truncation()
@@ -509,8 +614,10 @@ def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTH
                 detail["native_p90_fixtures"] = {"language": native_p90, "count": len(exact), "length": length,
                                                  "synthetic_corpus_sha256": digest(corpus)}
             result["encoders"][name] = detail
-            paths = (causal_paths(root) if name == "smollm2" else six_layer_paths(root) if name == "me5-6"
+            paths = (causal_paths(root) if name == "smollm2" else e5_block_paths(root, name) if name in E5_DEPTHS
                      else graph_paths(root, name))
+            if name == "me5-1":
+                detail["scalar_head_parity"] = json.loads((root / name / "probe-head-parity.json").read_text())
             for precision, path in paths.items():
                 if precision not in precisions:
                     continue
@@ -544,7 +651,7 @@ if __name__ == "__main__":
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--stage", action="store_true")
     action.add_argument("--e5-vocabulary-size", action="store_true", help="measure temporary pruned E5 graphs only")
-    parser.add_argument("--models", nargs="+", choices=(*SOURCES, "me5-6"), required=True)
+    parser.add_argument("--models", nargs="+", choices=(*SOURCES, *E5_DEPTHS), required=True)
     parser.add_argument("--artifacts", type=Path, default=data_root() / "cache/text-cpu-l1")
     parser.add_argument("--corpus", type=Path, default=Path("datasets/turn-completion-v1/train.jsonl"))
     parser.add_argument("--warmups", type=int, default=200)

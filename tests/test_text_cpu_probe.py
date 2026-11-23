@@ -1,4 +1,7 @@
-from superturn.text_cpu_probe import encoder_screen
+import numpy as np
+from onnx import TensorProto, helper
+
+from superturn.text_cpu_probe import add_e5_scalar_head, e5_probe_head_weights, encoder_screen, get_session
 
 
 def test_encoder_screen_requires_language_coverage_and_unclipped_token_lengths():
@@ -25,3 +28,23 @@ def test_encoder_screen_requires_language_coverage_and_unclipped_token_lengths()
     within_limit = screen()
     assert within_limit["passed"]
     assert within_limit["conservative_measured_bucket"] == 64
+
+
+def test_one_block_scalar_pools_only_caller_tokens():
+    shape = ["batch_size", "sequence_length", 4]
+    graph = helper.make_graph([helper.make_node("Identity", ["input"], ["state"])], "probe", [
+        helper.make_tensor_value_info("input", TensorProto.FLOAT, shape),
+    ], [helper.make_tensor_value_info("state", TensorProto.FLOAT, shape)])
+    model = helper.make_model(graph, opset_imports=[helper.make_opsetid("", 13)], ir_version=9)
+    add_e5_scalar_head(model)
+    session = get_session(model.SerializeToString())
+    states = np.arange(20, dtype=np.float32).reshape(1, 5, 4) / 23
+    selection = [1, 3]
+    mask = np.zeros((1, 5, 1), dtype=np.float32)
+    mask[0, selection, 0] = 1
+    actual = session.run(None, {"input": states, "caller_mask": mask,
+                                "last_caller": np.array([[0, 3]], dtype=np.int64)})[0].item()
+    first, second = e5_probe_head_weights(4)
+    visible = states[0, selection]
+    expected_logit = (np.maximum(np.r_[visible[-1], visible.mean(axis=0)] @ first, 0.) @ second).item()
+    assert abs(actual - 1. / (1. + np.exp(-expected_logit))) < 2e-6
