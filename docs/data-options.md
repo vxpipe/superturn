@@ -381,8 +381,11 @@ The opt-in Hindi probe requested bytes 0–33,554,431 and required HTTP 206,
 the registry's ETag and a Content-Range total of 14,322,746,939 bytes.
 Walk the gzip tar in order and pair WAV headers with their JSON sidecars by
 member stem. Keep aggregate metadata only. The prefix yielded 29 matched
-conversation entries, all 8 kHz mono. Sidecars contain timed speaker labels,
-whose stability across calls remains unverified. This prefix yielded no
-verified separated channels. Hold further acquisition pending a publisher
-index or mapping that identifies the separated recordings. Check recording and
-person overlap with frozen Indic DiarBench before admitting any examples.
+conversation entries, all 8 kHz mono. A bounded 8 MiB re-read located two
+complete UUID pairs with `_0` and `_1` member suffixes, distinct speaker IDs
+and equal-length but different native mono signals. The per-track Silero
+isolation check passed one pair and failed the other. The publisher listing
+contains only gzip archives. Ask for channel clock semantics, speaker ID
+scope and an individually addressable subset or compressed seek index
+before expanding. Check recording and person overlap with frozen Indic
+DiarBench before admitting any examples.

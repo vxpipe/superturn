@@ -360,7 +360,7 @@ role = "metadata"
 opt_in = true
 archive_url = "https://iv-release.objectstore.e2enetworks.net/dmu_release/v1_Hindi_train.tgz"
 archive_etag = "59a22bd11d8361717e1d879bf29eaecb-854"
-selection_command = "the metadata-only range procedure in docs/data-options.md"
+selection_command = "python -m superturn.indicvoices_pair_preflight"
 max_total_bytes = 33554432
 order = 3
 
