@@ -89,12 +89,12 @@ def search_cut(rows, trials, *, held_target=30, dev_target=10):
     return best
 
 
-def candidate_rosters(calls, excluded, trials):
+def candidate_rosters(calls, excluded, trials, held_target):
     meter = Progress("basis-stage0-joint-cut", len(calls), "languages")
     try:
         with ProcessPoolExecutor(max_workers=4) as pool:
             jobs = {pool.submit(search_cut, [row for row in rows if row.speakers.isdisjoint(excluded)],
-                                trials): language for language, rows in calls.items()}
+                                trials, held_target=held_target): language for language, rows in calls.items()}
             result = {}
             for job in as_completed(jobs):
                 result[jobs[job]] = job.result()
@@ -106,14 +106,14 @@ def candidate_rosters(calls, excluded, trials):
     return dict(sorted(result.items()))
 
 
-def joint_cut(calls, trials, durations=None, *, membership_out=None):
+def joint_cut(calls, trials, durations=None, *, membership_out=None, held_target=30):
     frequencies = Counter(person for rows in calls.values() for person in voices(rows))
     multilingual = {person for person, count in frequencies.items() if count > 1}
     names = [call.name for rows in calls.values() for call in rows]
     if len(names) != len(set(names)):
         raise ValueError("a Basis conversation spans multiple language directories")
     assignment, candidates = {}, set()
-    for language, roster in candidate_rosters(calls, multilingual, trials).items():
+    for language, roster in candidate_rosters(calls, multilingual, trials, held_target).items():
         if roster is None:
             continue
         candidates.add(language)
@@ -173,7 +173,7 @@ def joint_cut(calls, trials, durations=None, *, membership_out=None):
             "joint_role_roster": {role: len(people) for role, people in roles.items()}}
 
 
-def run(root, cut_trials=None, *, estimate=False):
+def run(root, cut_trials=None, *, estimate=False, pilot=False, held_target=30):
     from huggingface_hub import HfApi
 
     if not (root / ".campaign-machine").is_file():
@@ -191,20 +191,34 @@ def run(root, cut_trials=None, *, estimate=False):
         durations, received = recording_seconds(source.get("repo"), revision, os.environ["HF_TOKEN"])
         if set(durations) != {(language, call.name) for language, rows in calls.items() for call in rows}:
             raise ValueError("Basis recording manifest does not cover the pinned file inventory")
-        membership = {} if estimate else None
+        membership = {} if estimate or pilot else None
         report = {"revision": revision, "scope": "joint metadata-only four-role candidate",
-                  "minimum_held_roster": 30, "provisional_dev_roster": 10, "trials_per_language": cut_trials,
+                  "minimum_held_roster": held_target, "provisional_dev_roster": 10,
+                  "trials_per_language": cut_trials,
                   "recording_manifest_bytes": received,
-                  **joint_cut(calls, cut_trials, durations, membership_out=membership)}
+                  **joint_cut(calls, cut_trials, durations, membership_out=membership, held_target=held_target)}
+        suffix = "" if held_target == 30 else f"-{held_target}"
+        receipt = root / "reports" / f"basis-stage0-joint-cut{suffix}.json"
+        if pilot:
+            from .basis_stage1 import run_pilot
+
+            prior = json.loads(receipt.read_text())
+            if prior["membership_sha256"] != report["membership_sha256"]:
+                raise ValueError("the Basis audit membership changed")
+            run_pilot(root, source, membership, calls, report["membership_sha256"])
+            return
         if estimate:
             from .basis_stage0_yield import estimate_yield
 
-            prior = json.loads((root / "reports/basis-stage0-joint-cut.json").read_text())
-            if report["membership_sha256"] != prior["membership_sha256"]:
-                raise ValueError("the Basis split did not reproduce its verified receipt")
-            estimate_yield(root, source, membership, report["membership_sha256"])
+            if receipt.is_file():
+                prior = json.loads(receipt.read_text())
+                if report["membership_sha256"] != prior["membership_sha256"]:
+                    raise ValueError("the Basis split did not reproduce its verified receipt")
+            else:
+                _write_json(receipt, report)
+            estimate_yield(root, source, membership, report["membership_sha256"], suffix=suffix)
             return
-        _write_json(root / "reports/basis-stage0-joint-cut.json", report)
+        _write_json(receipt, report)
         print(json.dumps(report, indent=2))
         return
     languages_by_speaker = defaultdict(set)
@@ -235,10 +249,18 @@ def run(root, cut_trials=None, *, estimate=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cut-trials", type=int, help="search candidate splits allowing bridge-call exclusions")
-    parser.add_argument("--estimate-yield", action="store_true", help="estimate paused turns on the verified split")
+    parser.add_argument("--held-target", type=int, default=30, help="reserve this many rostered held-out voices")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--estimate-yield", action="store_true", help="estimate paused turns on the verified split")
+    action.add_argument("--fit-audit-pilot", action="store_true", help="audit a small fit-only set")
     args = parser.parse_args()
     if args.cut_trials is not None and args.cut_trials < 1:
         parser.error("cut trials must be positive")
-    if args.estimate_yield and args.cut_trials is None:
-        parser.error("yield estimation requires the verified cut's trial count")
-    run(data_root(), args.cut_trials, estimate=args.estimate_yield)
+    if args.held_target < 30:
+        parser.error("held-out roster must have at least 30 voices")
+    if (args.estimate_yield or args.fit_audit_pilot) and args.cut_trials is None:
+        parser.error("yield estimation and auditing require the verified cut's trial count")
+    if args.fit_audit_pilot and args.held_target != 40:
+        parser.error("the fit audit uses the 40-roster Stage 0 receipt")
+    run(data_root(), args.cut_trials, estimate=args.estimate_yield,
+        pilot=args.fit_audit_pilot, held_target=args.held_target)

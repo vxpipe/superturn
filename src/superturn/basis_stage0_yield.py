@@ -75,7 +75,7 @@ def fit_vote_counts(fs, prefix, membership):
     return report
 
 
-def estimate_yield(root, source, membership, digest):
+def estimate_yield(root, source, membership, digest, *, suffix=""):
     from huggingface_hub import HfFileSystem
 
     cgroup = Path("/sys/fs/cgroup")
@@ -139,5 +139,5 @@ def estimate_yield(root, source, membership, digest):
                 "candidate_focal_total": len(set().union(*speakers[key].values())),
                 "candidate_focal_speakers": {label: len(people) for label, people in speakers[key].items()},
             }
-    _write_json(root / "reports/basis-stage0-timing-capacity.json", output)
+    _write_json(root / "reports" / f"basis-stage0-timing-capacity{suffix}.json", output)
     print(json.dumps(output, indent=2))

@@ -8,6 +8,7 @@ from superturn import basis_stage0
 from superturn.basis_split import Call
 from superturn.basis_stage0 import four_roles_possible
 from superturn.basis_stage0_yield import count_gaps, json_lines
+from superturn.basis_stage1 import events
 
 
 def test_four_roles_preserve_whole_speaker_components():
@@ -39,6 +40,18 @@ def test_timing_json_reader_handles_split_records_and_final_line():
     meter = Meter()
     assert list(json_lines(Chunked(payload), meter)) == [{"a": 1}, {"b": 2}]
     assert meter.bytes == len(payload)
+
+
+def test_fit_audio_candidates_exclude_mutes_and_short_responses():
+    activity = [(0, 64_000, "a"), (70_400, 80_000, "a"), (86_400, 113_600, "b"),
+                (123_200, 129_600, "a")]
+    connected = {"a": [(0, 200_000)], "b": [(0, 200_000)]}
+    result, candidates = events(activity, connected, [], 200_000)
+    assert result == {"hold": 1, "shift": 1, "short_other": 1}
+    assert [candidate[2] for candidate in candidates] == ["hold", "shift"]
+    result, candidates = events(activity, connected, [(0, 64_000)], 200_000)
+    assert result == {"muted": 2, "short_other": 1}
+    assert not candidates
 
 
 def test_joint_cut_never_places_a_shared_voice_in_two_roles(monkeypatch):
