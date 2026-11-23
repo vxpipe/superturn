@@ -58,9 +58,10 @@ set -a
 set +a
 : "${SUPERTURN_REMOTE:?missing private storage remote}"
 files=(
-  cache/harper-valley/text-dev-streaming-trace-v1.json
-  cache/harper-valley/text-dev-streaming-v1.json
-  reports/harper-text-streaming-capture.json
+  cache/harper-valley/text-dev-streaming-trace-v2.json
+  cache/harper-valley/text-dev-streaming-v2.json
+  cache/harper-valley/text-dev-streaming-repeat-v2.json
+  reports/harper-text-streaming-capture-v2.json
 )
 for file in "${files[@]}"; do
   read -r hash _ < <(sha256sum "$SUPERTURN_DATA/$file")
