@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from tempfile import TemporaryDirectory
 from time import perf_counter_ns, sleep
 
 import numpy as np
@@ -121,6 +122,55 @@ def graph_paths(root, name):
     quant = ("model_int8.onnx" if name == "smollm2" else "model_qint8_avx512_vnni.onnx" if name == "me5"
              else "model_quint8_avx2.onnx")
     return {"fp32": folder / "model.onnx", "int8": folder / quant}
+
+
+def e5_vocabulary_size(root, corpus, report_name):
+    import onnx
+    from onnx import numpy_helper
+    from tokenizers import Tokenizer
+
+    tokenizer = Tokenizer.from_file(str(root / "me5" / "tokenizer.json"))
+    tokenizer.no_padding()
+    tokenizer.no_truncation()
+    with corpus.open() as stream:
+        records = [json.loads(line) for line in stream]
+    if not records:
+        raise ValueError("vocabulary sizing needs at least one synthetic row")
+    text_ids = {token for row in records for token in pack_encoder(tokenizer, row["text"], 128, "me5").ids}
+    tokenizer_config = json.loads(tokenizer.to_str())
+    text_ids.update(token["id"] for token in tokenizer_config["added_tokens"] if token["special"])
+    keep = sorted(text_ids)
+    receipt = {
+        "scope": "Embedding size measurement only. The temporary graph has no deployment tokenizer.",
+        "source": E5[:2], "corpus_sha256": digest(corpus), "corpus_rows": len(records),
+        "languages": sorted({row["language"] for row in records}), "retained_token_rows": len(keep), "graphs": {},
+    }
+    meter = Progress("text-cpu-vocabulary-size", 2, "graphs")
+    with TemporaryDirectory(dir=root) as temporary:
+        destination = Path(temporary) / "model.onnx"
+        for precision, source in graph_paths(root, "me5").items():
+            model = onnx.load(source)
+            table, = [tensor for tensor in model.graph.initializer
+                      if "word_embeddings" in tensor.name and len(tensor.dims) == 2]
+            old_rows, width = table.dims
+            if keep[-1] >= old_rows or len(keep) >= old_rows:
+                raise ValueError("synthetic tokenizer IDs do not fit the staged embedding table")
+            companions = [tensor for tensor in model.graph.initializer
+                          if tensor.name.startswith(table.name.removesuffix("_quantized"))
+                          and tensor.name != table.name and list(tensor.dims) == [old_rows]]
+            for tensor in [table, *companions]:
+                tensor.CopyFrom(numpy_helper.from_array(numpy_helper.to_array(tensor)[keep], tensor.name))
+            onnx.save(model, destination)
+            onnx.checker.check_model(str(destination))
+            receipt["graphs"][precision] = {
+                "original_bytes": source.stat().st_size, "pruned_bytes": destination.stat().st_size,
+                "original_token_rows": old_rows, "embedding_width": width,
+                "original_sha256": digest(source), "original_artifact": str(source.relative_to(root)),
+            }
+            meter.advance(1)
+    meter.finish()
+    _write_json(root / report_name, receipt)
+    print(json.dumps(receipt, indent=2))
 
 
 def six_layer_paths(root):
@@ -491,7 +541,9 @@ def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTH
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--stage", action="store_true")
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument("--stage", action="store_true")
+    action.add_argument("--e5-vocabulary-size", action="store_true", help="measure temporary pruned E5 graphs only")
     parser.add_argument("--models", nargs="+", choices=(*SOURCES, "me5-6"), required=True)
     parser.add_argument("--artifacts", type=Path, default=data_root() / "cache/text-cpu-l1")
     parser.add_argument("--corpus", type=Path, default=Path("datasets/turn-completion-v1/train.jsonl"))
@@ -502,11 +554,17 @@ if __name__ == "__main__":
     parser.add_argument("--precisions", nargs="+", choices=("fp32", "int8"), default=("fp32", "int8"))
     parser.add_argument("--native-p90", choices=LANGUAGES, help="time existing same-language inputs at their p90 length")
     args = parser.parse_args()
+    if Path(args.report_name).name != args.report_name:
+        parser.error("use a plain report filename")
     if args.stage:
         stage(args.artifacts, args.models)
+    elif args.e5_vocabulary_size:
+        if args.models != ["me5"]:
+            parser.error("the size probe requires --models me5")
+        e5_vocabulary_size(args.artifacts, args.corpus, args.report_name)
     else:
-        if Path(args.report_name).name != args.report_name or args.iterations <= 0 or args.warmups < 0:
-            parser.error("use a plain report filename and valid timing counts")
+        if args.iterations <= 0 or args.warmups < 0:
+            parser.error("use valid timing counts")
         lengths = tuple(sorted(set(args.lengths)))
         if lengths[0] < 8 or lengths[-1] > LENGTHS[-1] or ("smollm2" in args.models and lengths != LENGTHS):
             parser.error("encoder lengths must be 8–128; the causal lengths are fixed")
