@@ -5,10 +5,27 @@ import pyarrow.parquet as pq
 
 from superturn import diarbench_inventory
 from superturn import basis_stage0
+from superturn.basis_english_pilot import vote_census
 from superturn.basis_split import Call
 from superturn.basis_stage0 import four_roles_possible
 from superturn.basis_stage0_yield import count_gaps, json_lines
 from superturn.basis_stage1 import events
+
+
+def test_english_vote_census_keeps_all_annotated_calls_separate_from_consensus():
+    rows = [
+        {"conversation_id": "a", "question": "pause", "label": "holding",
+         "votes": [{"option": "holding", "count": 4}, {"option": "normal_gap", "count": 1}]},
+        {"conversation_id": "b", "question": "pause", "label": "normal_gap",
+         "votes": [{"option": "normal_gap", "count": 2}]},
+        {"conversation_id": "c", "question": "overlap"},
+    ]
+    summary, priorities, annotated = vote_census(rows, {"a": "fit", "b": "fit"}, {"a", "b", "c"})
+    assert annotated == {"a", "b", "c"}
+    assert priorities == {"a": {"hold": 1}}
+    assert summary["fit"]["pause_finished"] == 1
+    assert summary["fit"]["consensus_finished"] == 0
+    assert summary["excluded"]["overlap"] == 1
 
 
 def test_four_roles_preserve_whole_speaker_components():
