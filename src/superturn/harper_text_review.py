@@ -20,6 +20,8 @@ from .sources import data_root
 REVIEW_ROOT = Path("/dev/shm/superturn-harper-review")
 SUPPLEMENT_ROOT = Path("/dev/shm/superturn-harper-supplement")
 SUPPLEMENT_REPORT = "harper-text-supplemental-listening-packet.json"
+QUALIFICATION_ROOT = Path("/dev/shm/superturn-harper-qualification-v2")
+QUALIFICATION_REPORT = "harper-text-qualification-listening-packet.json"
 DURATION = 20
 SAMPLES = DURATION * RATE
 AUDIT_TARGET = 11
@@ -41,17 +43,18 @@ class Window:
 
 
 class ListeningPacket:
-    def __init__(self, destination, membership):
+    def __init__(self, destination, membership, *, duration=DURATION):
         if destination.exists():
             raise ValueError("the Harper listening packet already exists")
         self.destination = destination
         self.membership = membership
+        self.duration = duration
         self.targets = {"hold": [], "shift": []}
         self.uniform = []
         self.unavailable = Counter()
 
     def _window(self, call, caller, start, rank, tracks, proposals, anchor, cohort):
-        stop = start + SAMPLES
+        stop = start + self.duration * RATE
         kept = []
         for edge, onset, label, focal, next_voice in proposals:
             if focal != "caller" or edge < start + 3 * RATE or onset + 2 * RATE > stop:
@@ -106,7 +109,8 @@ class ListeningPacket:
         selected.extend([row for row in self.uniform if row.call not in used_calls][:UNIFORM_TARGET])
         return sorted(selected, key=lambda row: seed_for("harper-blind-order-v1", row.rank))
 
-    def write(self, root, *, picked=None, report_name="harper-text-listening-packet.json", supplemental_counts=None):
+    def write(self, root, *, picked=None, report_name="harper-text-listening-packet.json", supplemental_counts=None,
+              qualification_pool=None, qualification_targets=None):
         if picked is None:
             picked = self._select()
         if not picked:
@@ -119,7 +123,7 @@ class ListeningPacket:
             listening = packet / "harper-review"
             audio = listening / "audio"
             audio.mkdir(parents=True, mode=0o700)
-            _write_json(listening / "packet.json", {"windows": ids, "duration": DURATION})
+            _write_json(listening / "packet.json", {"windows": ids, "duration": self.duration})
             private = {}
             for ident, row in zip(ids, picked, strict=True):
                 path = audio / f"{ident}.wav"
@@ -131,6 +135,8 @@ class ListeningPacket:
                     "anchor_ms": None if row.anchor is None else row.anchor / 16,
                     "proposals": row.proposals, "audio_sha256": sha256(path.read_bytes()).hexdigest(),
                 }
+                if qualification_targets is not None:
+                    private[ident]["qualification_target"] = qualification_targets.get(row.rank)
             reference = packet / "private-reference.json"
             _write_json(reference, {"membership_sha256": self.membership, "windows": private})
             digest = sha256(reference.read_bytes()).hexdigest()
@@ -139,13 +145,15 @@ class ListeningPacket:
         report = {
             "scope": "blind English development listening pilot",
             "membership_sha256": self.membership, "private_reference_sha256": digest,
-            "duration_seconds": DURATION, "windows": len(ids),
+            "duration_seconds": self.duration, "windows": len(ids),
             "windows_by_cohort": dict(Counter(row.cohort for row in picked)),
             "unique_calls": len({row.call for row in picked}),
             "unique_callers": len({row.caller for row in picked}),
             "unavailable": dict(self.unavailable),
         }
-        if supplemental_counts is None:
+        if qualification_pool is not None:
+            report["qualification_candidate_pool"] = qualification_pool
+        elif supplemental_counts is None:
             report["shift_population_expected"] = AUDIT_TARGET
         else:
             report["previously_uncovered_candidates_within_gap_cap"] = supplemental_counts
@@ -273,7 +281,8 @@ def summarize_calls(calls):
 
 def verified_packet(root, review_root):
     reference = review_root / "private-reference.json"
-    report_name = SUPPLEMENT_REPORT if review_root == SUPPLEMENT_ROOT else "harper-text-listening-packet.json"
+    report_name = {SUPPLEMENT_ROOT: SUPPLEMENT_REPORT, QUALIFICATION_ROOT: QUALIFICATION_REPORT}.get(
+        review_root, "harper-text-listening-packet.json")
     receipt = json.loads((root / "reports" / report_name).read_text())
     payload = reference.read_bytes()
     if sha256(payload).hexdigest() != receipt["private_reference_sha256"]:

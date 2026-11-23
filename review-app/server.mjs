@@ -12,6 +12,7 @@ const basis = process.argv.includes('--basis');
 const harper = process.argv.includes('--harper');
 const harperSupplement = process.argv.includes('--harper-supplement');
 const harperPlausibility = process.argv.includes('--harper-plausibility');
+const harperQualification = process.argv.includes('--harper-qualification');
 const publisherPlausibility = process.argv.includes('--publisher-plausibility');
 const textPlausibility = harperPlausibility || publisherPlausibility;
 const restricted = basis || harper || publisherPlausibility;
@@ -19,8 +20,10 @@ if (basis && (!independent || bundle !== '/dev/shm/superturn-basis-review')) {
   throw new Error('Basis review requires the private memory-backed independent packet');
 }
 const harperRoot = harperPlausibility ? '/dev/shm/superturn-harper-text-plausibility'
+  : harperQualification ? '/dev/shm/superturn-harper-qualification-v2'
   : harperSupplement ? '/dev/shm/superturn-harper-supplement' : '/dev/shm/superturn-harper-review';
-if (((harperSupplement || harperPlausibility) && !harper) || (harperSupplement && harperPlausibility)
+const harperVariants = [harperSupplement, harperPlausibility, harperQualification].filter(Boolean).length;
+if ((harperVariants && !harper) || harperVariants > 1
     || (harper && (!independent || basis || bundle !== harperRoot))) {
   throw new Error('Harper review requires the dedicated independent packet');
 }
@@ -74,9 +77,9 @@ async function loadPacket() {
   }
   if (harper) {
     const { windows, duration } = JSON.parse(await readFile(join(packetDir, 'packet.json'), 'utf8'));
-    if (!Array.isArray(windows) || !windows.length || windows.length > 28
+    if (!Array.isArray(windows) || !windows.length || (harperQualification ? windows.length !== 160 : windows.length > 28)
         || !windows.every(id => valid(id, 'call')) || new Set(windows).size !== windows.length
-        || duration !== 20) {
+        || duration !== (harperQualification ? 30 : 20)) {
       throw new Error('Unexpected independent Harper listening packet');
     }
     return { mode: 'independent', harper: true, windows, duration };
@@ -141,6 +144,7 @@ async function start() {
   registerDraftStore(server, resolve(ballots),
     publisherPlausibility ? 'superturn_publisher_plausibility_reviewer'
       : harperPlausibility ? 'superturn_harper_plausibility_reviewer'
+      : harperQualification ? 'superturn_harper_qualification_reviewer'
       : harperSupplement ? 'superturn_harper_supplement_reviewer' : harper ? 'superturn_harper_reviewer'
       : basis ? 'superturn_basis_reviewer' : independent ? 'superturn_independent_reviewer' : undefined);
   const waveforms = new Map();

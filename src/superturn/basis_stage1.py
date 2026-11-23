@@ -30,7 +30,7 @@ def _speech_edge_status(tracks, start, stop, voice):
     return None
 
 
-def events(activity, connected, muted, length, *, tracks=None):
+def events(activity, connected, muted, length, *, tracks=None, rejected=None):
     """Abstain on overlaps, short interjections, mutes and track transitions."""
     groups = list(disjoint_bouts(sorted(activity)))
     counts, proposed = Counter(), []
@@ -40,44 +40,50 @@ def events(activity, connected, muted, length, *, tracks=None):
             continue
         start, stop, focal = last[0]
         onset, end, next_voice = first[0]
+        label = "hold" if focal == next_voice else "shift"
+
+        def reject(reason):
+            counts[reason] += 1
+            if rejected is not None:
+                rejected.append((stop, onset, label, focal, next_voice, reason))
+
         if onset - stop < 4800:
-            counts["short_shared_gap" if focal == next_voice else "early_other_onset"] += 1
+            reject("short_shared_gap" if focal == next_voice else "early_other_onset")
             continue
         if stop < 3 * RATE or onset + 2 * RATE > length:
-            counts["segment_boundary"] += 1
+            reject("segment_boundary")
             continue
         left, right = stop - 3 * RATE, onset + 2 * RATE
         if any(a < right and b > left for a, b in muted):
-            counts["muted"] += 1
+            reject("muted")
             continue
         active_people = {voice for voice, spans in connected.items()
                          if any(a < right and b > left for a, b in spans)}
         if (focal not in active_people or next_voice not in active_people
                 or any(not any(a <= left and b >= right for a, b in connected[voice])
                        for voice in active_people)):
-            counts["track_transition"] += 1
+            reject("track_transition")
             continue
         if any(a < right_ and b > left_ and voice != owner
                for left_, right_, owner in ((max(start, stop - 1600), stop, focal),
                                              (onset, min(end, onset + RATE), next_voice))
                for a, b, voice in activity):
-            counts["overlap"] += 1
+            reject("overlap")
             continue
         if next_voice != focal and end - onset < RATE:
-            counts["short_other"] += 1
+            reject("short_other")
             continue
         if index and next_voice != focal and stop - start < RATE:
             _, prior = groups[index - 1]
             if len(prior) == 1 and prior[0][2] == next_voice and start - prior[0][1] <= 2 * RATE:
-                counts["focal_backchannel"] += 1
+                reject("focal_backchannel")
                 continue
         if tracks is not None:
             issue = (_speech_edge_status(tracks, max(start, stop - RATE // 5), stop, focal)
                      or _speech_edge_status(tracks, onset, min(end, onset + RATE // 5), next_voice))
             if issue:
-                counts[issue] += 1
+                reject(issue)
                 continue
-        label = "hold" if focal == next_voice else "shift"
         counts[label] += 1
         proposed.append((stop, onset, label, focal, next_voice))
     return counts, proposed
