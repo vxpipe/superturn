@@ -77,7 +77,8 @@ def report_for(items):
     return result
 
 
-def run(root, dataset, base, checkpoint, device, report_name="harper-real-transcript-benchmark.json"):
+def run(root, dataset, base, checkpoint, device, report_name="harper-real-transcript-benchmark.json",
+        *, failure_analysis=False):
     from .harper_valley_benchmark import pinned_split
 
     if not (root / ".campaign-machine").is_file():
@@ -134,6 +135,7 @@ def run(root, dataset, base, checkpoint, device, report_name="harper-real-transc
                                               ("full", shift_score, masked_shift, "shift")):
                 item = {
                     "call": call, "caller": caller, "context": context, "score": score, "label": LABELS[label],
+                    "text": samples[field],
                     "words": len(samples[field].split("\n")[1].split()),
                     "rank": seed_for("harper-transcript-length-match-v1", call, index, label),
                 }
@@ -148,6 +150,10 @@ def run(root, dataset, base, checkpoint, device, report_name="harper-real-transc
             "current_only_ablation": report_for(masked),
             "current_only_within_turn_ranking": sum(masked_outcomes) / len(masked_outcomes),
         }
+        if failure_analysis and view == "last_two_words_cut":
+            from .harper_text_failures import audit
+
+            result["failure_analysis"] = audit(items, synthetic["train"])
     _write_json(root / "reports" / report_name, result)
     print(json.dumps(result, indent=2))
 
@@ -160,7 +166,9 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=Path, default=root / "runs/turn-text-e5-v1/checkpoint.pt")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--report-name", default="harper-real-transcript-benchmark.json")
+    parser.add_argument("--failure-analysis", action="store_true")
     args = parser.parse_args()
     if Path(args.report_name).name != args.report_name or not args.report_name.endswith(".json"):
         parser.error("--report-name must be a JSON filename")
-    run(root, args.dataset, args.base, args.checkpoint, args.device, args.report_name)
+    run(root, args.dataset, args.base, args.checkpoint, args.device, args.report_name,
+        failure_analysis=args.failure_analysis)
