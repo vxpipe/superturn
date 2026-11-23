@@ -47,3 +47,28 @@ def test_generator_resumes_without_duplicate_calls(monkeypatch, tmp_path):
     _, opening = gen.paired_examples({**row, "short_caller_reply": "just savings"})
     assert opening["previous_turn"] == ""
     assert opening["current_turn"] == "check my account the savings one"
+
+
+def test_context_pairs_change_previous_turn_and_hide_continuations():
+    from superturn.turn_text_context_supplement import plan
+
+    row = {
+        "previous_agent": "which day and which time suit you",
+        "next_agent": "which day would work best for you",
+        "caller_before_pause": "i can do next tuesday",
+        "caller_after_pause": "at about three",
+        "short_caller_reply": "",
+        "final_agent_reply": "i will pencil that in",
+    }
+    for kind, label in (("contrast", "shift"), ("invariant", "hold")):
+        spec = next(spec for spec in plan() if spec["pair_type"] == kind)
+        sample = row if kind == "contrast" else {
+            **row, "final_agent_reply": "", "short_caller_reply": "if there is a morning slot",
+        }
+        assert gen.clean_sample(sample, spec) == sample
+        left, right = gen.paired_examples({**spec, **sample})
+        assert (left["label"], right["label"]) == ("hold", label)
+        assert left["current_turn"] == right["current_turn"] == row["caller_before_pause"]
+        assert left["previous_turn"] != right["previous_turn"]
+        assert not {"caller_after_pause", "short_caller_reply", "final_agent_reply"} & left.keys()
+        assert gen.clean_sample({**sample, "next_agent": row["previous_agent"]}, spec) is None

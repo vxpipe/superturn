@@ -1,0 +1,52 @@
+{
+  "plan_sha256": "23f9438decd95f64198c4971d9f9ac42efc8ffe5d69bfda68d06c2a465c568ee",
+  "dialogues_sha256": "522262b6be10935a02fcfb6219859d15170486b4024a2526b8f4d709278a76e2",
+  "generator_prompt_sha256": "86f2ecdc239eb930e8aca86553e7b6c89ad32257bdc6cc83615744daf9f3d780",
+  "cleaner_version": "turn-text-nfkc-v2",
+  "list_usd_per_million_tokens": {
+    "generator_input": 0.75,
+    "generator_output": 3.75
+  },
+  "generator": "gemini-3.8-flash",
+  "target_per_criterion": {
+    "en/context-v1/garden-tool-library/contrast": 15,
+    "en/context-v1/garden-tool-library/invariant": 5,
+    "en/context-v1/community-cinema/contrast": 15,
+    "en/context-v1/community-cinema/invariant": 5,
+    "en/context-v1/dog-walking/contrast": 15,
+    "en/context-v1/dog-walking/invariant": 5,
+    "en/context-v1/sports-center/contrast": 15,
+    "en/context-v1/sports-center/invariant": 5,
+    "en/context-v1/shoe-repair/contrast": 15,
+    "en/context-v1/shoe-repair/invariant": 5,
+    "en/context-v1/pottery-studio/contrast": 15,
+    "en/context-v1/pottery-studio/invariant": 5,
+    "en/context-v1/community-choir/contrast": 15,
+    "en/context-v1/community-choir/invariant": 5,
+    "en/context-v1/fresh-produce-box/contrast": 15,
+    "en/context-v1/fresh-produce-box/invariant": 5
+  },
+  "target_dialogues": 160,
+  "accepted_dialogues": 160,
+  "derived_example_counts": {
+    "hold": 200,
+    "shift": 120
+  },
+  "accepted_by_language": {
+    "en": 160
+  },
+  "accepted_by_pause_style": {
+    "contrast": 120,
+    "invariant": 40
+  },
+  "seeded_from_smoke": 0,
+  "attempted_by_pause_style": {
+    "contrast": 120,
+    "invariant": 41
+  },
+  "duplicates_rejected": 0,
+  "complete_criteria": 16,
+  "target_criteria": 16,
+  "estimated_spend_including_unknown_requests_usd": 0.103136,
+  "stop": "complete"
+}

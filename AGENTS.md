@@ -189,6 +189,11 @@ full runbook.
   controls and aggregate failure strata. Keep private benchmark inputs on
   Vast. Wait for Claude's review before deciding how to change training
   coverage, and record the decision and supporting evidence in the labnotes.
+- Prioritize English until it reaches 85% balanced accuracy on a qualified
+  real-conversation development benchmark. Then adapt the verified coverage
+  rules to other languages. Use synthetic train, validation and test splits
+  for coverage checks, with scenario families held out. Report real-language
+  benchmark evidence separately where available.
 
 - Before ending a session, update the milestone's handover section and
   the current labnotes file under `~/notes/superturn/`.

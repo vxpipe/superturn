@@ -44,6 +44,19 @@ For short-shift slots, after next_agent write a brief substantive caller reply t
 and a final substantive agent reply. Otherwise leave both short_caller_reply and
 final_agent_reply empty.
 Output just the requested JSON and preserve each requested slot."""
+CONTEXT_SYSTEM = """Write original fictional two-person phone exchanges. Every case contains two alternative
+contexts for exactly the same visible caller reply. Use natural spoken English without stage notes, real
+names, contact details or role markers. previous_agent is the first preceding agent question. The caller
+begins with caller_before_pause, then keeps speaking with caller_after_pause, which adds at least two words
+and naturally supplies a missing part of the answer. next_agent is the alternative preceding agent question,
+not a reply to the first exchange. The identical caller_before_pause answers this second question.
+For pair_type=contrast the caller reply fully answers the second question. Leave short_caller_reply blank
+and use final_agent_reply for the new agent turn showing the conversation advances. For pair_type=invariant
+the identical caller reply leaves a separate relevant detail pending in both contexts; put the alternate
+caller's continuation in short_caller_reply and leave final_agent_reply blank. Vary the structure, avoid
+formulaic phrases, and do not restate the visible caller reply inside either continuation. Seven to
+twenty words in each preceding question, four to thirteen in the visible reply. Retain the case slot.
+Return only JSON in the requested schema."""
 SCHEMA = {
     "type": "array", "items": {
         "type": "object",
@@ -102,8 +115,12 @@ def clean_sample(row, spec):
         if not isinstance(raw, str) or len(raw) > 360 or re.search(r"[@\[\]<>\n]|(?:\d[ .-]*){6}", raw):
             return None
         text = normalize(raw)
-        optional_blank = (field == "previous_agent" and spec["caller_first"] or
-                          field in {"short_caller_reply", "final_agent_reply"} and not spec["short_shift"])
+        pair_type = spec.get("pair_type")
+        if pair_type:
+            optional_blank = field == ("short_caller_reply" if pair_type == "contrast" else "final_agent_reply")
+        else:
+            optional_blank = (field == "previous_agent" and spec["caller_first"] or
+                              field in {"short_caller_reply", "final_agent_reply"} and not spec["short_shift"])
         if optional_blank:
             if text:
                 return None
@@ -115,6 +132,15 @@ def clean_sample(row, spec):
         result[field] = text
     if result["caller_before_pause"] == result["caller_after_pause"]:
         return None
+    if spec.get("pair_type"):
+        prior, alternate = result["previous_agent"], result["next_agent"]
+        caller = result["caller_before_pause"]
+        proofs = (result["caller_after_pause"], result["short_caller_reply"] or result["final_agent_reply"])
+        if (prior == alternate or any(not 7 <= len(turn.split()) <= 20 for turn in (prior, alternate))
+                or not 4 <= len(caller.split()) <= 13
+                or any(not 2 <= len(proof.split()) <= 25 or caller in proof for proof in proofs)):
+            return None
+        return result
     short = result["short_caller_reply"]
     if len(short) > 65 or len(short.split()) > 9:
         return None
@@ -154,7 +180,8 @@ def request_json(path, key, payload=None):
 
 def generate_batch(specs, key, attempt):
     content = {"attempt": attempt, "cases": specs}
-    if attempt > 1:
+    context = bool(specs[0].get("pair_type"))
+    if attempt > 1 and not context:
         content["retry_notes"] = (
             "Follow the required blank fields exactly. For short_shift=true, the short_caller_reply must be "
             "a standalone answer using at most five words and 50 characters, with no explanations or "
@@ -163,7 +190,7 @@ def generate_batch(specs, key, attempt):
         )
     prompt = json.dumps(content, ensure_ascii=False)
     response = request_json(f"models/{GENERATOR}:generateContent", key, {
-        "system_instruction": {"parts": [{"text": SYSTEM}]},
+        "system_instruction": {"parts": [{"text": CONTEXT_SYSTEM if context else SYSTEM}]},
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"responseMimeType": "application/json", "responseJsonSchema": SCHEMA,
                              "maxOutputTokens": OUTPUT_LIMIT, "thinkingConfig": {"thinkingLevel": "LOW"}},
@@ -205,6 +232,10 @@ def paired_examples(row):
     """Keep observational evidence outside the two model inputs."""
     hold = {"slot": row["slot"], "language": row["language"], "label": "hold",
             "previous_turn": row["previous_agent"], "current_turn": row["caller_before_pause"]}
+    if row.get("pair_type"):
+        alternate = {**hold, "previous_turn": row["next_agent"],
+                     "label": "shift" if row["pair_type"] == "contrast" else "hold"}
+        return hold, alternate
     joiner = "" if row["language"] in {"zh", "ja"} else " "
     # Use the completed opening for first-turn shifts so the formatting
     # marker appears equally often in holds and shifts.
@@ -216,7 +247,8 @@ def paired_examples(row):
 
 
 def plan_checksum(plan):
-    protocol = [plan, SYSTEM, SCHEMA, GENERATOR, CLEANER_VERSION]
+    system = CONTEXT_SYSTEM if any(spec.get("pair_type") for spec in plan) else SYSTEM
+    protocol = [plan, system, SCHEMA, GENERATOR, CLEANER_VERSION]
     return sha256(json.dumps(protocol).encode()).hexdigest()
 
 
@@ -361,10 +393,12 @@ def run(plan, directory, budget, workers, key, *, smoke_source=None, attempts_pe
         attempts_by_style[row["pause_style"]] += attempts.get(row["slot"], 0)
     receipt = {
         "plan_sha256": digest, "dialogues_sha256": sha256(payload.encode()).hexdigest(),
-        "generator_prompt_sha256": sha256(SYSTEM.encode()).hexdigest(),
+        "generator_prompt_sha256": sha256((CONTEXT_SYSTEM if any(spec.get("pair_type") for spec in plan)
+                                           else SYSTEM).encode()).hexdigest(),
         "cleaner_version": CLEANER_VERSION,
         "list_usd_per_million_tokens": {"generator_input": GEN_INPUT, "generator_output": GEN_OUTPUT},
-        "generator": GENERATOR, "target_per_criterion": QUOTA,
+        "generator": GENERATOR,
+        "target_per_criterion": QUOTA if all(count == QUOTA for count in targets.values()) else dict(targets),
         "target_dialogues": len(plan), "accepted_dialogues": len(ordered),
         "derived_example_counts": dict(Counter(example["label"] for example in examples)),
         "accepted_by_language": dict(Counter(row["language"] for row in ordered)),
