@@ -351,6 +351,19 @@ max_bytes_per_file = 1
 sample_files = ["sl/train-00000-of-*.parquet"]
 order = 3
 
+[sources.indicvoices-hindi-prefix-probe]
+kind = "http"
+repo = "ai4bharat/IndicVoices"
+licence = "CC BY 4.0"
+attribution = "IndicVoices, AI4Bharat, Javed et al. (ACL Findings 2024)"
+role = "metadata"
+opt_in = true
+archive_url = "https://iv-release.objectstore.e2enetworks.net/dmu_release/v1_Hindi_train.tgz"
+archive_etag = "59a22bd11d8361717e1d879bf29eaecb-854"
+selection_command = "the metadata-only range procedure in docs/data-options.md"
+max_total_bytes = 33554432
+order = 3
+
 [sources.voxpopuli-dutch-exposure]
 kind = "http"
 repo = "facebook/voxpopuli"

@@ -368,3 +368,21 @@ diagnostic. The project ended the English acquisition track to focus on
 underrepresented languages.
 [Dataset card](https://huggingface.co/datasets/TheAgenticDataCompany/open-yap-1k/blob/cae5c0617b2e225422076599ef99516b73c637e3/README.md)
 · [Licence](https://huggingface.co/datasets/TheAgenticDataCompany/open-yap-1k/blob/cae5c0617b2e225422076599ef99516b73c637e3/LICENSE.txt)
+
+## IndicVoices telephone feasibility
+
+The publisher releases full-length recordings and JSON sidecars under CC BY 4.0.
+Credit AI4Bharat and cite Javed et al., Findings of ACL 2024. The paper describes
+stereo 8 kHz telephone role-play alongside other collection methods.
+[Dataset card](https://huggingface.co/datasets/ai4bharat/IndicVoices#accessing-full-length-audio-files)
+· [Collection paper](https://aclanthology.org/2024.findings-acl.639/)
+
+The opt-in Hindi probe requested bytes 0–33,554,431 and required HTTP 206,
+the registry's ETag and a Content-Range total of 14,322,746,939 bytes.
+Walk the gzip tar in order and pair WAV headers with their JSON sidecars by
+member stem. Keep aggregate metadata only. The prefix yielded 29 matched
+conversation entries, all 8 kHz mono. Sidecars contain timed speaker labels,
+whose stability across calls remains unverified. This prefix yielded no
+verified separated channels. Hold further acquisition pending a publisher
+index or mapping that identifies the separated recordings. Check recording and
+person overlap with frozen Indic DiarBench before admitting any examples.
