@@ -51,3 +51,21 @@ def test_decoder_keeps_opening_marker_and_last_actual_caller_word():
     assert len(result) == TOKEN_BUDGET
     assert result[:2] == [1, 999]
     assert result[-1] == 279
+
+def test_length_balancing_keeps_language_and_length_mass():
+    import pytest
+
+    from superturn.turn_text_train import length_balanced_weights
+
+    rows = [
+        *[{"language": "en", "label": "hold", "text": "---\nwait"}] * 7,
+        {"language": "en", "label": "shift", "text": "---\nyes"},
+        {"language": "en", "label": "hold", "text": "---\nthere were just three"},
+        {"language": "en", "label": "shift", "text": "---\nthat works for me"},
+        {"language": "fr", "label": "shift", "text": "---\noui"},
+    ]
+    weights, bins = length_balanced_weights(rows)
+    assert weights[7] == 3
+    assert weights[8:] == [1., 1., 1.]
+    assert sum(weights[:8]) == pytest.approx(8)
+    assert bins["en/1-3"]["rows_at_cap"] == 1

@@ -148,7 +148,32 @@ def scorecard(scores, rows):
     return report
 
 
-def run(dataset, base, output, *, epochs=3, batch_size=32, layers=4, seed=29, device="cuda", backbone="e5"):
+def length_balanced_weights(rows):
+    groups = defaultdict(list)
+    for index, row in enumerate(rows):
+        length = len(row["text"].split("\n", 1)[1].split())
+        band = next(name for name, end in (("1-3", 3), ("4-7", 7), ("8-15", 15), ("16+", float("inf")))
+                    if length <= end)
+        groups[row["language"], band].append(index)
+    weights = [1.] * len(rows)
+    report = {}
+    for (language, band), indices in sorted(groups.items()):
+        counts = Counter(rows[index]["label"] for index in indices)
+        by_label = {label: 1. for label in counts}
+        if len(counts) == 2:
+            rare = min(counts, key=counts.get)
+            common = next(label for label in counts if label != rare)
+            by_label[rare] = min(3., len(indices) / (2 * counts[rare]))
+            by_label[common] = (len(indices) - counts[rare] * by_label[rare]) / counts[common]
+        for index in indices:
+            weights[index] = by_label[rows[index]["label"]]
+        report[f"{language}/{band}"] = {"counts": dict(counts), "weights": by_label,
+                                       "rows_at_cap": sum(weights[index] == 3. for index in indices)}
+    return weights, report
+
+
+def run(dataset, base, output, *, epochs=3, batch_size=32, layers=4, seed=29, device="cuda", backbone="e5",
+        balance_length=False):
     import torch
     from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 
@@ -177,6 +202,10 @@ def run(dataset, base, output, *, epochs=3, batch_size=32, layers=4, seed=29, de
     packed = {name: [encode(tokenizer, row["text"]) for row in rows] for name, rows in splits.items()}
     train = splits["train"]
     truth = [LABELS[row["label"]] for row in train]
+    weights = None
+    if balance_length:
+        weights, distribution = length_balanced_weights(train)
+        receipt["training_loss_weights"] = {"method": "language-length-class-v1", "bins": distribution}
     steps_per_epoch = (len(train) + batch_size - 1) // batch_size
     torch.manual_seed(seed)
     model = build_model(base, layers, backbone).to(device)
@@ -184,7 +213,7 @@ def run(dataset, base, output, *, epochs=3, batch_size=32, layers=4, seed=29, de
     optimizer = torch.optim.AdamW(params.values(), lr=receipt["learning_rate"], weight_decay=.01)
     steps = epochs * steps_per_epoch
     scheduler = get_linear_schedule_with_warmup(optimizer, steps // 10, steps)
-    target = torch.nn.BCEWithLogitsLoss()
+    target = torch.nn.BCEWithLogitsLoss(reduction="none" if weights is not None else "mean")
     use_bf16 = device == "cuda" and torch.cuda.is_bf16_supported()
     output.mkdir(parents=True, exist_ok=True)
     checkpoint = output / "checkpoint.pt"
@@ -229,6 +258,9 @@ def run(dataset, base, output, *, epochs=3, batch_size=32, layers=4, seed=29, de
             logits = forward([packed["train"][i] for i in indices])
             labels = torch.tensor([truth[i] for i in indices], device=device, dtype=torch.float32)
             loss = target(logits, labels)
+            if weights is not None:
+                factors = torch.tensor([weights[i] for i in indices], device=device, dtype=torch.float32)
+                loss = (loss * factors).mean()
             loss.backward()
             torch.nn.utils.clip_grad_norm_(params.values(), 1.)
             optimizer.step()
@@ -343,6 +375,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=29)
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
     parser.add_argument("--evaluate", action="store_true", help="score the final checkpoint on synthetic validation")
+    parser.add_argument("--balance-length", action="store_true", help="rebalance classes within training length bins")
     args = parser.parse_args()
     if args.epochs < 1 or args.batch_size < 1 or not 0 <= args.layers <= 12:
         parser.error("positive epochs and batch size, and 0–12 trainable encoder layers are required")
@@ -350,4 +383,5 @@ if __name__ == "__main__":
         evaluate(args.dataset, args.base, args.output, args.device)
     else:
         run(args.dataset, args.base, args.output, epochs=args.epochs, batch_size=args.batch_size,
-            layers=args.layers, seed=args.seed, device=args.device, backbone=args.backbone)
+            layers=args.layers, seed=args.seed, device=args.device, backbone=args.backbone,
+            balance_length=args.balance_length)
