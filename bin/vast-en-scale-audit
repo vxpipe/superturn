@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Transfer only generated English text and its receipt, then audit on Vast.
+source "$(dirname "$0")/_lib.sh"
+
+generation="${1:-$ROOT/data/cache/en-scale-v1}"
+[[ -s "$generation/dialogues.jsonl" && -s "$generation/receipt.json" ]] || die "generation has no closed export"
+read -r dialogue_sha _ < <(sha256sum "$generation/dialogues.jsonl")
+expected_sha="$(jq -r '.dialogues_sha256' "$generation/receipt.json")"
+[[ "$dialogue_sha" = "$expected_sha" ]] || die "dialogues changed after the receipt was written"
+
+target="$REMOTE_DATA/cache/en-scale-v1"
+printf -v install_dir 'install -d -m 700 %q' "$target"
+remote "$install_dir"
+mapfile -t opts < <(ssh_opts)
+rsync -az --chmod=F600 -e "ssh ${opts[*]}" "$generation/dialogues.jsonl" "$generation/receipt.json" \
+  "$SSH_HOST:$target/"
+"$ROOT/bin/vast-run" -n "english-scale-audit-${dialogue_sha:0:12}" \
+  '.venv/bin/python -m superturn.turn_text_scale_trial audit'
