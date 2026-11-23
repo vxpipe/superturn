@@ -143,6 +143,8 @@ def run(root, *, score_only=False):
                        "all_auc": diff("all", "auc") >= -.005}}
     name = "publisher-timed-english-length-trial"
     if score_only:
+        from .timed_text_visibility import number
+
         name += "-ranking"
         ranking = matched_ranking(rows, arm_scores["replay"], arm_scores["balanced"])
         measures = ranking["metrics"]
@@ -195,6 +197,17 @@ def run(root, *, score_only=False):
                 >= basic_guards["long_gap"]["replay"]["auc"] - .01,
             },
         }
+        numeric = [i for i, row in enumerate(rows) if number(row["text"].split()[-1]) and
+                   (row["gap_ms"] >= 1500 if row["label"] else 300 <= row["gap_ms"] < 800)]
+        if (sum(not rows[i]["label"] for i in numeric), sum(rows[i]["label"] for i in numeric)) != (77, 67):
+            raise ValueError("number-ending cohort changed")
+        report["number_endings"] = {}
+        for mode, indices in (("full", numeric), ("alignment_sensitive_rows_excluded",
+                                                  [i for i in numeric if rows[i]["rank"] not in excluded])):
+            report["number_endings"][mode] = {
+                arm: [binary_metrics([(scores[i], rows[i]["label"]) for i in indices]) for scores in fits]
+                for arm, fits in arm_scores.items()
+            }
     _write_json(root / f"reports/{name}.json", report)
     print(json.dumps({key: value for key, value in report.items() if key != "trials"}, indent=2))
 

@@ -57,6 +57,18 @@ caller's continuation in short_caller_reply and leave final_agent_reply blank. V
 formulaic phrases, and do not restate the visible caller reply inside either continuation. Seven to
 twenty words in each preceding question, four to thirteen in the visible reply. Retain the case slot.
 Return only JSON in the requested schema."""
+NUMBER_SYSTEM = """Write original fictional spoken English exchanges over the telephone. Each caller
+dictates a made-up sequence of numbers, pauses once, and continues on the same turn. The previous
+agent turn establishes the task. The next agent turn responds to the finished caller turn.
+Do not include real contact details, personal data, financial accounts or literal decimal digits.
+Write each digit by its spoken word. Keep several digits before and after the pause. Vary group
+size, pacing, introductory words and everyday situations. For each case, follow these constraints:
+caller_before_pause is the complete prefix before the pause, ending on a digit word.
+caller_after_pause is only the rest of that same caller turn. When continuation is number it
+starts and ends with a digit word. When continuation is lexical it starts and ends with a nonnumber
+word. Use the specified word ranges for the prefix and the full concatenated caller turn.
+Use the specified prior form and, for a question, start with an interrogative word or auxiliary.
+Keep short_caller_reply and final_agent_reply empty. Return only the requested JSON with the case slots."""
 SCHEMA = {
     "type": "array", "items": {
         "type": "object",
@@ -132,6 +144,10 @@ def clean_sample(row, spec):
         result[field] = text
     if result["caller_before_pause"] == result["caller_after_pause"]:
         return None
+    if spec.get("number_pilot"):
+        from .turn_text_number_layout import validate_number_pair
+
+        return result if validate_number_pair(result, spec) else None
     if spec.get("pair_type"):
         prior, alternate = result["previous_agent"], result["next_agent"]
         caller = result["caller_before_pause"]
@@ -178,10 +194,16 @@ def request_json(path, key, payload=None):
             raise ApiError(f"network timeout or connection failure from {path}") from None
 
 
+def generation_system(spec):
+    if spec.get("number_pilot"):
+        return NUMBER_SYSTEM
+    return CONTEXT_SYSTEM if spec.get("pair_type") else SYSTEM
+
+
 def generate_batch(specs, key, attempt):
     content = {"attempt": attempt, "cases": specs}
-    context = bool(specs[0].get("pair_type"))
-    if attempt > 1 and not context:
+    system = generation_system(specs[0])
+    if attempt > 1 and system == SYSTEM:
         content["retry_notes"] = (
             "Follow the required blank fields exactly. For short_shift=true, the short_caller_reply must be "
             "a standalone answer using at most five words and 50 characters, with no explanations or "
@@ -190,7 +212,7 @@ def generate_batch(specs, key, attempt):
         )
     prompt = json.dumps(content, ensure_ascii=False)
     response = request_json(f"models/{GENERATOR}:generateContent", key, {
-        "system_instruction": {"parts": [{"text": CONTEXT_SYSTEM if context else SYSTEM}]},
+        "system_instruction": {"parts": [{"text": system}]},
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"responseMimeType": "application/json", "responseJsonSchema": SCHEMA,
                              "maxOutputTokens": OUTPUT_LIMIT, "thinkingConfig": {"thinkingLevel": "LOW"}},
@@ -247,7 +269,7 @@ def paired_examples(row):
 
 
 def plan_checksum(plan):
-    system = CONTEXT_SYSTEM if any(spec.get("pair_type") for spec in plan) else SYSTEM
+    system = generation_system(plan[0]) if plan else SYSTEM
     protocol = [plan, system, SCHEMA, GENERATOR, CLEANER_VERSION]
     return sha256(json.dumps(protocol).encode()).hexdigest()
 
@@ -393,8 +415,7 @@ def run(plan, directory, budget, workers, key, *, smoke_source=None, attempts_pe
         attempts_by_style[row["pause_style"]] += attempts.get(row["slot"], 0)
     receipt = {
         "plan_sha256": digest, "dialogues_sha256": sha256(payload.encode()).hexdigest(),
-        "generator_prompt_sha256": sha256((CONTEXT_SYSTEM if any(spec.get("pair_type") for spec in plan)
-                                           else SYSTEM).encode()).hexdigest(),
+        "generator_prompt_sha256": sha256((generation_system(plan[0]) if plan else SYSTEM).encode()).hexdigest(),
         "cleaner_version": CLEANER_VERSION,
         "list_usd_per_million_tokens": {"generator_input": GEN_INPUT, "generator_output": GEN_OUTPUT},
         "generator": GENERATOR,

@@ -127,7 +127,22 @@ def boundary_audit(rows, anchors, source):
             "last_pre_edge_word_gap_ms_p10_p50_p90": np.percentile(last_word_gaps, [10, 50, 90]).tolist()}
 
 
-def run(root, *, boundary_only=False):
+def number_rendering(rows, attributes):
+    report = {"hold": Counter(), "shift": Counter()}
+    for row, (ending, resumed, _, length, _) in zip(rows, attributes, strict=True):
+        if ending != "number":
+            continue
+        token = row["text"].split()[-1]
+        form = "decimal" if token.isdecimal() else "mixed" if any(ch.isdecimal() for ch in token) else "word"
+        counts = report["shift" if row["label"] else "hold"]
+        counts["total"] += 1
+        counts[f"ending/{form}"] += 1
+        counts[f"length/{length}"] += 1
+        counts[f"resume/{resumed}"] += 1
+    return report
+
+
+def run(root, *, boundary_only=False, numbers_only=False):
     from .harper_partial_stt import english_membership
 
     if not (root / ".campaign-machine").is_file():
@@ -151,6 +166,11 @@ def run(root, *, boundary_only=False):
         print(json.dumps(report, indent=2))
         return
     attributes = [tags(row, anchors[row["rank"]], source[row["call"]]) for row in rows]
+    if numbers_only:
+        report = {"freeze_sha256": digest(freeze), "forms": number_rendering(rows, attributes)}
+        _write_json(root / "reports/publisher-timed-english-number-forms.json", report)
+        print(json.dumps(report, indent=2))
+        return
     report = {"scope": "English publisher development only, fixed 0.5; oracle repair sensitivity is not a ceiling",
               "freeze_sha256": digest(freeze), "length_only_grouped_cv_auc": length_auc(rows), "arms": {}}
     pilot = json.loads((root / "reports/publisher-timed-english-context-pilot.json").read_text())
@@ -174,5 +194,8 @@ def run(root, *, boundary_only=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--boundary-only", action="store_true")
-    run(data_root(), boundary_only=parser.parse_args().boundary_only)
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--boundary-only", action="store_true")
+    modes.add_argument("--numbers-only", action="store_true")
+    args = parser.parse_args()
+    run(data_root(), boundary_only=args.boundary_only, numbers_only=args.numbers_only)
