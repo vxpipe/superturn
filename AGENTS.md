@@ -30,9 +30,11 @@ includes the handover.
   use terms and accepted examples. Check the approved dollar cap before
   generation, and report spend. Keep every real dataset out of training,
   generation prompts and Git.
-- Basis and other real conversations are private benchmarks. Use Silero on
-  synchronized speaker tracks to propose pauses. Validate automatic labels
-  against human judgments before using the benchmark. Keep split roles
+- Use openly accessible real conversations for reproducible benchmarks.
+  HarperValleyBank is the English pilot. Basis requires access approval
+  and is excluded. Use Silero on synchronized speaker tracks to propose
+  pauses. Validate automatic labels against human observations before
+  qualifying the benchmark. Keep split roles
   speaker-disjoint and freeze calibration and test. Existing turn detectors
   are benchmark references only. Use a permissively licensed multilingual
   LM pretrained on other tasks.

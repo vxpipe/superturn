@@ -4,6 +4,16 @@ Current source licences and download selections are codified in
 `configs/sources.toml`. The tables also identify historical sources for
 reproducing earlier checkpoints.
 
+For the active text-only milestone, train on synthetic text only.
+Use open, ungated real conversations as benchmarks. HarperValleyBank
+is the English pilot. It contains two separate 8 kHz tracks from human
+participants role-playing banking calls, with public transcripts and
+speaker IDs. Record the original CC BY 4.0 attribution and distinguish
+publisher word corrections from hold/shift outcome adjudication.
+Basis is a historical investigation. The access approval requirement
+excludes it from the active benchmark.
+[HarperValleyBank publisher release](https://github.com/cricketclub/gridspace-stanford-harper-valley/tree/0bd721e877c4a85d8c13ff837e68661ea6200a98)
+
 ## Licence policy
 
 The model, weights and code are released free for commercial and
