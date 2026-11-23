@@ -8,8 +8,9 @@ tags:
 
 # Superturn
 
-Draft for `HashNuke/superturn`. The current development artifact is the
-audio-only 973k E20 student. Release selection and measurements are pending.
+Historical card for the audio-only 973k E20 development artifact. The
+active milestone is training a text-only multilingual turn detector.
+Release selection and measurements for that model are pending.
 
 ## Intended use
 

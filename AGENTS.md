@@ -2,19 +2,12 @@
 
 ## Goal
 
-Build a small, open end-of-turn model for voice agents. It estimates from
-the caller's recent audio and elapsed silence whether they finished
-their turn. Evaluate both candidate interfaces against these requirements.
-
-- compare an audio-only int8 ONNX candidate at most 1 MB and a combined
-  audio+text candidate at most 2 MB. The single-core p99 targets are
-  under 2 ms for audio-only and at most 3 ms for the combined candidate;
-- take raw 16 kHz mono PCM, with acoustic features inside the model.
-  The combined experiment also computes byte n-gram hashes in the graph;
-- work across many languages and on telephone audio (8 kHz G.711, line noise);
-- be speaker independent: judged only on voices it never trained on;
-- be released free for commercial and non-commercial use (Apache 2.0), trained
-  only on permissively licensed data.
+Build an open multilingual, text-only end-of-turn model for voice
+agents. Fine-tune a pretrained language model that understands the
+previous turn and the caller's current partial transcript. Return the
+probability that the caller has finished. Target under 5 ms single-core
+CPU p99 and up to 10 ms under load. Model size has no hard limit. Release
+commercially usable weights under Apache 2.0 using compatible sources.
 
 Read `~/AGENTS.md` for the user's shared environment instructions.
 Start with `~/notes/superturn/milestones/index.md`. The active milestone
@@ -22,58 +15,31 @@ includes the handover.
 
 ## Scope
 
-- Turn detection only. The calling application owns Silero VAD and barge-in.
-  Anchor every example at the Silero speech stop plus `silence_ms`. Train
-  on VAD-gated pauses still active at the sampled offset, from 300 ms
-  up to the 800 ms application timeout. Keep the single-decision quality
-  gate at 300 ms.
-- Compare an audio-only candidate with 3 s of 16 kHz caller audio and
-  `silence_ms` against a combined candidate with those same inputs and
-  `text_bytes`, the right-aligned UTF-8 tail of the previous turn, byte
-  separator 0x1E, and current partial. Give the current partial priority
-  and left-pad with zeros. Keep the separator when there is no previous
-  turn. Use all zeros when the current partial is unavailable. Use the
-  largest of 128, 256, 384 or 512 bytes that fits the combined export and
-  latency budgets. The transcript reflects only what STT delivered by the
-  decision instant. Simulate lag, missing words and blank partials in training.
-- In the combined runtime replay, start at the first eligible transcript
-  availability at or after 300 ms of silence, including a partial already
-  available at 300 ms. Re-call every 100 ms with the latest partial and
-  elapsed silence until shift, speech resumes or the 800 ms timeout fires. Fit
-  non-increasing per-language thresholds by elapsed-silence step on
-  calibration only. Extend the timer replay to report per-pause false
-  triggers, first-trigger shift latency and fallback outcomes. Report
-  holds longer than 800 ms separately from model-triggered false completes.
-- Report standalone audio-only, combined, and masked branch quality by
-  language. If the combined candidate is chosen, require its blank-text
-  fallback to preserve audio-only quality in each release language.
-  Compare both candidates with LiveKit and Smart Turn before choosing
-  the release interface. Benchmark CPU speed after quality. Teacher-only
-  analysis may use longer causal history.
-- Train and fine-tune Superturn's own turn detector. Existing architectures
-  and pretrained audio components from other tasks, such as TTS, are
-  allowed, including as the basis of a general speech teacher trained on
-  Superturn's real labels. Record the teacher release, licence, input data
-  and target provenance. Existing turn detectors are benchmarks only.
-  Their weights and predictions are excluded from initialization,
-  distillation, ensemble targets and model selection. Use training data
-  whose terms allow commercial training and open weights.
-- Labelling uses Silero VAD for pause boundaries on per-speaker tracks and
-  pyannote for diarization of mixed single-track audio.
-- Build each language's supervised data from multiple eligible
-  conversational sources as coverage allows. Require a human-judgment
-  audit of automatic labels from every source before admitting them.
-  Qualify mixed podcast labels on a sum of verified Basis speaker tracks
-  with known outcomes before selecting podcast examples.
-- Keep read or scripted speech such as Common Voice, FLEURS and
-  VoxPopuli outside all hold/shift supervision and every calibration,
-  validation and test split. Use a capped training-only exposure slice
-  only after an ablation shows it helps on independent conversation data.
-- For Stage 4b, use real pause outcomes and causal transcripts with word
-  timings from eligible Basis, Indic DiarBench, HarperValley and AMI
-  splits. Low-weight LLM dialogues are a separate text-training arm for
-  Indonesian, Dutch and Turkish only. They stay out of calibration,
-  validation and test.
+- The application owns Silero VAD, barge-in and the 800 ms timeout.
+  Start scoring when text is available at or after 300 ms of silence.
+  Re-call every 100 ms with the latest partial while silence continues.
+  Anchor each benchmark example at the Silero stop plus elapsed silence.
+- Use the previous turn tail, a separator and the caller's current partial.
+  Prioritize the current partial. Mark first turns and use only words
+  available as of the decision. Measure sensitivity to lagged STT.
+- Train on Gemini-generated telephone-style spoken transcripts in each
+  language's native script. Document how production STT spells English
+  words in other languages. Exclude barge-ins, interruptions and
+  backchannels from the hold/shift examples. Under an explicit exception,
+  commit only synthetic text and its generation receipts after reviewing
+  use terms and accepted examples. Check the approved dollar cap before
+  generation, and report spend. Keep every real dataset out of training,
+  generation prompts and Git.
+- Basis and other real conversations are private benchmarks. Use Silero on
+  synchronized speaker tracks to propose pauses. Validate automatic labels
+  against human judgments before using the benchmark. Keep split roles
+  speaker-disjoint and freeze calibration and test. Existing turn detectors
+  are benchmark references only. Use a permissively licensed multilingual
+  LM pretrained on other tasks.
+- Run one milestone stage at a time. Qualify the English benchmark first,
+  then generate and train. Use English dev to select the model and for at
+  most three targeted data rounds. Expand to other languages after English
+  reaches 80% balanced accuracy. Measure final export latency after quality.
 
 ## Repository layout
 
@@ -86,7 +52,8 @@ includes the handover.
 - `docs/`: durable project decisions and research. Working labnotes and
   milestones live in the shared `~/notes` Git repository.
 - Datasets, shards, checkpoints and reports live under `$SUPERTURN_DATA`
-  (default `data/`, git-ignored), never in git.
+  (default `data/`, git-ignored). Generated text and its receipts may be
+  committed under the synthetic-data exception.
 
 ## Campaign machine and storage
 
@@ -162,21 +129,15 @@ full runbook.
 - Cloud machines are rented for planned campaigns, not created and destroyed
   ad hoc. A campaign downloads once, runs a whole queue of experiments and
   benchmarks, and copies results back (`bin/vast-fetch`) before release.
-- Record each dataset's exact licence in `configs/sources.toml` and `docs/`
-  before using it. Only permissive licences that allow commercial training and
-  publishing the weights; no non-commercial or share-alike-on-the-model data.
-- Splits are reproducible, per dataset and speaker-disjoint
-  (`src/superturn/splits.py`). Never split by clip. Never tune on test sets.
-- Guard speaker variety: count speakers per source and language from the
-  data, cap examples per speaker, and report metrics on unseen voices only.
-- Use permissively licensed public or authorized gated data and project-collected recordings
-  whose consent covers training, evaluation and publication of the trained
-  weights. Confirm approved processing and storage before copying project
-  recordings. Keep recordings, identifying derivatives and private
+- Record the exact licence and permitted role of each benchmark in
+  `configs/sources.toml` and `docs/`. Record the base model licence and
+  generation terms before training or publishing.
+- Split real benchmarks reproducibly by linked speaker components.
+  Keep calibration and test sealed as specified in the milestone.
+  Count distinct voices and independent groups in benchmark reports.
+- Keep real audio, transcripts, identifying derivatives and private
   checkpoints out of Git, shared notes, public reports and notifications.
-  Prioritize conversational supervision in Arabic, Hindi, Indonesian,
-  Dutch, Portuguese and Turkish. Use only recordings eligible for the
-  model's commercial release.
+  Follow the source-specific storage and processing terms.
 - This is a public GitHub repository, including its history and docs.
   Keep secrets out of both the public repository and the shared notes
   repository:
@@ -187,36 +148,22 @@ full runbook.
   `git diff --cached` before every commit; if a secret is ever committed,
   tell the user at once so it can be revoked, since rewriting history does
   not unpublish it.
-- At 300 ms on held-out telephone calls from unseen speakers, require
-  macro balanced accuracy of at least 80% and at least 70% per supported
-  language. Balanced accuracy is the mean of shift recall and hold
-  specificity. Fit each language threshold on separate calibration data
-  and freeze it before testing.
-- Use a standard scorecard for every model result. Include the macro,
-  English, each language, the six languages absent from supervision and
-  HarperValley-88 when scored. Report balanced accuracy, recall and false
-  completes at the calibration threshold, recall at up to 5% false
-  completes, AUC, pAUC to 10% and pipeline metrics when available. Report
-  calibration and evaluation counts, student seed mean and range, the
-  owned teacher and eligible benchmark results. Include audio conditions
-  (wideband, telephone, noisy) and identify development results.
-- Include a matched failure-strata comparison for each model experiment.
-  Report counts and paired turn intervals for short histories, single-pause
-  turns, first holds, rising source-pitch endings, Mandarin, and languages
-  absent from the fit data where those strata exist. Distinguish shared
-  owned-teacher errors from student-only errors. Use one matched cutoff
-  per language before slicing. Report English seed mean and range at the
-  2.5%, 5% and 7.5% hold budgets and apply a one-point non-regression guard
-  to the mean recall across these budgets.
+- At 300 ms on eligible real benchmark conversations, require at least
+  80% macro balanced accuracy and at least 70% per supported language.
+  Balanced accuracy averages shift recall and hold specificity. Fit
+  language thresholds on separate calibration data and freeze them before
+  the sealed test. Follow the milestone for telephone eligibility.
+- Use the standard scorecard for every model result. Report balanced
+  accuracy, shift recall and false completes at the stated threshold,
+  recall at up to 5% false completes, AUC and pAUC to 10%. Give counts
+  and threshold provenance. Include STT lag and failure strata such as
+  complete-looking holds, short replies and questions. Report sequence
+  false triggers, first-trigger latency and holds that outlast 800 ms.
 - For new model comparison claims, use at least five paired seeds across
   arms where initialization can be matched. Resample paired seeds once
   across languages, then whole turns within each language, keeping the
   resample shared across arms and recalculating the cutoffs. A confirmed
   improvement requires a positive joint-bootstrap lower bound.
-- Use fixed 20 epochs for new 973k feature-first runs with this recipe.
-  Preserve archived controls for their pinned comparisons. Use held-source
-  fidelity for diagnostics and avoid using it to pick a training seed.
-- Do not use reversed audio or preset-voice TTS as training data.
 - Use `uv` for Python environments (Python 3.12) and run shell commands
   through an interactive zsh that sources `~/.zshrc`.
 - When asking Claude for suggestions in the user's tmux session, identify
