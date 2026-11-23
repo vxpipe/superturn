@@ -44,7 +44,10 @@ includes the handover.
   label audit is open. Qualify the benchmark before model scoring. Use
   English dev to select the model and for at most three targeted data
   rounds. Expand model evaluation to other languages after English reaches
-  80% balanced accuracy. Measure final export latency after quality.
+  85% balanced accuracy on qualified English conversations. Screen text
+  backbones against the single-core CPU budget before additional accuracy
+  fits. Use the weighted Qwen checkpoints as accuracy and teacher references.
+  Keep generation spend subject to the user's latest approval.
 
 ## Repository layout
 

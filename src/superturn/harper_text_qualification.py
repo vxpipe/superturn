@@ -6,6 +6,7 @@ from dataclasses import dataclass
 import json
 from math import sqrt
 from pathlib import Path
+import wave
 
 from .ami_calibration import _write_json
 from .audio import RATE, silero
@@ -56,6 +57,99 @@ def select(candidates):
             calls[item.window.call] += 1
             callers[item.window.caller] += 1
     return sorted(selected, key=lambda row: seed_for("harper-qualification-order-v1", row.window.rank))
+
+
+def raw_clock_audit(root):
+    from .harper_valley_audit import transcript_words
+
+    if not (root / ".campaign-machine").is_file():
+        raise ValueError("Harper word timings stay on Vast")
+    source = root / "cache/harper-valley/text-dev-v1.jsonl"
+    metadata = json.loads((root / "reports/harper-text-dev-packing.json").read_text())
+    if digest(source) != metadata["serialized_sha256"]:
+        raise ValueError("Harper development input hash changed")
+    rows = defaultdict(list)
+    for candidate in map(json.loads, source.read_text().splitlines()):
+        rows[candidate["call"]].append(candidate)
+    raw = root / "raw/harper-valley/data"
+    results = {"hold": Counter(), "shift": Counter()}
+    for call, candidates in rows.items():
+        segments = [row for row in json.loads((raw / "transcript" / f"{call}.json").read_text())
+                    if row["speaker_role"] == "caller"]
+        with wave.open(str(raw / "audio/caller" / f"{call}.wav"), "rb") as audio:
+            if (audio.getframerate(), audio.getsampwidth(), audio.getnchannels()) != (8000, 2, 1):
+                raise ValueError("unexpected Harper caller track format")
+            samples = audio.getnframes() * (RATE // audio.getframerate())
+        omissions = []
+        words = list(transcript_words(segments, "caller", samples, 0, omissions=omissions))
+        for row in candidates:
+            counts = results[row["label"]]
+            edge = row["caller_sample"]
+            crossing = [word for word in words if word.start < edge < word.end]
+            counts["rows"] += 1
+            counts["rows_with_crossing_word"] += bool(crossing)
+            counts["crossing_words"] += len(crossing)
+            counts["rows_with_crossing_ending_within_300_ms"] += any(word.end <= edge + .3 * RATE for word in crossing)
+            counts["rows_with_timing_omissions_at_edge"] += any(word.start <= edge <= word.end for word in omissions)
+    if {label: result["rows"] for label, result in results.items()} != POOL_COUNTS:
+        raise ValueError("raw word audit did not cover the frozen class population")
+    report = {"scope": "caller-local raw word times without label-support trimming",
+              "causal_pack_sha256": digest(source), "counts_by_class": results}
+    _write_json(root / "reports/harper-text-qualification-raw-word-clock.json", report)
+    print(json.dumps(report, indent=2))
+
+
+def pre_eligibility_audit(root):
+    from .harper_valley_audit import audit_call
+    from .harper_valley_benchmark import pinned_split
+    from .labels import Speech, turns
+
+    if not (root / ".campaign-machine").is_file():
+        raise ValueError("Harper eligibility audit stays on Vast")
+    cases, _, roster = pinned_split(root, "train")
+    stats, crossings = Counter(), Counter()
+    detect = silero()
+    progress = Progress("harper-pre-eligibility", len(cases), "calls")
+    for case in cases:
+        def observe(_audio, _origins, vad, words, omissions, start, end):
+            clipped = [Speech(span.speaker, max(start, span.start), min(end, span.end))
+                       for span in vad if max(start, span.start) < min(end, span.end)]
+            for focal, _, label in turns(clipped, decision_ms=300):
+                if focal.speaker != "caller":
+                    continue
+                crossings[f"{label}/pre_eligibility"] += 1
+                crossings[f"{label}/raw_word_crossing"] += any(
+                    word.speaker == "caller" and word.start < focal.end < word.end for word in words)
+                crossings[f"{label}/timing_omission_at_stop"] += any(
+                    omission.speaker == "caller" and omission.start <= focal.end <= omission.end
+                    for omission in omissions)
+
+        stats.update(audit_call(root / "raw/harper-valley", case["id"], detect, recover_clock=True,
+                                observe=observe))
+        progress.advance(1)
+    progress.finish()
+    per_class = {}
+    for label in POOL_COUNTS:
+        count = stats[f"candidate_{label}"]
+        if not count or count != crossings[f"{label}/pre_eligibility"]:
+            raise ValueError("raw word and archive candidate universes disagree")
+        eligible = stats[f"fixed_window_supported_{label}"]
+        per_class[label] = {
+            "pre_eligibility": count, "raw_word_crossing": crossings[f"{label}/raw_word_crossing"],
+            "timing_omission_at_stop": crossings[f"{label}/timing_omission_at_stop"],
+            "fixed_window_supported": eligible, "dropped": count - eligible,
+            "drop_rate": (count - eligible) / count,
+            "drop_reasons": {kind: stats[f"{kind}_{label}"]
+                             for kind in ("incomplete_timing", "disagreed", "ambiguous", "unmatched")}
+                            | {"agreed_outside_fixed_window": stats[f"supported_{label}"] - eligible},
+        }
+    delta = per_class["shift"]["drop_rate"] - per_class["hold"]["drop_rate"]
+    report = {"scope": "staged development calls with valid clock recovery before word-support filtering",
+              "roster_audit_sha256": roster, "calls_total": len(cases), "calls_observed": stats["audited_calls"],
+              "by_class": per_class, "shift_minus_hold_drop_rate": delta,
+              "absolute_drop_difference_over_ten_points": abs(delta) > .10}
+    _write_json(root / "reports/harper-text-pre-eligibility-word-clock.json", report)
+    print(json.dumps(report, indent=2))
 
 
 def build(root, code_revision):
@@ -303,10 +397,17 @@ def score(root, ballot):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--score", type=Path)
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--score", type=Path)
+    modes.add_argument("--raw-clock-only", action="store_true")
+    modes.add_argument("--pre-eligibility", action="store_true")
     parser.add_argument("--code-revision", help="Git revision used to render the packet")
     args = parser.parse_args()
-    if args.score:
+    if args.raw_clock_only:
+        raw_clock_audit(data_root())
+    elif args.pre_eligibility:
+        pre_eligibility_audit(data_root())
+    elif args.score:
         score(data_root(), args.score)
     elif args.code_revision and len(args.code_revision) == 40 and all(ch in "0123456789abcdef" for ch in args.code_revision):
         build(data_root(), args.code_revision)
