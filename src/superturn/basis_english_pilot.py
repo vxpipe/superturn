@@ -1,5 +1,6 @@
 """Seal the English Basis pilot census without downloading audio."""
 
+import argparse
 import json
 import os
 import resource
@@ -47,15 +48,19 @@ def vote_census(rows, roles, eligible_calls):
     return summary, priorities, annotated
 
 
-def timing_support(segment, judgments):
-    """Check whether released word times independently support the judgment edges."""
+def observed_word_gaps(segment):
     words = sorted((word["start"], word["end"], utterance["speaker"])
                    for utterance in segment["transcript"] for word in utterance["words"]
                    if word["start"] < word["end"])
     bouts = list(disjoint_bouts(words))
-    gaps = [(last[0][1], first[0][0], last[0][2], first[0][2])
+    return [(last[0][1], first[0][0], last[0][2], first[0][2])
             for (_, last), (first, _) in zip(bouts, bouts[1:])
             if len(last) == len(first) == 1 and first[0][0] - last[0][1] >= .3]
+
+
+def timing_support(segment, judgments):
+    """Check whether released word times independently support the judgment edges."""
+    gaps = observed_word_gaps(segment)
     results = Counter()
     for judgment in judgments:
         category = PAUSE_OPTIONS[judgment["label"]]
@@ -71,14 +76,14 @@ def timing_support(segment, judgments):
     return results
 
 
-def inspect_fit_timings(fs, prefix, fit_judgments, audio_paths):
+def inspect_fit_timings(fs, prefix, fit_judgments, audio_paths, *, retain=False):
     sidecar = f"{prefix}/en/segments.jsonl"
     size = fs.info(sidecar)["size"]
     if not 0 < size <= 130_000_000:
         raise ValueError("the English word timing file exceeds its metadata cap")
     meter = Progress("basis-english-word-time-preflight", size, "B")
     supported, seen, audio_bytes = Counter(), set(), 0
-    first_track = None
+    first_track, segments = None, []
     with fs.open(sidecar, "rb", block_size=8 * 1024 * 1024) as handle:
         for row in json_lines(handle, meter):
             ident = row["segment_id"]
@@ -88,6 +93,8 @@ def inspect_fit_timings(fs, prefix, fit_judgments, audio_paths):
                 raise ValueError("a fit pause segment appears twice")
             seen.add(ident)
             supported.update(timing_support(row, fit_judgments[ident]))
+            if retain:
+                segments.append(row)
             for path in row["tracks"].values():
                 audio_bytes += audio_paths[path]
                 first_track = first_track or path
@@ -95,7 +102,7 @@ def inspect_fit_timings(fs, prefix, fit_judgments, audio_paths):
         raise ValueError("the English word timing file did not cover the fit judgment list")
     meter.finish()
     return {"fit_pause_segments": len(seen), "fit_pause_segment_whole_track_bytes": audio_bytes,
-            "word_timing_counts": dict(supported), "word_sidecar_bytes": size}, first_track
+            "word_timing_counts": dict(supported), "word_sidecar_bytes": size}, first_track, segments
 
 
 def flac_seek_table(handle, size):
@@ -120,7 +127,7 @@ def flac_seek_table(handle, size):
     raise ValueError("the Basis FLAC metadata exceeded the bounded header walk")
 
 
-def run(root):
+def run(root, *, reference_audit=False):
     from huggingface_hub import HfApi, HfFileSystem
 
     if not (root / ".campaign-machine").is_file():
@@ -171,7 +178,8 @@ def run(root):
     fit_annotated = [english[call] for call in membership["en"]["fit"] if priorities[call]]
     all_fit_annotated = [english[call] for call in membership["en"]["fit"] if call in annotated]
     audio_sizes = {entry.path: entry.size for entry in entries["en"]}
-    timing, first_track = inspect_fit_timings(fs, prefix, fit_judgments, audio_sizes)
+    timing, first_track, segments = inspect_fit_timings(fs, prefix, fit_judgments, audio_sizes,
+                                                       retain=reference_audit)
     if first_track:
         with fs.open(f"{prefix}/{first_track}", "rb", cache_type="none") as handle:
             timing.update(flac_seek_table(handle, audio_sizes[first_track]))
@@ -198,7 +206,17 @@ def run(root):
     }
     _write_json(receipt_dir / "basis-english-pilot-census.json", result)
     print(json.dumps(result, indent=2))
+    if reference_audit:
+        from .basis_english_reference import run_reference_audit
+
+        audit = run_reference_audit(root, fs, prefix, segments, fit_judgments,
+                                    timing["fit_pause_segment_whole_track_bytes"], observed_word_gaps,
+                                    PAUSE_OPTIONS)
+        print(json.dumps(audit, indent=2))
 
 
 if __name__ == "__main__":
-    run(data_root())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--reference-audit", action="store_true",
+                        help="also run the bounded publisher-reference audio diagnostic")
+    run(data_root(), reference_audit=parser.parse_args().reference_audit)

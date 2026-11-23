@@ -23,10 +23,15 @@ def events(activity, connected, muted, length):
     counts, proposed = Counter(), []
     for (_, last), (first, _) in zip(groups, groups[1:]):
         if len(last) != 1 or len(first) != 1:
+            counts["ambiguous_overlap_boundary"] += 1
             continue
         start, stop, focal = last[0]
         onset, end, next_voice = first[0]
-        if onset - stop < 4800 or stop < 3 * RATE or onset + 2 * RATE > length:
+        if onset - stop < 4800:
+            counts["short_shared_gap" if focal == next_voice else "early_other_onset"] += 1
+            continue
+        if stop < 3 * RATE or onset + 2 * RATE > length:
+            counts["segment_boundary"] += 1
             continue
         left, right = stop - 3 * RATE, onset + 2 * RATE
         if any(a < right and b > left for a, b in muted):

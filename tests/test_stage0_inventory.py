@@ -6,6 +6,7 @@ import pyarrow.parquet as pq
 from superturn import diarbench_inventory
 from superturn import basis_stage0
 from superturn.basis_english_pilot import vote_census
+from superturn.basis_english_reference import match_reference
 from superturn.basis_split import Call
 from superturn.basis_stage0 import four_roles_possible
 from superturn.basis_stage0_yield import count_gaps, json_lines
@@ -26,6 +27,19 @@ def test_english_vote_census_keeps_all_annotated_calls_separate_from_consensus()
     assert summary["fit"]["pause_finished"] == 1
     assert summary["fit"]["consensus_finished"] == 0
     assert summary["excluded"]["overlap"] == 1
+
+
+def test_english_reference_matches_before_comparing_the_outcome():
+    judgments = [
+        {"speakers": ["a"], "start": 3.0, "end": 3.5, "label": "holding"},
+        {"speakers": ["b"], "start": 8.0, "end": 8.5, "label": "finished"},
+        {"speakers": ["a"], "start": 17.0, "end": 17.5, "label": "holding"},
+    ]
+    proposals = [(48_000, 56_000, "shift", "a", "b"),
+                 (128_000, 136_000, "shift", "b", "a")]
+    coverage, confusion = match_reference(judgments, proposals, [], {"holding": "hold", "finished": "finished"})
+    assert coverage["hold_matched"] == coverage["hold_unmatched"] == coverage["finished_handoff_unconfirmed"] == 1
+    assert confusion == {"hold_predicted_shift": 1}
 
 
 def test_four_roles_preserve_whole_speaker_components():
