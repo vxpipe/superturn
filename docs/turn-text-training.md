@@ -110,3 +110,7 @@ benchmark-data shard and compares two frozen Superturn checkpoints at
 the marked pauses. The inputs use timestamped words up to the publisher
 pause start. Treat the result as offline text evidence. The native
 telephone and unseen-speaker release gate uses qualified calls.
+Run `python -m superturn.timed_text_context_audit` after the diagnostic
+to compare Qwen with and without the previous turn on identical rows.
+The report separates published pause-length bands and reports a
+false-complete interval for bands with holds only.
