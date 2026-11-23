@@ -21,6 +21,8 @@ DURATION = 20
 SAMPLES = DURATION * RATE
 AUDIT_TARGET = 11
 UNIFORM_TARGET = 6
+OUTCOMES = {"resume": "hold", "handoff": "shift"}
+NEXT_CHANNEL = {"hold": "left", "shift": "right"}
 
 
 @dataclass
@@ -162,6 +164,25 @@ def matches(proposals, marks, tolerance_ms):
     return list(prior[-1][2])
 
 
+def mark_label(mark):
+    label = OUTCOMES.get(mark["outcome"])
+    if label is None:
+        return None, mark["outcome"]
+    if mark.get("brief_ack") != "no":
+        reason = "brief_acknowledgment" if mark.get("brief_ack") == "yes" else "acknowledgment_unknown"
+        return None, reason
+    channel = mark.get("next_channel")
+    if channel != NEXT_CHANNEL[label]:
+        return None, "inconsistent_next_channel" if channel else "next_channel_missing"
+    try:
+        gap = float(mark.get("next_onset_ms", "")) - float(mark["stop_ms"])
+    except (TypeError, ValueError):
+        return None, "next_onset_missing"
+    if not np.isfinite(gap) or gap < 300:
+        return None, "quiet_unconfirmed"
+    return label, None
+
+
 def score_window(record, marks, tolerance_ms):
     anchor = record["anchor_ms"]
     proposals = record["proposals"]
@@ -170,23 +191,31 @@ def score_window(record, marks, tolerance_ms):
         if len(proposals) != 1:
             raise ValueError("the hidden challenge interval has no unique target")
     counts = Counter(proposals=len(proposals), human_marks=len(marks))
+    counts.update(f"{proposal['outcome']}_proposals" for proposal in proposals)
     paired = matches(proposals, marks, tolerance_ms)
     counts["unmatched_proposals"] = len(proposals) - len(paired)
-    outcomes = {"resume": "hold", "handoff": "shift"}
     if anchor is None:
         counts["unmatched_human_marks"] = len(marks) - len(paired)
         matched_marks = {j for _, j in paired}
-        counts["unmatched_eligible_human_marks"] = sum(
-            j not in matched_marks and mark["outcome"] in outcomes and mark.get("brief_ack") != "yes"
-            for j, mark in enumerate(marks)
-        )
+        for j, mark in enumerate(marks):
+            label, _ = mark_label(mark)
+            if label:
+                counts[f"{label}_eligible_human_marks"] += 1
+                if j not in matched_marks:
+                    counts["unmatched_eligible_human_marks"] += 1
+                    counts[f"{label}_unmatched_eligible_human_marks"] += 1
     for i, j in paired:
         proposal, mark = proposals[i], marks[j]
-        if mark["outcome"] not in outcomes or mark.get("brief_ack") == "yes":
-            counts[f"human_{mark['outcome']}"] += 1
+        proposed = proposal["outcome"]
+        counts[f"{proposed}_matched_stops"] += 1
+        label, reason = mark_label(mark)
+        if label is None:
+            counts[f"human_{reason}"] += 1
+            counts[f"{proposed}_unusable_matched_outcomes"] += 1
             continue
-        correct = outcomes[mark["outcome"]] == proposal["outcome"]
-        counts["outcome_agreement" if correct else "outcome_disagreement"] += 1
+        agreement = "outcome_agreement" if label == proposed else "outcome_disagreement"
+        counts[agreement] += 1
+        counts[f"{proposed}_{agreement}"] += 1
         if mark.get("next_channel") == proposal["next_channel"]:
             counts["next_channel_agreement"] += 1
         if mark.get("next_onset_ms") and abs(float(mark["next_onset_ms"]) - proposal["onset_ms"]) <= 80:
@@ -194,17 +223,44 @@ def score_window(record, marks, tolerance_ms):
     return counts
 
 
-def summarize_calls(calls):
-    counts = sum(calls, Counter())
-    totals = np.array([[call["outcome_agreement"], call["proposals"]] for call in calls])
-    draws = np.random.default_rng(29).integers(0, len(calls), (5000, len(calls)))
+def confirmation_interval(totals, draws):
     drawn = totals[draws].sum(axis=1)
     supported = drawn[:, 1] > 0
-    interval = (np.quantile(drawn[supported, 0] / drawn[supported, 1], [.025, .975]).tolist()
-                if len(calls) > 1 and supported.any() else None)
+    if np.count_nonzero(totals[:, 1]) < 2 or not supported.any():
+        return None
+    return np.quantile(drawn[supported, 0] / drawn[supported, 1], [.025, .975]).tolist()
+
+
+def summarize_calls(calls):
+    counts = sum(calls, Counter())
+    draws = np.random.default_rng(29).integers(0, len(calls), (5000, len(calls)))
+    totals = np.array([[call["outcome_agreement"], call["proposals"]] for call in calls])
+    classes = {}
+    for label in NEXT_CHANNEL:
+        proposals = counts[f"{label}_proposals"]
+        matched = counts[f"{label}_matched_stops"]
+        agrees = counts[f"{label}_outcome_agreement"]
+        disagrees = counts[f"{label}_outcome_disagreement"]
+        eligible = agrees + disagrees
+        paired_totals = np.array([[call[f"{label}_outcome_agreement"], call[f"{label}_proposals"]]
+                                  for call in calls])
+        classes[label] = {
+            "proposals": proposals,
+            "matched_stops": matched,
+            "usable_matched_outcomes": eligible,
+            "unusable_matched_outcomes": counts[f"{label}_unusable_matched_outcomes"],
+            "agreed_outcomes": agrees,
+            "disagreed_outcomes": disagrees,
+            "matched_stop_coverage": matched / proposals if proposals else None,
+            "matched_outcome_coverage": eligible / proposals if proposals else None,
+            "agreement_given_usable_match": agrees / eligible if eligible else None,
+            "confirmed_share_of_proposals": agrees / proposals if proposals else None,
+            "confirmation_call_bootstrap_95": confirmation_interval(paired_totals, draws),
+        }
     return {"events": counts, "calls": len(calls),
             "confirmed_share_of_proposals": counts["outcome_agreement"] / counts["proposals"]
-            if counts["proposals"] else None, "call_bootstrap_95": interval}
+            if counts["proposals"] else None, "call_bootstrap_95": confirmation_interval(totals, draws),
+            "by_proposed_class": classes}
 
 
 def score(root, ballot):
@@ -217,7 +273,8 @@ def score(root, ballot):
         audio = REVIEW_ROOT / "harper-review" / "audio" / f"{ident}.wav"
         if sha256(audio.read_bytes()).hexdigest() != record["audio_sha256"]:
             raise ValueError("a Harper listening waveform changed")
-    saved = json.loads(ballot.read_text())["draft"]["windows"]
+    ballot_bytes = ballot.read_bytes()
+    saved = json.loads(ballot_bytes)["draft"]["windows"]
     if set(saved) != set(windows) or any(not row.get("reviewed") for row in saved.values()):
         raise ValueError("complete every listening window before scoring")
     reports = {}
@@ -231,9 +288,17 @@ def score(root, ballot):
             cohort = record["cohort"]
             counts = by_cohort.setdefault(cohort, {}).setdefault(record["call"], Counter())
             counts.update(score_window(record, marks, tolerance))
-        reports[str(tolerance)] = {cohort: summarize_calls(list(by_call.values()))
-                                   for cohort, by_call in by_cohort.items()}
+        report = {cohort: summarize_calls(list(by_call.values())) for cohort, by_call in by_cohort.items()}
+        challenge_calls = {}
+        for cohort in ("challenge_hold", "challenge_shift"):
+            for call, counts in by_cohort.get(cohort, {}).items():
+                challenge_calls.setdefault(call, Counter()).update(counts)
+        if challenge_calls:
+            report["short_gap_challenge"] = summarize_calls(list(challenge_calls.values()))
+        reports[str(tolerance)] = report
     result = {"scope": "directional factual listening pilot", "stop_tolerance_ms": reports,
+              "primary_stop_tolerance_ms": 250, "sensitivity_stop_tolerance_ms": 80,
+              "ballot_sha256": sha256(ballot_bytes).hexdigest(),
               "private_reference_sha256": receipt["private_reference_sha256"]}
     _write_json(root / "reports/harper-text-listening-score.json", result)
     print(json.dumps(result, indent=2))
