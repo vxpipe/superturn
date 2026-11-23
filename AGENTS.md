@@ -9,6 +9,10 @@ probability that the caller has finished. Target under 5 ms single-core
 CPU p99 and up to 10 ms under load. Model size has no hard limit. Release
 commercially usable weights under Apache 2.0 using compatible sources.
 
+Use multilingual E5 as the base for text candidates. Every deployment
+candidate must run inference on CPU. If an audio candidate is pursued,
+keep it under 1 million parameters and use a non-Qwen audio base.
+
 Read `~/AGENTS.md` for the user's shared environment instructions.
 Start with `~/notes/superturn/milestones/index.md`. The active milestone
 includes the handover.
