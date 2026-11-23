@@ -102,3 +102,11 @@ manifest. It reports Qwen-minus-reference style differences with a
 paired caller bootstrap on the full near-end set and the frozen
 word-count-matched subset. Threshold 0.5 stays fixed for the operating
 point metrics. Recall at 5% false completes comes from the resampled ROC.
+
+Run the companion publisher-timed English diagnostic on Vast with
+`python -m superturn.timed_text_pause_diagnostic --freeze-only`, then
+rerun without the flag. It checks the previously staged LiveKit
+benchmark-data shard and compares two frozen Superturn checkpoints at
+the marked pauses. The inputs use timestamped words up to the publisher
+pause start. Treat the result as offline text evidence. The native
+telephone and unseen-speaker release gate uses qualified calls.
