@@ -142,7 +142,7 @@ def number_rendering(rows, attributes):
     return report
 
 
-def run(root, *, boundary_only=False, numbers_only=False):
+def run(root, *, boundary_only=False, numbers_only=False, weighted_only=False):
     from .harper_partial_stt import english_membership
 
     if not (root / ".campaign-machine").is_file():
@@ -173,12 +173,18 @@ def run(root, *, boundary_only=False, numbers_only=False):
         return
     report = {"scope": "English publisher development only, fixed 0.5; oracle repair sensitivity is not a ceiling",
               "freeze_sha256": digest(freeze), "length_only_grouped_cv_auc": length_auc(rows), "arms": {}}
-    pilot = json.loads((root / "reports/publisher-timed-english-context-pilot.json").read_text())
-    for arm, run_name, dataset, expected in (
-        ("parent", "turn-text-qwen3-focused-v1", "turn-text-focused-en-v1", frozen["checkpoint_sha256"]["qwen"]),
-        ("replay", "turn-text-qwen3-context-replay-v1", "turn-text-context-replay-v1",
-         pilot["arms"]["replay"]["checkpoint_sha256"]),
-    ):
+    if weighted_only:
+        comparison = json.loads((root / "reports/publisher-timed-english-length-trial-ranking.json").read_text())
+        fits = [(str(trial["seed"]), f"turn-text-qwen3-length-balanced-{trial['seed']}",
+                 "turn-text-focused-en-v1", trial["checkpoint_sha256"]) for trial in comparison["trials"]["balanced"]]
+    else:
+        pilot = json.loads((root / "reports/publisher-timed-english-context-pilot.json").read_text())
+        fits = [
+            ("parent", "turn-text-qwen3-focused-v1", "turn-text-focused-en-v1", frozen["checkpoint_sha256"]["qwen"]),
+            ("replay", "turn-text-qwen3-context-replay-v1", "turn-text-context-replay-v1",
+             pilot["arms"]["replay"]["checkpoint_sha256"]),
+        ]
+    for arm, run_name, dataset, expected in fits:
         checkpoint = root / "runs" / run_name / "checkpoint.pt"
         if digest(checkpoint) != expected:
             raise ValueError("unexpected visibility diagnostic checkpoint")
@@ -187,7 +193,17 @@ def run(root, *, boundary_only=False, numbers_only=False):
         scores = predict(tokenizer, model, [row["text"] for row in rows], "cuda")
         report["arms"][arm] = summarize(rows, attributes, scores)
         del model
-    _write_json(root / "reports/publisher-timed-english-text-visibility.json", report)
+    name = "publisher-timed-english-weighted-text-visibility" if weighted_only else "publisher-timed-english-text-visibility"
+    if weighted_only:
+        grouped = {}
+        for arm in report["arms"].values():
+            for key, buckets in arm["strata"].items():
+                group = grouped.setdefault(key, {})
+                for bucket, counts in buckets.items():
+                    group.setdefault(bucket, Counter()).update(counts)
+        report["mean_strata_counts"] = {key: {bucket: {label: count / len(fits) for label, count in counts.items()}
+                                              for bucket, counts in groups.items()} for key, groups in grouped.items()}
+    _write_json(root / f"reports/{name}.json", report)
     print(json.dumps({name: {key: value for key, value in arm.items() if key != "strata"}
                       for name, arm in report["arms"].items()}, indent=2))
 
@@ -197,5 +213,6 @@ if __name__ == "__main__":
     modes = parser.add_mutually_exclusive_group()
     modes.add_argument("--boundary-only", action="store_true")
     modes.add_argument("--numbers-only", action="store_true")
+    modes.add_argument("--weighted-only", action="store_true")
     args = parser.parse_args()
-    run(data_root(), boundary_only=args.boundary_only, numbers_only=args.numbers_only)
+    run(data_root(), boundary_only=args.boundary_only, numbers_only=args.numbers_only, weighted_only=args.weighted_only)

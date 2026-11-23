@@ -14,7 +14,7 @@ from .shards import seed_for
 from .sources import data_root
 from .timed_text_visibility import QUESTION, number
 from .turn_generation import FIELDS, clean_sample, paired_examples, plan_checksum, run
-from .turn_text_train import digest, read_dataset
+from .turn_text_train import digest, length_balanced_weights, read_dataset
 from .turn_training_dataset import input_key
 
 QUOTAS = {
@@ -233,6 +233,8 @@ def export(root, directory, destination):
         raise ValueError("generated pool failed to fill the registered training and held-out quotas")
     if text_distribution(old) != text_distribution(train):
         raise ValueError("paired replacement changed the language, label, length or prior layout")
+    if length_balanced_weights(old)[0] != length_balanced_weights(train)[0]:
+        raise ValueError("paired replacement changed a training position's length-balanced weight")
     endpoints = Counter(row["label"] for row in train if row["language"] == "en" and number(row["text"].split()[-1]))
     if endpoints["hold"] > 1.3 * endpoints["shift"]:
         raise ValueError("number-ending hold/shift balance exceeded 1.3:1")
