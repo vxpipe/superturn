@@ -48,3 +48,12 @@ as report filenames mapped to their SHA-256 checksums. Issue it only
 when the independent audit supports use of the entire development pack.
 The two current listening panels audit a subset and their completion
 alone does not qualify all 358 inputs.
+
+For the real-transcript challenge, run
+`uv run --no-sync python -m superturn.harper_text_transcript_benchmark`
+in a campaign job. It uses the pinned HarperValley development roster
+and human-corrected telephone transcripts. It compares complete caller
+runs followed by an agent reply with the same runs cut halfway or two
+words early. It reports exact current-word-count and context matching,
+a word-count-only baseline, and previous-turn masking. This challenge
+uses deliberate cuts. The 300 ms real-pause scorecard has its own audit.
