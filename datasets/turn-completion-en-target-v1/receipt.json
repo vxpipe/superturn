@@ -1,0 +1,43 @@
+{
+  "plan_sha256": "e47cc1922b827522de545c810c5ae31288582e5a14b2908932f04508eb238b89",
+  "dialogues_sha256": "02e637414786f9e7047de8260c7c8a8047a724e945f2a807c15e9fdd24a566f2",
+  "generator_prompt_sha256": "22703c28942ddba52db8fd4b92f44f4d65fbf60101824017b76085ed34702597",
+  "cleaner_version": "turn-text-nfkc-v2",
+  "list_usd_per_million_tokens": {
+    "generator_input": 0.75,
+    "generator_output": 3.75
+  },
+  "generator": "gemini-3.8-flash",
+  "target_per_criterion": 2,
+  "target_dialogues": 288,
+  "accepted_dialogues": 288,
+  "derived_example_counts": {
+    "hold": 288,
+    "shift": 288
+  },
+  "accepted_by_language": {
+    "en": 288
+  },
+  "accepted_by_pause_style": {
+    "10-13/neutral": 48,
+    "10-13/yes-no": 48,
+    "14-23/neutral": 48,
+    "14-23/yes-no": 48,
+    "4-10/neutral": 48,
+    "4-10/yes-no": 48
+  },
+  "seeded_from_smoke": 0,
+  "attempted_by_pause_style": {
+    "4-10/neutral": 48,
+    "4-10/yes-no": 48,
+    "10-13/neutral": 49,
+    "10-13/yes-no": 62,
+    "14-23/neutral": 50,
+    "14-23/yes-no": 50
+  },
+  "duplicates_rejected": 0,
+  "complete_criteria": 144,
+  "target_criteria": 144,
+  "estimated_spend_including_unknown_requests_usd": 0.239905,
+  "stop": "complete"
+}
