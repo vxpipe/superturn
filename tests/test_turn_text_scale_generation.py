@@ -2,7 +2,7 @@ import json
 
 from superturn.turn_generation import CATALOGUE
 from superturn.turn_text_scale_generation import TOTALS, build_plan, clean_scale_row, scale_examples
-from superturn.turn_text_scale_trial import evaluate_dialogues
+from superturn.turn_text_scale_trial import evaluate_dialogues, harper_continuous_turns
 from superturn.turn_text_train import scorecard
 
 
@@ -40,3 +40,13 @@ def test_scorecard_supports_shift_only_and_several_holds():
     report = scorecard([.2, .8, .6, .7], rows)["all"]
     assert report["dialogue_pairs"] == 2 and report["comparable_dialogues"] == 1
     assert report["shift_only_dialogues"] == 1 and report["within_dialogue_ranking"] == .5
+
+
+def test_overlap_transcript_joins_segments_from_the_same_speaker_only():
+    parts = [("caller", "Can you check"), ("caller", "which times are available next week?"),
+             ("agent", "I can look"), ("agent", ""), ("agent", "The calendar is open")]
+    rows = [{"index": index, "start_timestamp_ms": index * 400, "speaker_role": speaker,
+             "human_transcript": text} for index, (speaker, text) in enumerate(parts)]
+    assert list(harper_continuous_turns(reversed(rows))) == [
+        "can you check which times are available next week", "i can look", "the calendar is open",
+    ]

@@ -14,7 +14,7 @@ from .progress import Progress
 from .sources import data_root
 from .timed_text_length_trial import publisher_rows, report_path
 from .timed_text_visibility import OPEN, number
-from .turn_generation import CATALOGUE, plan_checksum
+from .turn_generation import CATALOGUE, normalize, plan_checksum
 from .turn_metrics import auc
 from .turn_text_context_supplement import dev_blocklist, ngrams
 from .turn_text_scale_generation import BUDGET, SCALE_VERSION, build_plan, clean_scale_row, scale_examples
@@ -24,6 +24,53 @@ from .turn_training_dataset import input_key
 SEEDS = (17, 29, 43)
 AUDIT = "en-scale-v1-pretraining-audit.json"
 RESULT = "publisher-timed-english-scale-teacher.json"
+
+
+def harper_continuous_turns(segments):
+    role, words = None, []
+    for row in sorted(segments, key=lambda item: (float(item["start_timestamp_ms"]), item["index"])):
+        text = normalize(row.get("human_transcript") or "")
+        if row["speaker_role"] != role or not text:
+            if words:
+                yield " ".join(words)
+                words = []
+        role = row["speaker_role"]
+        if text:
+            words.append(text)
+    if words:
+        yield " ".join(words)
+
+
+def full_scale_blocklist(root):
+    import pyarrow.parquet as pq
+
+    from .harper_valley_benchmark import pinned_split
+    from .timed_text_pause_diagnostic import SHARD
+
+    blocked = dev_blocklist(root)
+    original = len(blocked)
+    publisher = root / SHARD
+    rows = pq.read_table(publisher, columns=["words", "messages"]).to_pylist()
+    for row in rows:
+        caller = " ".join(str(word["word"]) for word in row["words"] or [] if word.get("word"))
+        history = [message["content"] for message in row["messages"] or [] if isinstance(message.get("content"), str)]
+        for text in [caller, *history]:
+            blocked.update(ngrams(normalize(text)))
+    after_publisher = len(blocked)
+    calls, _, _ = pinned_split(root, "train")
+    observed = 0
+    for case in calls:
+        path = root / "raw/harper-valley/data/transcript" / f"{case['id']}.json"
+        if path.is_file():
+            observed += 1
+            for text in harper_continuous_turns(json.loads(path.read_text())):
+                blocked.update(ngrams(text))
+    return blocked, {
+        "publisher_rows": len(rows), "publisher_sha256": digest(publisher), "staged_harper_calls": observed,
+        "harper_calls_in_archived_dev_role": len(calls), "original_prefix_grams": original,
+        "additional_publisher_grams": after_publisher - original,
+        "additional_harper_grams": len(blocked) - after_publisher,
+    }
 
 
 def evaluate_dialogues(rows, specs, base_splits, blocked):
@@ -68,7 +115,8 @@ def audit_export(root, generation, parent, destination):
             or set(row["slot"] for row in rows) - specs.keys()):
         raise ValueError("generated rows or spend do not match the locked scale plan")
     base_splits, parent_sha = read_dataset(parent)
-    additions, excluded = evaluate_dialogues(rows, specs, base_splits, dev_blocklist(root))
+    blocked, overlap_scope = full_scale_blocklist(root)
+    additions, excluded = evaluate_dialogues(rows, specs, base_splits, blocked)
     retained = [row for row in rows if row["slot"] not in excluded]
     role_scenarios = {role: sorted({row["scenario"] for row in retained if row["split"] == role})
                       for role in ("train", "validation", "test")}
@@ -84,6 +132,7 @@ def audit_export(root, generation, parent, destination):
         "parent_manifest_sha256": parent_sha, "spent_usd": spent, "target_dialogues": len(plan),
         "accepted_before_audit": len(rows), "accepted_after_audit": len(retained),
         "exclusions_by_reason": dict(Counter(excluded.values())), "excluded_slots": sorted(excluded),
+        "overlap_scope": overlap_scope,
         "retained_by_family_and_role": dict(Counter(f"{row['scale_family']}/{row['split']}" for row in retained)),
         "role_scenarios": role_scenarios,
         "release_for_teacher_fit": not excluded and len(rows) == len(plan) and receipt["stop"] == "complete",
