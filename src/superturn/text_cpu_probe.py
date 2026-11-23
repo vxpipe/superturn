@@ -44,19 +44,27 @@ def stage(root, names):
 def cpus():
     affinity = sorted(os.sched_getaffinity(0))
     quota_file = Path("/sys/fs/cgroup/cpu.max")
-    quota, period = quota_file.read_text().split() if quota_file.is_file() else ("max", "1")
-    allowed = len(affinity) if quota == "max" else max(1, min(len(affinity), int(quota) // int(period)))
+    quota_record = quota_file.read_text().strip() if quota_file.is_file() else None
+    if quota_record:
+        quota, period = quota_record.split()
+        allowed = len(affinity) if quota == "max" else max(1, min(len(affinity), int(quota) // int(period)))
+    else:
+        allowed = len(affinity)
     cores = {}
+    siblings_by_cpu = {}
     for cpu in affinity:
         sibling_file = Path(f"/sys/devices/system/cpu/cpu{cpu}/topology/thread_siblings_list")
         siblings = sibling_file.read_text().strip() if sibling_file.is_file() else str(cpu)
         cores.setdefault(siblings, cpu)
+        siblings_by_cpu[cpu] = siblings
     placement = list(cores.values())[:allowed]
     cpuinfo = Path("/proc/cpuinfo").read_text().split("\n\n")[placement[0]]
     fields = dict(line.split(":", 1) for line in cpuinfo.splitlines() if ":" in line)
     fields = {key.strip(): value.strip() for key, value in fields.items()}
-    return affinity, placement, {"model": fields.get("model name"), "cpu_max": f"{quota} {period}",
+    return affinity, placement, {"model": fields.get("model name"), "cpu_max": quota_record,
                                  "allowed_logical_cpus": affinity, "selected_cpus": placement,
+                                 "benchmark_cpu": placement[0],
+                                 "reported_thread_siblings": {cpu: siblings_by_cpu[cpu] for cpu in placement},
                                  "flags": [flag for flag in fields.get("flags", "").split()
                                            if flag.startswith(("avx", "vnni"))]}
 
@@ -122,15 +130,35 @@ def six_layer_paths(root):
     target = root / "me5-6"
     target.mkdir(exist_ok=True)
     fp, quant = target / "model.onnx", target / "model_uint8.onnx"
-    if not fp.is_file():
+    valid = False
+    if fp.is_file():
+        try:
+            onnx.checker.check_model(str(fp))
+            valid = True
+        except onnx.checker.ValidationError:
+            pass
+    if not valid:
         model = onnx.load(source)
         layer = [node for node in model.graph.node if node.name == "/encoder/layer.5/output/LayerNorm/Add_1"]
         if len(layer) != 1:
             raise RuntimeError("could not locate mE5 block-6 output")
-        onnx.utils.extract_model(str(source), str(fp), [item.name for item in model.graph.input], [layer[0].output[0]])
+        output = layer[0].output[0]
+        info = next((item for item in model.graph.value_info if item.name == output), None)
+        if info is None:
+            info = model.graph.value_info.add()
+        info.CopyFrom(model.graph.output[0])
+        info.name = output
+        extracted = onnx.utils.Extractor(model).extract_model([item.name for item in model.graph.input], [output])
+        temporary = fp.with_name("model.partial.onnx")
+        onnx.save(extracted, temporary)
+        onnx.checker.check_model(str(temporary))
+        temporary.replace(fp)
     if not quant.is_file():
-        quantize_dynamic(fp, quant, per_channel=True, weight_type=QuantType.QUInt8,
+        temporary = quant.with_name("model_uint8.partial.onnx")
+        quantize_dynamic(fp, temporary, per_channel=True, weight_type=QuantType.QUInt8,
                          op_types_to_quantize=["MatMul", "Gather"])
+        onnx.checker.check_model(str(temporary))
+        temporary.replace(quant)
     return {"fp32": fp, "int8": quant}
 
 
@@ -173,8 +201,11 @@ def token_needs(tokenizer, records, name):
     prefix = "query: " if name.startswith("me5") else ""
     special = (len(tokenizer.encode("\n", add_special_tokens=False).ids)
                if name == "smollm2" else tokenizer.num_special_tokens_to_add(is_pair=True))
+    unknown_id = next((ident for token in ("[UNK]", "<unk>")
+                       if (ident := tokenizer.token_to_id(token)) is not None), None)
     for language in LANGUAGES:
         caller, short_prior, full = [], [], []
+        unknown = 0
         for row in records:
             if row["language"] != language:
                 continue
@@ -183,11 +214,14 @@ def token_needs(tokenizer, records, name):
             prior_ids = tokenizer.encode(previous, add_special_tokens=False).ids
             prefix_ids = tokenizer.encode(prefix, add_special_tokens=False).ids
             caller.append(len(current_ids))
+            if unknown_id is not None:
+                unknown += current_ids.count(unknown_id)
             short_prior.append(len(current_ids) + min(16, len(prior_ids)) + len(prefix_ids) + special)
             full.append(len(tokenizer.encode(previous + "\n" + current).ids if name == "smollm2"
                             else tokenizer.encode(prefix + previous, current).ids))
         report[language] = {"caller": number_stats(caller), "caller_plus_16_prior": number_stats(short_prior),
-                            "full_two_lines": number_stats(full)}
+                            "full_two_lines": number_stats(full),
+                            "caller_unknown_token_share": unknown / sum(caller) if caller and sum(caller) else None}
     return report
 
 
@@ -379,6 +413,7 @@ def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTH
                     loaded = measure() if len(placement) > 1 else None
                 meter.advance(1)
                 detail[precision] = {"bytes": path.stat().st_size, "sha256": digest(path),
+                                     "onnx_artifact": str(path.relative_to(root)),
                                      "idle": idle, "loaded": loaded, "load_verification": load}
                 if precision == "int8" and name != "smollm2":
                     languages = ("en",) if name == "minilm-en" else LANGUAGES
@@ -387,13 +422,19 @@ def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTH
                     required = min(p90, LENGTHS[-1])
                     bracket = next((length for length in lengths if length >= required), None)
                     key = str(bracket)
+                    gates = {
+                        "measured_at_or_above_required_tokens": bracket is not None,
+                        "idle_p99_under_5_ms": bracket is not None
+                        and idle[key]["synthetic_text_to_scalar"]["p99_ms"] < 5,
+                        "loaded_p99_at_most_10_ms": bracket is not None and loaded is not None
+                        and loaded[key]["synthetic_text_to_scalar"]["p99_ms"] <= 10,
+                        "all_pinned_load_workers_ran": loaded is not None
+                        and load["workers_with_cpu_ticks"] == len(placement) - 1,
+                    }
                     detail["screen_at_p90_bucket"] = {
                         "languages": languages, "largest_p90": p90, "conservative_measured_bucket": bracket,
                         "p90_exceeds_128": p90 > LENGTHS[-1],
-                        "passed": (bracket is not None and loaded is not None
-                                   and load["workers_with_cpu_ticks"] == len(placement) - 1
-                                   and idle[key]["synthetic_text_to_scalar"]["p99_ms"] < 5
-                                   and loaded[key]["synthetic_text_to_scalar"]["p99_ms"] <= 10),
+                        "checks": gates, "passed": all(gates.values()),
                     }
                 _write_json(root / report_name, result)
     finally:
