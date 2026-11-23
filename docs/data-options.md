@@ -36,12 +36,27 @@ The model sees the audio up to the pause and must predict which one.
 
 ### Per-speaker conversation sources
 
-Basis Conversations 1500 was the intended main source (22 languages, one track
-per speaker) but access was not granted (2026-11-20), so the model is trained
-without it. The per-speaker conversation data is English meetings recorded with
-a close-talk microphone per speaker. They give real hold/shift labels from
-per-track VAD. Meetings have more overlap and more than two speakers, so they
-are weaker than one-to-one calls.
+Basis Conversations 1500 access was verified on 2026-11-23. Its aligned
+per-speaker tracks and release-wide speaker IDs can support supervised
+development once a split and label audit pass. The audio is primarily
+multiparty web calls. Existing checkpoints predate use of this source.
+
+The [Basis Data License 1.0](https://huggingface.co/datasets/basis-ai/basis-conversations-1500/blob/05a19e06b5eed44d701a8860b7e2336a44f762dd/LICENSE)
+allows commercial training and publishing compliant weights in sections 2 and
+3. Sections 4–7 govern source materials, restricted cloud copies, privacy and
+attribution. Use the pinned authorized distribution. Keep source-containing
+audio, transcripts, features and manifests private and encrypted at rest
+and in transit. Maintain a copy record for source removals, with the
+publisher licence attached. The initial census read the file listing and
+selected judgment metadata without staging recordings.
+
+At that revision each of Arabic (418 calls), Hindi (204) and Portuguese
+(121) is fully connected under the release-wide speaker grouping.
+A person-disjoint split must discard bridging calls. Confirm retained groups and class yield before
+audio selection. Human `pause` votes concern perceived completion and
+can provide an audit alongside independently observed per-track outcomes.
+They cover few priority-language holds. Apply G.711 simulation only as a
+development condition under the current milestone.
 
 | Source | Licence | Languages | Notes |
 |---|---|---|---|
@@ -81,7 +96,6 @@ source was found on 2026-11-20. Consequences:
 | Seamless Interaction | CC BY-NC 4.0 |
 | Original Emilia subset | CC BY-NC 4.0 |
 | Global-Conversational-Speech | Paid commercial licence |
-| Basis Conversations 1500 | Access requested 2026-11-20 and not granted. Its licence (Basis Data License 1.0) would have allowed commercial training and open weights. |
 | Switchboard, Fisher, CALLHOME (LDC) | Paid, restricted licence |
 | MagicData dual-track Chinese and English (arXiv 2509.04093) | Publisher's audio licence is [CC BY-NC-ND 4.0](https://magichub.com/datasets/multi-stream-spontaneous-conversation-training-datasets_english/) |
 
