@@ -87,12 +87,28 @@ def build_model(base_path, layers):
     return EncoderClassifier()
 
 
-def scorecard(scores, rows):
+def binary_metrics(items, threshold=.5):
     import numpy as np
 
-    from .harper_history_probe import recall_area
-    from .train import _auc
+    from .turn_metrics import auc, recall_area
 
+    holds = sum(not target for _, target in items)
+    shifts = len(items) - holds
+    false_complete = sum(not target and value >= threshold for value, target in items) / holds if holds else None
+    recall = sum(target and value >= threshold for value, target in items) / shifts if shifts else None
+    report = {"holds": holds, "shifts": shifts, "threshold": threshold, "balanced_accuracy": None,
+              "false_complete": false_complete, "shift_recall": recall, "auc": None,
+              "retrospective_recall_at_5_percent_false_complete": None, "normalized_pauc_to_10_percent": None}
+    if holds and shifts:
+        probabilities, truth = zip(*items, strict=True)
+        limits = recall_area(np.array(probabilities), np.array(truth))
+        report.update(balanced_accuracy=(1 - false_complete + recall) / 2, auc=auc(probabilities, truth),
+                      retrospective_recall_at_5_percent_false_complete=float(limits[1]),
+                      normalized_pauc_to_10_percent=float(limits[3]))
+    return report
+
+
+def scorecard(scores, rows):
     groups = defaultdict(list)
     pairs = defaultdict(dict)
     for score, row in zip(scores, rows, strict=True):
@@ -101,19 +117,7 @@ def scorecard(scores, rows):
         groups["all"].append(example)
         groups[f"language/{row['language']}"].append(example)
         groups["one_turn" if row["text"].startswith("---\n") else "two_turn"].append(example)
-    report = {}
-    for name, items in groups.items():
-        probabilities, truth = zip(*items, strict=True)
-        holds, shifts = len(truth) - sum(truth), sum(truth)
-        false_complete = sum(not target and value >= .5 for value, target in items) / holds
-        recall = sum(target and value >= .5 for value, target in items) / shifts
-        limits = recall_area(np.array(probabilities), np.array(truth))
-        report[name] = {"holds": holds, "shifts": shifts, "threshold": .5,
-                        "balanced_accuracy": (1 - false_complete + recall) / 2,
-                        "false_complete": false_complete, "shift_recall": recall,
-                        "auc": _auc(probabilities, truth),
-                        "retrospective_recall_at_5_percent_false_complete": float(limits[1]),
-                        "normalized_pauc_to_10_percent": float(limits[3])}
+    report = {name: binary_metrics(items) for name, items in groups.items()}
     margins = [pair["shift"] - pair["hold"] for pair in pairs.values()]
     report["all"]["dialogue_pairs"] = len(margins)
     report["all"]["within_dialogue_ranking"] = sum(
@@ -211,13 +215,10 @@ def run(dataset, base, output, *, epochs=3, batch_size=32, layers=4, seed=29, de
     meter.finish()
 
 
-def evaluate(dataset, base, output, device):
+def load_fit(checkpoint, base, device, corpus_hash):
     import torch
     from transformers import AutoTokenizer
 
-    splits, corpus_hash = read_dataset(dataset)
-    rows = splits["validation"]
-    checkpoint = output / "checkpoint.pt"
     saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
     receipt = saved["receipt"]
     if (receipt["dataset_manifest_sha256"] != corpus_hash or receipt["base_weights_sha256"] != BASE_SHA256
@@ -225,39 +226,55 @@ def evaluate(dataset, base, output, device):
             or receipt["tokenizer_sha256"] != digest(base / "tokenizer.json")
             or len(saved["history"]) != receipt["epochs"]
             or receipt["token_budget"] != TOKEN_BUDGET or receipt["query_prefix"] != QUERY_PREFIX):
-        raise ValueError("synthetic diagnostic inputs do not match the completed fit")
+        raise ValueError("evaluation inputs do not match the completed synthetic fit")
     tokenizer = AutoTokenizer.from_pretrained(base, local_files_only=True, use_fast=True)
     model = build_model(base, receipt["top_layers_trainable"]).to(device).eval()
     parameters = {name: param for name, param in model.named_parameters() if param.requires_grad}
     if set(saved["weights"]) != set(parameters):
         raise ValueError("the checkpoint is missing trained parameters")
-    use_bf16 = device == "cuda" and torch.cuda.is_bf16_supported()
-    by_view = {}
-    modified = {}
     with torch.inference_mode():
         for name, parameter in parameters.items():
             parameter.copy_(saved["weights"][name])
-        for view in ("available_context", "current_only", "last_word_missing"):
-            texts = []
-            changed = Counter()
-            for row in rows:
-                previous, current = row["text"].split("\n")
-                if view == "current_only":
-                    previous = "---"
-                if view == "last_word_missing" and " " in current:
-                    current = current.rsplit(" ", 1)[0]
-                text = f"{previous}\n{current}"
-                if text != row["text"]:
-                    changed[row["language"]] += 1
-                texts.append(pack(tokenizer, text))
-            scores = []
-            for index in range(0, len(texts), 32):
-                inputs = tokenizer.pad({"input_ids": texts[index:index + 32]},
-                                       padding=True, return_tensors="pt").to(device)
-                with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=use_bf16):
-                    scores.extend(model(**inputs).float().sigmoid().tolist())
-            by_view[view] = scorecard(scores, rows)
-            modified[view] = dict(changed)
+    return tokenizer, model
+
+
+def predict(tokenizer, model, texts, device):
+    import torch
+
+    tokens = [pack(tokenizer, text) for text in texts]
+    use_bf16 = device == "cuda" and torch.cuda.is_bf16_supported()
+    scores = []
+    with torch.inference_mode():
+        for index in range(0, len(tokens), 32):
+            inputs = tokenizer.pad({"input_ids": tokens[index:index + 32]},
+                                   padding=True, return_tensors="pt").to(device)
+            with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=use_bf16):
+                scores.extend(model(**inputs).float().sigmoid().tolist())
+    return scores
+
+
+def evaluate(dataset, base, output, device):
+    splits, corpus_hash = read_dataset(dataset)
+    rows = splits["validation"]
+    checkpoint = output / "checkpoint.pt"
+    tokenizer, model = load_fit(checkpoint, base, device, corpus_hash)
+    by_view = {}
+    modified = {}
+    for view in ("available_context", "current_only", "last_word_missing"):
+        texts = []
+        changed = Counter()
+        for row in rows:
+            previous, current = row["text"].split("\n")
+            if view == "current_only":
+                previous = "---"
+            if view == "last_word_missing" and " " in current:
+                current = current.rsplit(" ", 1)[0]
+            text = f"{previous}\n{current}"
+            if text != row["text"]:
+                changed[row["language"]] += 1
+            texts.append(text)
+        by_view[view] = scorecard(predict(tokenizer, model, texts, device), rows)
+        modified[view] = dict(changed)
     result = {"scope": "synthetic validation only", "checkpoint_sha256": digest(checkpoint),
               "dataset_manifest_sha256": corpus_hash, "views": by_view,
               "modified_rows_by_language": modified,

@@ -17,6 +17,7 @@ from .model import build
 from .progress import Progress
 from .shards import CONTEXT, seed_for
 from .sources import REPO_ROOT
+from .turn_metrics import auc as _auc
 from .training_augmentation import TrainingAugmentation
 
 PAUSES = (200, 300, 500)
@@ -50,22 +51,6 @@ def _input(row, samples, silence_ms=0):
         raise ValueError(f"decision silence exceeds the labelled pause: {silence_ms} ms")
     end = CONTEXT + elapsed
     return np.frombuffer(row["pcm"], "<i2")[end - samples:end]
-
-
-def _auc(scores, truth):
-    pairs = sorted(zip(scores, truth))
-    positive = sum(truth)
-    negative = len(truth) - positive
-    if not positive or not negative:
-        return None
-    rank_sum = 0.0
-    from itertools import groupby
-    rank = 1
-    for _, tied in groupby(pairs, key=lambda pair: pair[0]):
-        labels = [label for _, label in tied]
-        rank_sum += sum(labels) * (rank + (len(labels) - 1) / 2)
-        rank += len(labels)
-    return (rank_sum - positive * (positive + 1) / 2) / (positive * negative)
 
 
 def _threshold(scores, truth, target=0.05):

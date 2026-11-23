@@ -33,3 +33,18 @@ AUC, language subsets and context views. The last-word mask drops a
 whitespace-delimited word where a nonempty prefix remains. It is a text
 perturbation. HarperValley has its own development label audit and
 causal inputs. The release score and CPU latency follow that audit.
+
+The English development scorer is
+`uv run --no-sync python -m superturn.harper_text_score` on Vast. It uses
+only the frozen development pack at threshold 0.5. The scorecard includes
+the 300–800 ms and longer-gap bands, a current-turn-only view and a
+last-word-missing comparison on identical nonblank rows.
+
+The scorer requires `reports/harper-text-dev-qualification.json` before
+reading the development input pack. That receipt records scope
+`English HarperValley development only`, status `qualified`,
+`input_sha256`, `checkpoint_sha256`, and `independent_audit_reports`
+as report filenames mapped to their SHA-256 checksums. Issue it only
+when the independent audit supports use of the entire development pack.
+The two current listening panels audit a subset and their completion
+alone does not qualify all 358 inputs.
