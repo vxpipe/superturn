@@ -4,6 +4,8 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from superturn import diarbench_inventory
+from superturn import basis_stage0
+from superturn.basis_split import Call
 from superturn.basis_stage0 import four_roles_possible
 
 
@@ -11,6 +13,26 @@ def test_four_roles_preserve_whole_speaker_components():
     assert not four_roles_possible([530])
     assert not four_roles_possible([402, 6, 2, 2, 2, 2, 2])
     assert four_roles_possible([2, 2, 29, 29, 1, 1])
+
+
+def test_joint_cut_never_places_a_shared_voice_in_two_roles(monkeypatch):
+    def call(name, *people):
+        return Call(name, frozenset(people), 1)
+
+    calls = {
+        "hi": [call("h-fit", "a", "b"), call("h-bridge1", "a", "shared"),
+               call("h-bridge2", "b", "shared")],
+        "en": [call("e-test", "c", "d"), call("e-bridge", "c", "shared")],
+    }
+
+    monkeypatch.setattr(basis_stage0, "candidate_rosters",
+                        lambda *_: {"hi": {"fit": frozenset({"a", "b"})},
+                                    "en": {"test": frozenset({"c", "d"})}})
+    result = basis_stage0.joint_cut(calls, 1)
+    assert result["shared_language_roster"] == 1
+    assert result["joint_role_roster"] == {"fit": 3, "dev": 0, "calibration": 0, "test": 2}
+    assert result["languages"]["hi"]["excluded_calls"]["calls"] == 0
+    assert result["languages"]["en"]["excluded_calls"]["calls"] == 1
 
 
 def test_metadata_projection_does_not_fetch_audio_or_annotations(monkeypatch):
