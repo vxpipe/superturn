@@ -1,7 +1,8 @@
 # Training data options
 
-Status: 2026-11-20. Nothing downloaded yet. Sources and download selections
-are codified in `configs/sources.toml`.
+Current source licences and download selections are codified in
+`configs/sources.toml`. The tables also identify historical sources for
+reproducing earlier checkpoints.
 
 ## Licence policy
 
@@ -25,10 +26,10 @@ The model sees the audio up to the pause and must predict which one.
 
 | Source | Licence (as read 2026-11-20) | Languages | Role |
 |---|---|---|---|
-| Common Voice 17.0 | CC0 | 25 chosen languages | Language and speaker breadth: real voices on everyday microphones, cut at word boundaries for holds. Downloaded from the `fsicoli/common_voice_17_0` copy on Hugging Face, whose per-clip metadata (speaker, sentence) is in separate TSV files. |
-| VoxPopuli (data only) | CC0 | 16+ European | Spontaneous mid-sentence pauses and sentence endings. |
+| Common Voice 17.0 | CC0 | 25 chosen languages | Historical read-speech source. Future capped training exposure depends on a measured benefit on conversational data. |
+| VoxPopuli (data only) | CC0 | 16+ European | Historical parliamentary speech source. The same exposure-only policy applies. |
 | Emilia-YODAS (YODAS subset only) | CC BY 4.0; upstream YODAS2 is CC BY 3.0 | 6 | Spontaneous in-the-wild speech. |
-| FLEURS | CC BY 4.0 | ~100 | Held-out test set only: the same sentences in every language. |
+| FLEURS | CC BY 4.0 | ~100 | Historical read-speech evaluation. Excluded from future turn-quality splits. |
 | Indic DiarBench | CC BY 4.0 | 22 Indian languages | Test set only: ~108 h of natural multi-speaker conversation (53 h near-field from one microphone per speaker, mixed to mono), human-corrected speaker-attributed timestamps. |
 | AMI | CC BY 4.0 | English | The only training conversations: one headset per speaker, real hold/shift labels (see below). |
 | MUSAN Free Sound | CC BY 4.0 corpus; selected recordings in the US public domain | n/a | Environmental noise for augmentation. |
@@ -57,6 +58,26 @@ audio selection. Human `pause` votes concern perceived completion and
 can provide an audit alongside independently observed per-track outcomes.
 They cover few priority-language holds. Apply G.711 simulation only as a
 development condition under the current milestone.
+
+### Conversational source map
+
+Combine sources within a language when both the licence and the
+observed pause-label audit pass. Report each source's results alongside
+language-level results. Use only observed caller resumes and handoffs
+for supervision and calibration, validation and test membership.
+A capped read-speech exposure arm requires a measured benefit against
+an exposure-free control on independent conversations.
+
+| Language | Candidate sources | Eligibility or coverage still to establish |
+|---|---|---|
+| Hindi | Basis, original IndicVoices pairs, eligible SPRING calls | Basis split feasibility is established for development. Audit floor labels and keep SPRING training-side only upon approval. IndicVoices needs original identities and clocks. Indic DiarBench remains test-only pending a verified alternative test plan and cross-recording identities. |
+| Arabic | Basis, permissively licensed podcasts | Audit Basis by dialect and report dialect coverage. Qualify podcast extraction on verified summed Basis tracks before using it. |
+| Portuguese | Basis, permissively licensed podcasts | Check Brazilian and European Portuguese separately. Holdout breadth and observed labels remain to be verified. |
+| Turkish, Dutch | Basis and permissively licensed podcasts | Small Basis rosters make independent podcast voices important. |
+| Indonesian | Eligible DataHive tracks and permissively licensed podcasts | DataHive still needs timing, speaker identity and label validation. Indonesian is absent from Basis. |
+| English | HarperValley, AMI, Basis and otoSpeech | Distinguish telephone calls from meetings and Web calls. otoSpeech remains gated. CASPER's CC BY-NC-SA terms exclude it. |
+| Other Indic | IndicVoices pairs, eligible Indic DiarBench evaluation | Confirm speakers and recorded provenance before adding any data roles. |
+| Other Basis languages | Basis plus eligible conversational sources | Check voice, call, and class counts independently per language. |
 
 | Source | Licence | Languages | Notes |
 |---|---|---|---|

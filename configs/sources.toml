@@ -60,6 +60,16 @@ max_total_bytes = 109936364
 opt_in = true
 order = 3
 
+[sources.basis_conversations]
+kind = "hf_files"
+repo = "basis-ai/basis-conversations-1500"
+revision = "05a19e06b5eed44d701a8860b7e2336a44f762dd"
+licence = "Basis Data License 1.0"
+attribution = "Developed using Basis Conversations 1500, published by Basis (https://huggingface.co/datasets/basis-ai/basis-conversations-1500), revision 05a19e06b5eed44d701a8860b7e2336a44f762dd."
+role = "metadata"
+files = ["LICENSE"]
+opt_in = true
+
 [sources.harper-valley]
 kind = "http"
 licence = "CC BY 4.0"

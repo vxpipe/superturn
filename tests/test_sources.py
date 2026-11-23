@@ -7,7 +7,8 @@ def test_every_source_has_a_permissive_licence_and_attribution():
     for source in load_sources().values():
         assert source.attribution
         assert (source.licence.startswith(PERMISSIVE_MARKERS)
-                or source.licence == "Singapore Open Data Licence v1.0"), source.name
+                or source.licence == "Singapore Open Data Licence v1.0"
+                or (source.name == "basis_conversations" and source.licence == "Basis Data License 1.0")), source.name
 
 
 def test_emilia_only_downloads_the_yodas_subset():

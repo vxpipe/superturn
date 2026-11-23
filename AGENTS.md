@@ -46,6 +46,15 @@ includes the handover.
   whose terms allow commercial training and open weights.
 - Labelling uses Silero VAD for pause boundaries on per-speaker tracks and
   pyannote for diarization of mixed single-track audio.
+- Build each language's supervised data from multiple eligible
+  conversational sources as coverage allows. Require a human-judgment
+  audit of automatic labels from every source before admitting them.
+  Qualify mixed podcast labels on a sum of verified Basis speaker tracks
+  with known outcomes before selecting podcast examples.
+- Keep read or scripted speech such as Common Voice, FLEURS and
+  VoxPopuli outside all hold/shift supervision and every calibration,
+  validation and test split. Use a capped training-only exposure slice
+  only after an ablation shows it helps on independent conversation data.
 
 ## Repository layout
 
@@ -141,7 +150,7 @@ full runbook.
   (`src/superturn/splits.py`). Never split by clip. Never tune on test sets.
 - Guard speaker variety: count speakers per source and language from the
   data, cap examples per speaker, and report metrics on unseen voices only.
-- Use permissively licensed public data and project-collected recordings
+- Use permissively licensed public or authorized gated data and project-collected recordings
   whose consent covers training, evaluation and publication of the trained
   weights. Confirm approved processing and storage before copying project
   recordings. Keep recordings, identifying derivatives and private
