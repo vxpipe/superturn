@@ -44,7 +44,7 @@ def preceding_agent_text(segments, caller_origin, edge, words):
     return "two_turn_timing_supported"
 
 
-def runtime_label_coverage(raw, grouped, text_candidates):
+def runtime_label_coverage(raw, grouped, text_candidates, *, listening=None):
     detect = silero()
     counts, attrition, voices = Counter(), Counter(), defaultdict(set)
     meter = Progress("harper-text-dev-waveform-labels", len(grouped), "calls")
@@ -60,6 +60,10 @@ def runtime_label_coverage(raw, grouped, text_candidates):
             attrition.update(vetoes)
             strict.update({(stop + start - origins["caller"], outcome): onset - stop
                            for stop, onset, outcome, focal, _ in events_found if focal == "caller"})
+            if listening is not None:
+                archived = {(edge, label) for edge, label, _ in pauses
+                            if (call, edge, label) in text_candidates}
+                listening.consider(call, pauses[0][2], tracks, events_found, start - origins["caller"], archived)
 
         reproduced = []
         audit_call(raw, call, detect, recover_clock=True, pauses=reproduced, observe=observe)
@@ -83,7 +87,7 @@ def runtime_label_coverage(raw, grouped, text_candidates):
                                                for (label, condition), people in voices.items()}}
 
 
-def run(root, *, runtime_labels=False):
+def run(root, *, runtime_labels=False, listening_root=None):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("Harper text benchmark inventory uses staged Vast data")
     rows, membership_digest = pinned_membership(root, "train")
@@ -131,9 +135,14 @@ def run(root, *, runtime_labels=False):
         },
     }
     report["text_evidence"] = "corrected caller prefix and candidate preceding agent segment"
-    if runtime_labels:
+    if runtime_labels or listening_root is not None:
+        from .harper_text_review import ListeningPacket
+
+        listening = ListeningPacket(listening_root, membership_digest) if listening_root is not None else None
         report["runtime_label_coverage"] = runtime_label_coverage(
-            root / "raw" / "harper-valley", grouped, text_candidates)
+            root / "raw" / "harper-valley", grouped, text_candidates, listening=listening)
+        if listening is not None:
+            listening.write(root)
     _write_json(root / "reports" / "harper-text-benchmark-preflight.json", report)
     print(json.dumps(report, indent=2))
 
@@ -141,4 +150,10 @@ def run(root, *, runtime_labels=False):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime-labels", action="store_true", help="replay strict short-gap eligibility")
-    run(data_root(), runtime_labels=parser.parse_args().runtime_labels)
+    parser.add_argument("--listening-packet", action="store_true", help="prepare blind development excerpts")
+    args = parser.parse_args()
+    if args.listening_packet:
+        from .harper_text_review import REVIEW_ROOT
+    else:
+        REVIEW_ROOT = None
+    run(data_root(), runtime_labels=args.runtime_labels, listening_root=REVIEW_ROOT)

@@ -8,12 +8,13 @@ const defaults = { clips: {}, windows: {}, assisted: {}, pauseRange: {} };
 const blankMark = { ...eventDefaults, focal_channel: '', language: '' };
 const options = [['no', 'No'], ['yes', 'Yes']];
 
-function MarkEditor({ id, number, duration, events, save, languageOptions }) {
-  const [mark, setMark] = useState(blankMark);
+function MarkEditor({ id, number, duration, events, save, languageOptions, harper }) {
+  const initialMark = harper ? { ...blankMark, focal_channel: 'left', language: 'english' } : blankMark;
+  const [mark, setMark] = useState(initialMark);
   const [editing, setEditing] = useState(null);
   const [error, setError] = useState('');
   const update = (field, value) => setMark(previous => ({ ...previous, [field]: value }));
-  const reset = () => { setMark(blankMark); setEditing(null); setError(''); };
+  const reset = () => { setMark(initialMark); setEditing(null); setError(''); };
   function saveMark(event) {
     event.preventDefault();
     const next = [...events];
@@ -80,8 +81,8 @@ function MarkEditor({ id, number, duration, events, save, languageOptions }) {
 }
 
 export function IndependentReview({ packet, serverDraft }) {
-  const { draft, save, status, failed, retry, conflict } = useReviewDraft(serverDraft, defaults, true, packet.basis);
-  const languageOptions = packet.basis ? [['english', 'English'], ...languages] : languages;
+  const { draft, save, status, failed, retry, conflict } = useReviewDraft(serverDraft, defaults, true, packet.basis || packet.harper);
+  const languageOptions = packet.basis || packet.harper ? [['english', 'English'], ...languages] : languages;
   const channelLanguages = [...languageOptions, ['no_speech', 'No speech']];
   const [index, setIndex] = useState(() => Math.max(0, packet.windows.findIndex(id => !draft.windows[id]?.reviewed)));
   const id = packet.windows[index];
@@ -90,8 +91,10 @@ export function IndependentReview({ packet, serverDraft }) {
   const update = changes => save({ ...draft, windows: { ...draft.windows, [id]: { ...window, ...changes } } });
   return <main>
     <header className="page-header">
-      <h1>{packet.basis ? 'Conversation pause review' : 'Independent Hindi review'}</h1>
-      <p>Listen in stereo. Mark clearly audible stops followed by at least 300 ms of silence on both channels.</p>
+      <h1>{packet.harper ? 'HarperValleyBank pause review' : packet.basis ? 'Conversation pause review' : 'Independent Hindi review'}</h1>
+      <p>{packet.harper
+        ? 'Listen in stereo. The caller is on the left. Mark caller pauses with at least 300 ms of silence on both channels, then record who speaks next.'
+        : 'Listen in stereo. Mark clearly audible stops followed by at least 300 ms of silence on both channels.'}</p>
       <div className="draft-status">
         <span className="storage-note" role="status">{status}</span>
         {failed && <button type="button" onClick={retry}>
@@ -113,24 +116,27 @@ export function IndependentReview({ packet, serverDraft }) {
         <h2 id="recording-title">Recording {index + 1} <span>of {packet.windows.length}</span></h2>
         <p className="instruction">Listen to the full recording, even if you hear no pauses. If speech never resumes, choose Uncertain and leave the next speech fields blank.</p>
         <MarkEditor key={id} id={id} number={index + 1} duration={packet.duration ?? 30} events={window.events ?? []}
-          save={events => update({ events, reviewed: false })} languageOptions={languageOptions} />
+          save={events => update({ events, reviewed: false })} languageOptions={languageOptions} harper={packet.harper} />
         <section className="manual-mark" aria-label="Recording completion">
           <h3>Finish this recording</h3>
-          <div className="fields">
+          {!packet.harper && <div className="fields">
             <SelectField label="Left channel language" value={window.left_language ?? ''} options={channelLanguages}
               placeholder="Choose language" onChange={left_language => update({ left_language, reviewed: false })} />
             <SelectField label="Right channel language" value={window.right_language ?? ''} options={channelLanguages}
               placeholder="Choose language" onChange={right_language => update({ right_language, reviewed: false })} />
-          </div>
+          </div>}
           <div className="actions sheet-bottom">
-            <button type="button" className="primary" disabled={!window.left_language || !window.right_language || window.reviewed}
+            <button type="button" className="primary"
+              disabled={window.reviewed || (!packet.harper && (!window.left_language || !window.right_language))}
               onClick={() => update({ reviewed: true })}>{window.reviewed ? 'Recording reviewed' : 'Mark recording reviewed'}</button>
             <button type="button" disabled={index + 1 === packet.windows.length} onClick={() => setIndex(index + 1)}>Next recording</button>
           </div>
         </section>
       </section>
     </div>
-    {packet.basis
+    {packet.harper
+      ? <footer>Audio adapted from <a href="https://github.com/cricketclub/gridspace-stanford-harper-valley">HarperValleyBank</a> (CC BY 4.0).</footer>
+      : packet.basis
       ? <footer>Private listening excerpts from Basis Conversations.</footer>
       : <footer>Audio excerpts from <a href="https://asr.iitm.ac.in/">SPRING-INX Hindi R1</a> (CC BY 4.0).</footer>}
   </main>;

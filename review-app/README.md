@@ -110,3 +110,21 @@ Listen to the six recordings and mark the pauses you hear. Ratings
 save to the private packet on the Vast host. The server sets no-store
 headers and the app keeps no backup draft in browser storage. Audio and
 ratings are in memory-backed storage and disappear when the host restarts.
+
+## Independent HarperValleyBank review
+
+On Vast, `python -m superturn.harper_text_preflight --listening-packet`
+replays the pinned development cohort and creates the blind packet.
+Run `bin/vast-basis-review start harper` and
+`bin/vast-basis-review tunnel harper` from the project checkout. The app
+uses port 8770. On another machine, forward it through rocksalt with
+`ssh -N -L 8770:127.0.0.1:8770 rocksalt` and open
+`http://127.0.0.1:8770/`.
+
+Listen to each excerpt in stereo. Mark what the left-channel caller
+actually did after at least 300 ms of shared silence. Record backchannels,
+interruptions and unclear outcomes separately. Save each event and mark
+each recording reviewed, including recordings with no eligible pause.
+The app autosaves the ballot separately from the memory-backed audio.
+Score a completed draft on Vast with
+`python -m superturn.harper_text_review SAVED_DRAFT.json`.
