@@ -2,6 +2,7 @@
 
 from hashlib import sha256
 import json
+from math import sqrt
 
 import numpy as np
 
@@ -21,6 +22,18 @@ def rank_auc(values, truth):
     left = np.searchsorted(negatives, positives, side="left")
     right = np.searchsorted(negatives, positives, side="right")
     return float(((left + right) / (2 * len(negatives))).mean())
+
+
+def heldout_counts(metric):
+    total = metric["holds"]
+    false = round(metric["false_complete"] * total)
+    rate = false / total
+    z = 1.959963984540054
+    denominator = 1 + z**2 / total
+    center = (rate + z**2 / (2 * total)) / denominator
+    half = z * sqrt(rate * (1 - rate) / total + z**2 / (4 * total**2)) / denominator
+    return {**metric, "false_complete_count": false,
+            "false_complete_wilson_ci95": [max(0., center - half), min(1., center + half)]}
 
 
 def measure(rows, control, trial):
@@ -142,8 +155,8 @@ def run(root):
             del model
             fingerprints[arm].append(digest(checkpoint))
             predictions[arm].append(scores[:len(rows)])
-            held[arm].append(binary_metrics([(score, row["label"] == "shift")
-                                              for score, row in zip(scores[len(rows):], challenge, strict=True)]))
+            held[arm].append(heldout_counts(binary_metrics([(score, row["label"] == "shift")
+                                                           for score, row in zip(scores[len(rows):], challenge, strict=True)])))
         progress.advance(1)
     progress.finish()
     control, trial = np.array(predictions)

@@ -169,6 +169,10 @@ def text_distribution(items):
     return counts
 
 
+def replacement_stratum(row):
+    return tuple(row["prefix_words"]), tuple(row["full_words"]), row["prior_form"], row["continuation"]
+
+
 def export(root, directory, destination):
     from .turn_text_context_supplement import dev_blocklist, ngrams
 
@@ -194,6 +198,7 @@ def export(root, directory, destination):
     occupied = {row["text"] for name in ("train", "validation") for row in splits[name]}
     overlap = dev_blocklist(root)
     sequences, replacements = set(), {}
+    candidates = defaultdict(list)
     holdouts = defaultdict(list)
     rejection = Counter()
     for row in sorted(source, key=lambda item: seed_for("english-number-selection-v1", item["slot"])):
@@ -202,8 +207,6 @@ def export(root, directory, destination):
         if (clean is None or any(row[key] != value for key, value in clean.items())
                 or any(row[key] != value for key, value in spec.items())):
             raise ValueError("generated sequence differs from its reserved slot")
-        if row["split"] == "train" and row["layout_index"] in replacements:
-            continue
         code = tuple(word for field in ("caller_before_pause", "caller_after_pause")
                      for word in row[field].split() if word in DIGITS)
         pair = paired_examples(row)
@@ -221,16 +224,29 @@ def export(root, directory, destination):
                                            "label": example["label"]}
                                           for text, example in zip(texts, pair, strict=True))
             continue
-        index = row["layout_index"]
-        donor = donors[index]
+        candidates[replacement_stratum(row)].append((row["slot"], texts))
+    reserved = [row for row in plan if row["split"] == "train" and row["slot"].endswith("/0")]
+    for index, (donor, spec) in enumerate(zip(donors, reserved, strict=True)):
+        pool = candidates[replacement_stratum(spec)]
+        if not pool:
+            continue
+        slot, texts = pool.pop()
         for label, text in zip(("hold", "shift"), texts, strict=True):
             position = donor[f"{label}_index"]
             if old[position]["slot"] != donor["old_slot"] or old[position]["label"] != label:
                 raise ValueError("parent no longer contains the original donor positions")
             train[position] = {**old[position], "text": text}
-        replacements[index] = row["slot"]
-    if len(replacements) != len(donors) or any(len(holdouts[key]) < 40 for key in ("test", "validation")):
+        replacements[index] = slot
+    if len(replacements) < 48 or len(holdouts["test"]) < 32 or len(holdouts["validation"]) < 40:
         raise ValueError("generated pool failed to fill the registered training and held-out quotas")
+    split_slots = {"train": set(replacements.values()),
+                   **{split: {row["slot"] for row in rows} for split, rows in holdouts.items()}}
+    for split, slots in split_slots.items():
+        if any(specs[slot]["split"] != split or specs[slot]["scenario"] not in SCENARIOS[split] for slot in slots):
+            raise ValueError("a dialogue escaped its reserved scenario split")
+    families = [set(specs[slot]["scenario"] for slot in slots) for slots in split_slots.values()]
+    if len(set.union(*families)) != sum(map(len, families)):
+        raise ValueError("number pilot scenario families cross train, validation or test")
     if text_distribution(old) != text_distribution(train):
         raise ValueError("paired replacement changed the language, label, length or prior layout")
     if length_balanced_weights(old)[0] != length_balanced_weights(train)[0]:
@@ -259,7 +275,7 @@ def export(root, directory, destination):
             "parent_manifest_sha256": corpus_hash, "layout_sha256": digest(layout_path),
             "generated_dialogues_sha256": digest(path), "replaced_groups": replacements,
             "english_number_endpoints": dict(endpoints), "rejected_pairs": dict(rejection), "heldout": held,
-            "matched_distribution": True,
+            "matched_distribution": True, "planned_groups": len(donors), "achieved_groups": len(replacements),
         }
         _write_json(output / "manifest.json", manifest)
         read_dataset(output)

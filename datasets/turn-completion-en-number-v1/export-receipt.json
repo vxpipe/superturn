@@ -1,0 +1,178 @@
+{
+  "scope": "synthetic training and diagnostic validation",
+  "model_input_fields": [
+    "text"
+  ],
+  "input_layout": "previous speaker turn or --- on line one, current caller turn on line two",
+  "first_turn_marker": "---",
+  "splits": {
+    "train": {
+      "sha256": "9a1e0df74c7c96943db2ff9b7d350a4734d50e3961d18e34e7aca477a9a880bd",
+      "examples": 4272,
+      "labels": {
+        "hold": 2136,
+        "shift": 2136
+      },
+      "languages": {
+        "de": 264,
+        "en": 840,
+        "es": 264,
+        "fil": 264,
+        "fr": 264,
+        "hi": 264,
+        "id": 264,
+        "it": 264,
+        "ja": 264,
+        "kn": 264,
+        "ml": 264,
+        "ta": 264,
+        "te": 264,
+        "zh": 264
+      },
+      "groups": 66,
+      "by_turn_count": {
+        "1": {
+          "hold": 280,
+          "shift": 280
+        },
+        "2": {
+          "hold": 1856,
+          "shift": 1856
+        }
+      }
+    },
+    "validation": {
+      "sha256": "0d36d0b0e3c60bd2717c1dee564f05b41e9d43f4b324b9b3378087f153489a35",
+      "examples": 616,
+      "labels": {
+        "hold": 308,
+        "shift": 308
+      },
+      "languages": {
+        "de": 44,
+        "en": 44,
+        "es": 44,
+        "fil": 44,
+        "fr": 44,
+        "hi": 44,
+        "id": 44,
+        "it": 44,
+        "ja": 44,
+        "kn": 44,
+        "ml": 44,
+        "ta": 44,
+        "te": 44,
+        "zh": 44
+      },
+      "groups": 11,
+      "by_turn_count": {
+        "1": {
+          "hold": 28,
+          "shift": 28
+        },
+        "2": {
+          "hold": 280,
+          "shift": 280
+        }
+      }
+    }
+  },
+  "augmentation": {
+    "parent_manifest_sha256": "1467f159fc18d6af338080a4453a67e09972eec3baa8bfea63b58a99b08b2ff4",
+    "focused_dialogues_sha256": "02e637414786f9e7047de8260c7c8a8047a724e945f2a807c15e9fdd24a566f2",
+    "added_pairs_by_cell": {
+      "10-13/neutral": 48,
+      "10-13/yes-no": 48,
+      "14-23/neutral": 48,
+      "14-23/yes-no": 48,
+      "4-10/neutral": 48,
+      "4-10/yes-no": 48
+    },
+    "replay_control": false
+  },
+  "number_pilot": {
+    "parent_manifest_sha256": "d41293a18ad13155ab12032bfa77c128979d92bf5a56578cde6839843c5d2240",
+    "layout_sha256": "5019a3c557ddf5467ac6926f543c20d143663e1e7020647704979a77315d343d",
+    "generated_dialogues_sha256": "5a7db9822d491de93cf8b3813e15ef38ecedf7e0b8cbadd4f69eb0feb4aa429a",
+    "replaced_groups": {
+      "0": "en/number-v1/train/000/1",
+      "5": "en/number-v1/train/008/0",
+      "6": "en/number-v1/train/006/0",
+      "7": "en/number-v1/train/007/1",
+      "8": "en/number-v1/train/008/1",
+      "9": "en/number-v1/train/015/0",
+      "10": "en/number-v1/train/009/1",
+      "11": "en/number-v1/train/033/1",
+      "12": "en/number-v1/train/015/1",
+      "13": "en/number-v1/train/013/1",
+      "14": "en/number-v1/train/014/0",
+      "15": "en/number-v1/train/010/1",
+      "16": "en/number-v1/train/042/1",
+      "17": "en/number-v1/train/017/1",
+      "18": "en/number-v1/train/037/1",
+      "19": "en/number-v1/train/042/0",
+      "20": "en/number-v1/train/036/1",
+      "21": "en/number-v1/train/034/1",
+      "22": "en/number-v1/train/021/1",
+      "23": "en/number-v1/train/022/0",
+      "24": "en/number-v1/train/024/1",
+      "25": "en/number-v1/train/039/0",
+      "26": "en/number-v1/train/035/0",
+      "27": "en/number-v1/train/010/0",
+      "28": "en/number-v1/train/009/0",
+      "29": "en/number-v1/train/020/0",
+      "30": "en/number-v1/train/018/0",
+      "31": "en/number-v1/train/012/1",
+      "32": "en/number-v1/train/032/0",
+      "33": "en/number-v1/train/040/0",
+      "34": "en/number-v1/train/020/1",
+      "35": "en/number-v1/train/022/1",
+      "36": "en/number-v1/train/021/0",
+      "37": "en/number-v1/train/036/0",
+      "40": "en/number-v1/train/040/1",
+      "41": "en/number-v1/train/041/0",
+      "43": "en/number-v1/train/050/1",
+      "44": "en/number-v1/train/049/0",
+      "45": "en/number-v1/train/044/0",
+      "47": "en/number-v1/train/070/1",
+      "49": "en/number-v1/train/057/1",
+      "50": "en/number-v1/train/060/1",
+      "51": "en/number-v1/train/063/1",
+      "52": "en/number-v1/train/045/1",
+      "55": "en/number-v1/train/044/1",
+      "56": "en/number-v1/train/050/0",
+      "57": "en/number-v1/train/064/0",
+      "58": "en/number-v1/train/056/0",
+      "59": "en/number-v1/train/064/1",
+      "60": "en/number-v1/train/071/0",
+      "62": "en/number-v1/train/051/0",
+      "63": "en/number-v1/train/063/0",
+      "64": "en/number-v1/train/045/0",
+      "65": "en/number-v1/train/065/0",
+      "66": "en/number-v1/train/047/0",
+      "67": "en/number-v1/train/068/1",
+      "68": "en/number-v1/train/060/0",
+      "69": "en/number-v1/train/052/1",
+      "70": "en/number-v1/train/057/0",
+      "71": "en/number-v1/train/069/1"
+    },
+    "english_number_endpoints": {
+      "hold": 81,
+      "shift": 76
+    },
+    "rejected_pairs": {},
+    "heldout": {
+      "test": {
+        "rows": 32,
+        "sha256": "664f65bda4cc7a5142a0c10b48ca42fe63fcc6c14b70174128e2a1975ef3d96d"
+      },
+      "validation": {
+        "rows": 42,
+        "sha256": "78e20bdd5d271baa495b0c23649f32174b27acbec2cdc0beb5cac3d09ebb170c"
+      }
+    },
+    "matched_distribution": true,
+    "planned_groups": 73,
+    "achieved_groups": 60
+  }
+}
