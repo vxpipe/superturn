@@ -155,6 +155,46 @@ def run(root, *, score_only=False):
             "cell_auc": cell["delta"] >= .03 and cell["paired_seed_turn_ci95"][0] > 0,
             "within_length_auc": within["delta"] >= -.005,
         }
+        mask_path = root / "cache/publisher-timed-english-deadline-mask.json"
+        audit_path = root / "reports/publisher-timed-english-deadline-audit.json"
+        mask = json.loads(mask_path.read_text())
+        deadline = json.loads(audit_path.read_text())
+        excluded = {item["rank"] for item in mask["excluded"]}
+        if (mask["freeze_sha256"] != digest(freeze_path)
+                or deadline["excluded_ranks_sha256"] != digest(mask_path) or len(excluded) != 159):
+            raise ValueError("publisher deadline sensitivity mask changed")
+        selected = [i for i, row in enumerate(rows) if row["rank"] not in excluded]
+        robust_rows = [rows[i] for i in selected]
+        robust = {arm: np.asarray(scores)[:, selected] for arm, scores in arm_scores.items()}
+        secondary = matched_ranking(robust_rows, robust["replay"], robust["balanced"])
+        robust_short = short_hold_delta(robust_rows, robust["replay"], robust["balanced"])
+        basic_guards = {}
+        for name in ("all", "long_gap"):
+            indices = [i for i in bands[name] if rows[i]["rank"] not in excluded]
+            basic_guards[name] = {}
+            for arm, scores in arm_scores.items():
+                views = [binary_metrics([(values[i], rows[i]["label"]) for i in indices]) for values in scores]
+                basic_guards[name][arm] = {
+                    key: float(np.mean([view[key] for view in views]))
+                    for key in ("shift_recall", "auc", "balanced_accuracy", "false_complete")
+                }
+        sensitivity = secondary["metrics"]
+        report["deadline_sensitivity"] = {
+            "excluded_at_deadline": len(excluded), "number_ending_holds_excluded": deadline["excluded_number_ending_holds"],
+            "matched_ranking": secondary, "short_hold_comparison": robust_short, "guards_at_0_5": basic_guards,
+            "checks": {
+                "short_hold_at_0_5": delta["delta"] < 0 and robust_short["delta"] <= delta["delta"] / 2,
+                "matched_short_hold": short["delta"] < 0
+                and sensitivity["matched_short_hold_false_complete"]["delta"] <= short["delta"] / 2,
+                "cell_auc": cell["delta"] > 0 and sensitivity["cell_vs_shift_auc"]["delta"] >= cell["delta"] / 2,
+                "within_length_auc": sensitivity["within_length_pair_weighted_auc"]["delta"] >= -.005,
+                "shift_recall": basic_guards["all"]["balanced"]["shift_recall"]
+                >= basic_guards["all"]["replay"]["shift_recall"] - .02,
+                "all_auc": basic_guards["all"]["balanced"]["auc"] >= basic_guards["all"]["replay"]["auc"] - .005,
+                "long_gap_auc": basic_guards["long_gap"]["balanced"]["auc"]
+                >= basic_guards["long_gap"]["replay"]["auc"] - .01,
+            },
+        }
     _write_json(root / f"reports/{name}.json", report)
     print(json.dumps({key: value for key, value in report.items() if key != "trials"}, indent=2))
 
