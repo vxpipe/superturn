@@ -50,7 +50,7 @@ def events(activity, connected, muted, length):
             continue
         label = "hold" if focal == next_voice else "shift"
         counts[label] += 1
-        proposed.append((stop, onset, label))
+        proposed.append((stop, onset, label, focal, next_voice))
     return counts, proposed
 
 
@@ -87,7 +87,7 @@ def read_segment(fs, prefix, language, row, meter):
     return tracks
 
 
-def run_pilot(root, source, membership, calls, digest):
+def run_pilot(root, source, membership, calls, digest, *, review_packet=False):
     from huggingface_hub import HfFileSystem
     from huggingface_hub.utils import HfHubHTTPError
 
@@ -98,6 +98,10 @@ def run_pilot(root, source, membership, calls, digest):
     fs = HfFileSystem(token=os.environ["HF_TOKEN"])
     prefix = f'datasets/{source.get("repo")}@{source.get("revision")}'
     detect = silero()
+    if review_packet:
+        from .basis_review_packet import ListeningPacket
+
+        packet = ListeningPacket(digest)
     output = {"scope": "fit-only acquisition and label-rule pilot",
               "membership_sha256": digest, "languages": {}}
     planned = {}
@@ -126,9 +130,11 @@ def run_pilot(root, source, membership, calls, digest):
                     tracks = read_segment(fs, prefix, language, row, audio)
                     activity = [(start, stop, voice) for voice, pcm in tracks.items() for start, stop in detect(pcm)]
                     connected = {person["speaker"]: samples(person["on_call"]) for person in row["speakers"]}
-                    counts, _ = events(activity, connected, samples(row["muted_spans"]),
-                                       min(len(pcm) for pcm in tracks.values()))
+                    muted = samples(row["muted_spans"])
+                    counts, predictions = events(activity, connected, muted, min(len(pcm) for pcm in tracks.values()))
                     totals.update(counts)
+                    if review_packet:
+                        packet.consider(language, row, tracks, connected, muted, predictions)
             metadata.finish()
             if seen != wanted:
                 raise ValueError("Basis audit did not reconstruct all reserved fit calls")
@@ -143,5 +149,8 @@ def run_pilot(root, source, membership, calls, digest):
         audio.finish("failed")
         raise
     audio.finish()
+    if review_packet:
+        packet.write(root)
+        return
     _write_json(root / "reports/basis-stage1-fit-pilot.json", output)
     print(json.dumps(output, indent=2))

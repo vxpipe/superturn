@@ -22,14 +22,28 @@ includes the handover.
 
 ## Scope
 
-- Turn detection only. Voice activity detection and barge-in belong to the
-  calling application, which runs Silero VAD and invokes Superturn when it
-  sees a pause.
+- Turn detection only. The calling application owns Silero VAD and barge-in.
+  Anchor every example at the Silero speech stop plus `silence_ms`. Train
+  on VAD-gated pauses still active at the sampled offset, from 300 ms
+  up to the 800 ms application timeout. Keep the single-decision quality
+  gate at 300 ms.
 - Compare an audio-only candidate with 3 s of 16 kHz caller audio and
   `silence_ms` against a combined candidate with those same inputs and
-  `text_bytes`, the last 128 normalized UTF-8 bytes of the current
-  live partial transcript, right-aligned and zero-padded. Use all zeros
-  when STT is missing. No timestamp alignment is required.
+  `text_bytes`, the right-aligned UTF-8 tail of the previous turn, byte
+  separator 0x1E, and current partial. Give the current partial priority
+  and left-pad with zeros. Keep the separator when there is no previous
+  turn. Use all zeros when the current partial is unavailable. Use the
+  largest of 128, 256, 384 or 512 bytes that fits the combined export and
+  latency budgets. The transcript reflects only what STT delivered by the
+  decision instant. Simulate lag, missing words and blank partials in training.
+- In the combined runtime replay, start at the first eligible transcript
+  availability at or after 300 ms of silence, including a partial already
+  available at 300 ms. Re-call every 100 ms with the latest partial and
+  elapsed silence until shift, speech resumes or the 800 ms timeout fires. Fit
+  non-increasing per-language thresholds by elapsed-silence step on
+  calibration only. Extend the timer replay to report per-pause false
+  triggers, first-trigger shift latency and fallback outcomes. Report
+  holds longer than 800 ms separately from model-triggered false completes.
 - Report standalone audio-only, combined, and masked branch quality by
   language. If the combined candidate is chosen, require its blank-text
   fallback to preserve audio-only quality in each release language.
@@ -55,6 +69,11 @@ includes the handover.
   VoxPopuli outside all hold/shift supervision and every calibration,
   validation and test split. Use a capped training-only exposure slice
   only after an ablation shows it helps on independent conversation data.
+- For Stage 4b, use real pause outcomes and causal transcripts with word
+  timings from eligible Basis, Indic DiarBench, HarperValley and AMI
+  splits. Low-weight LLM dialogues are a separate text-training arm for
+  Indonesian, Dutch and Turkish only. They stay out of calibration,
+  validation and test.
 
 ## Repository layout
 

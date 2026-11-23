@@ -9,3 +9,4 @@ __pycache__/
 .pytest_cache/
 /review-app/node_modules/
 /review-app/dist/
+/review-app/.runtime/

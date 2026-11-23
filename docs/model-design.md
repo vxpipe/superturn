@@ -108,29 +108,50 @@ int8 loses accuracy against float.
 
 ## Transcript input
 
-The current live STT partial arrives independently of the PCM. Take the
-snapshot visible at the 300 ms decision and require no word-to-audio
-alignment. Pack it by applying NFKC, Unicode lowercase, then removing
-Unicode punctuation and NUL. UTF-8 encode, take the last 128 bytes and
-left-pad with zeros. The graph consumes bytes as integers, including
-truncated UTF-8 sequences at the leading boundary. An absent partial
-becomes 128 zeros. The reference packer is
-`superturn.transcript.pack_partial_transcript`. The combined interface is:
+Stage 4b packs the previous turn tail, a reserved 0x1E byte and the
+current live STT partial. Apply NFKC and lowercase to both turns and
+remove punctuation, NUL and the reserved separator from the text.
+Give the current partial priority and use the remaining bytes for
+the previous turn tail. Right-align and zero-pad the result. A first
+turn keeps the separator. An unavailable current partial uses an
+all-zero vector. Candidate lengths are 128, 256, 384 and 512 bytes.
+Report how much of each turn they retain by language. Choose the
+largest length that fits the combined export budgets after the
+quality comparison. The existing single-turn 128-byte packer supports
+the earlier development probes.
 
 | Tensor | Type and shape |
 | --- | --- |
 | `audio` | Float32 `[batch, 48000]`, mono PCM in [-1, 1] |
 | `silence_ms` | Float32 `[batch, 1]` |
-| `text_bytes` | Int32 `[batch, 128]` |
+| `text_bytes` | Int32 `[batch, L]` |
 | `p_complete` | Float32 `[batch, 1]` |
 
 Compute rolling UTF-8 byte n-gram hashes in the graph with integer
 operations and a shared embedding table. Use byte-space boundaries for
 spaced writing and short character windows for unspaced writing. A small
 text GRU summarizes the byte features. Fuse its state, the audio state and
-elapsed silence in one probability head. Train with lag and blank-text
-dropout. Use real pause points and calibrate any open LLM text labeller
-on verified real labels before using its output.
+elapsed silence in one probability head.
+
+Anchor each example at the Silero speech stop plus elapsed silence,
+using only audio and STT available by that decision instant. Train on
+pauses still active from 300 to the 800 ms application timeout. Use delayed or
+blank STT snapshots to represent missing words and ordinary STT errors.
+Behavioural labels come from real pauses with eligible speaker splits
+and word-timed transcripts. Low-weight generated dialogues for Indonesian,
+Dutch and Turkish form a separate text-training arm.
+
+For the combined runtime, start at the first transcript availability
+at or after the 300 ms VAD gate, including text already available at
+the gate. Re-call every 100 ms while the pause continues. Stop on
+a shift trigger, resumed speech or the 800 ms fallback timer. The timer
+owns the result at 800 ms. Calibrate a
+non-increasing threshold schedule per language from whole pause
+sequences. Report false triggers per hold and first-trigger shift
+latency, including whether the fallback was needed. Report holds that
+outlast 800 ms separately, since the application would cut them off
+even if the model never triggered. Keep the
+single-decision release gate at 300 ms.
 
 ## Evaluation
 

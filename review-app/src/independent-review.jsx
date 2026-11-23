@@ -6,10 +6,9 @@ import { useReviewDraft } from './use-review-draft.js';
 
 const defaults = { clips: {}, windows: {}, assisted: {}, pauseRange: {} };
 const blankMark = { ...eventDefaults, focal_channel: '', language: '' };
-const channelLanguages = [...languages, ['no_speech', 'No speech']];
 const options = [['no', 'No'], ['yes', 'Yes']];
 
-function MarkEditor({ id, number, events, save }) {
+function MarkEditor({ id, number, duration, events, save, languageOptions }) {
   const [mark, setMark] = useState(blankMark);
   const [editing, setEditing] = useState(null);
   const [error, setError] = useState('');
@@ -20,7 +19,7 @@ function MarkEditor({ id, number, events, save }) {
     const next = [...events];
     next[editing ?? next.length] = mark;
     try {
-      continuousCsv([id], { [id]: { events: next } });
+      continuousCsv([id], { [id]: { events: next } }, duration * 1000);
       save(next);
       reset();
     } catch {
@@ -29,7 +28,7 @@ function MarkEditor({ id, number, events, save }) {
   }
 
   return <>
-    <AudioTimeline recording={id} durationHint={30} label={`Recording ${number} playback`}
+    <AudioTimeline recording={id} durationHint={duration} label={`Recording ${number} playback`}
       renderControls={({ ready, capture }) => <div className="timeline-controls">
         <button type="button" disabled={!ready} onClick={() => update('stop_ms', String(capture()))}>Use playhead as stop</button>
         <button type="button" disabled={!ready} onClick={() => update('next_onset_ms', String(capture()))}>Use playhead as next speech</button>
@@ -42,17 +41,17 @@ function MarkEditor({ id, number, events, save }) {
         <SelectField label="Speaker who paused" value={mark.focal_channel} options={sides} placeholder="Choose channel"
           onChange={value => update('focal_channel', value)} />
         <label>Stop (ms)
-          <input type="number" min="0" max="29700" required value={mark.stop_ms}
+          <input type="number" min="0" max={duration * 1000 - 300} required value={mark.stop_ms}
             onChange={event => update('stop_ms', event.target.value)} />
         </label>
         <label>Next speech (ms)
-          <input type="number" min="0" max="29999" value={mark.next_onset_ms}
+          <input type="number" min="0" max={duration * 1000 - 1} value={mark.next_onset_ms}
             onChange={event => update('next_onset_ms', event.target.value)} />
         </label>
         <SelectField label="Next speaker" value={mark.next_channel} options={sides} placeholder="Choose if heard"
           onChange={value => update('next_channel', value)} />
       </div>
-      <Judgment row={mark} update={update} />
+      <Judgment row={mark} update={update} languageOptions={languageOptions} />
       <p className="instruction">A brief acknowledgment is a short listener response, such as “mm-hm,” while the first speaker keeps the turn.</p>
       <SelectField label="Brief acknowledgment heard" value={mark.brief_ack} options={options}
         placeholder="Leave blank if unsure" onChange={value => update('brief_ack', value)} />
@@ -81,7 +80,9 @@ function MarkEditor({ id, number, events, save }) {
 }
 
 export function IndependentReview({ packet, serverDraft }) {
-  const { draft, save, status, failed, retry, conflict } = useReviewDraft(serverDraft, defaults, true);
+  const { draft, save, status, failed, retry, conflict } = useReviewDraft(serverDraft, defaults, true, packet.basis);
+  const languageOptions = packet.basis ? [['english', 'English'], ...languages] : languages;
+  const channelLanguages = [...languageOptions, ['no_speech', 'No speech']];
   const [index, setIndex] = useState(() => Math.max(0, packet.windows.findIndex(id => !draft.windows[id]?.reviewed)));
   const id = packet.windows[index];
   const window = draft.windows[id] ?? {};
@@ -89,7 +90,7 @@ export function IndependentReview({ packet, serverDraft }) {
   const update = changes => save({ ...draft, windows: { ...draft.windows, [id]: { ...window, ...changes } } });
   return <main>
     <header className="page-header">
-      <h1>Independent Hindi review</h1>
+      <h1>{packet.basis ? 'Conversation pause review' : 'Independent Hindi review'}</h1>
       <p>Listen in stereo. Mark clearly audible stops followed by at least 300 ms of silence on both channels.</p>
       <div className="draft-status">
         <span className="storage-note" role="status">{status}</span>
@@ -111,8 +112,8 @@ export function IndependentReview({ packet, serverDraft }) {
       <section className="sheet" aria-labelledby="recording-title">
         <h2 id="recording-title">Recording {index + 1} <span>of {packet.windows.length}</span></h2>
         <p className="instruction">Listen to the full recording, even if you hear no pauses. If speech never resumes, choose Uncertain and leave the next speech fields blank.</p>
-        <MarkEditor key={id} id={id} number={index + 1} events={window.events ?? []}
-          save={events => update({ events, reviewed: false })} />
+        <MarkEditor key={id} id={id} number={index + 1} duration={packet.duration ?? 30} events={window.events ?? []}
+          save={events => update({ events, reviewed: false })} languageOptions={languageOptions} />
         <section className="manual-mark" aria-label="Recording completion">
           <h3>Finish this recording</h3>
           <div className="fields">
@@ -129,6 +130,8 @@ export function IndependentReview({ packet, serverDraft }) {
         </section>
       </section>
     </div>
-    <footer>Audio excerpts from <a href="https://asr.iitm.ac.in/">SPRING-INX Hindi R1</a> (CC BY 4.0).</footer>
+    {packet.basis
+      ? <footer>Private listening excerpts from Basis Conversations.</footer>
+      : <footer>Audio excerpts from <a href="https://asr.iitm.ac.in/">SPRING-INX Hindi R1</a> (CC BY 4.0).</footer>}
   </main>;
 }

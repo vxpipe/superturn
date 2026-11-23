@@ -7,5 +7,5 @@ mapfile -t opts < <(ssh_opts)
 remote "mkdir -p $REMOTE_REPO"
 rsync -az --delete -e "ssh ${opts[*]}" \
   --exclude data/ --exclude .venv/ --exclude .campaign/ --exclude .git/ \
-  --exclude /review-app/node_modules/ --exclude /review-app/dist/ \
+  --exclude /review-app/node_modules/ --exclude /review-app/dist/ --exclude /review-app/.runtime/ \
   "$ROOT/" "$SSH_HOST:$REMOTE_REPO/"

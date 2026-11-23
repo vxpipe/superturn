@@ -12,12 +12,12 @@ function browserDraft(key) {
   }
 }
 
-export function useReviewDraft(server, defaults, independent = false) {
+export function useReviewDraft(server, defaults, independent = false, serverOnly = false) {
   const activeDraftKey = independent ? 'superturn-hindi-independent-draft' : draftKey;
   const activePendingKey = independent ? 'superturn-hindi-independent-pending' : pendingKey;
   const [initial] = useState(() => {
-    const pending = browserDraft(activePendingKey);
-    const local = browserDraft(activeDraftKey) ?? (independent ? null : browserDraft(previousKey));
+    const pending = serverOnly ? null : browserDraft(activePendingKey);
+    const local = serverOnly ? null : browserDraft(activeDraftKey) ?? (independent ? null : browserDraft(previousKey));
     return {
       draft: { ...defaults, ...(pending?.draft ?? server.draft ?? local) },
       pending: Boolean(pending || (!server.draft && local)),
@@ -25,7 +25,8 @@ export function useReviewDraft(server, defaults, independent = false) {
     };
   });
   const [draft, setDraft] = useState(initial.draft);
-  const [status, setStatus] = useState(server.draft ? 'Saved to rocksalt' : 'Ratings save to rocksalt automatically');
+  const destination = serverOnly ? 'the review server' : 'rocksalt';
+  const [status, setStatus] = useState(server.draft ? `Saved to ${destination}` : `Ratings save to ${destination} automatically`);
   const [failed, setFailed] = useState(false);
   const revision = useRef(initial.revision);
   const latest = useRef(initial.draft);
@@ -34,6 +35,7 @@ export function useReviewDraft(server, defaults, independent = false) {
   const [conflict, setConflict] = useState(null);
 
   function storeBrowser() {
+    if (serverOnly) return;
     try {
       localStorage.setItem(activeDraftKey, JSON.stringify(latest.current));
       localStorage.setItem(activePendingKey, JSON.stringify({ draft: latest.current, revision: revision.current }));
@@ -47,7 +49,7 @@ export function useReviewDraft(server, defaults, independent = false) {
     saving.current = true;
     setFailed(false);
     setConflict(null);
-    setStatus('Saving to rocksalt…');
+    setStatus(`Saving to ${destination}…`);
     try {
       while (waiting.current) {
         const next = waiting.current;
@@ -72,8 +74,10 @@ export function useReviewDraft(server, defaults, independent = false) {
         }
         if (waiting.current) storeBrowser();
       }
-      try { localStorage.removeItem(activePendingKey); } catch { /* Disk save already succeeded. */ }
-      setStatus('Saved to rocksalt');
+      if (!serverOnly) {
+        try { localStorage.removeItem(activePendingKey); } catch { /* Disk save already succeeded. */ }
+      }
+      setStatus(`Saved to ${destination}`);
     } catch (error) {
       waiting.current = latest.current;
       setFailed(true);

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Serve the blind Basis packet on Vast and forward it to rocksalt's loopback.
+source "$(dirname "$0")/_lib.sh"
+
+case "${1:-}" in
+  start)
+    ssh_target
+    mapfile -t opts < <(ssh_opts)
+    node_bin="$(command -v node)" || die "Node is required to build the review app"
+    (cd "$ROOT/review-app" && npm run build)
+    remote "install -d -m 700 $REMOTE_REPO/review-app/.runtime"
+    rsync -az -e "ssh ${opts[*]}" "$ROOT/review-app/dist" "$ROOT/review-app/node_modules" \
+      "$SSH_HOST:$REMOTE_REPO/review-app/"
+    rsync -azL -e "ssh ${opts[*]}" "$node_bin" "$SSH_HOST:$REMOTE_REPO/review-app/.runtime/node"
+    "$ROOT/bin/vast-run" -n basis-review \
+      'ulimit -c 0; cd review-app && REVIEW_BUNDLE=/dev/shm/superturn-basis-review PORT=8769 .runtime/node server.mjs --independent --basis'
+    ;;
+  tunnel)
+    ssh_target
+    mapfile -t opts < <(ssh_opts)
+    exec ssh "${opts[@]}" -o ExitOnForwardFailure=yes -fN \
+      -L 127.0.0.1:8769:127.0.0.1:8769 "$SSH_HOST"
+    ;;
+  *) die "usage: bin/vast-basis-review start|tunnel" ;;
+esac

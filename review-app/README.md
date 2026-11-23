@@ -94,3 +94,19 @@ with `--reviewer-b` and `--reviewer-b-windows`. The preparation command
 requires all six windows to be marked reviewed and refuses an existing
 output directory. The audit checks timing and agreement against the
 sealed packet.
+
+## Private Basis listening pilot
+
+Build the fit-only memory-backed packet on the Vast host with
+`superturn.basis_stage0 --fit-review-packet` and its pinned split
+arguments. From rocksalt, run `bin/vast-push`, then
+`bin/vast-basis-review start` and `bin/vast-basis-review tunnel`.
+The app listens on port 8769 through the SSH forward. An authorized
+reviewer on another machine can open their own forward with
+`ssh -N -L 8769:127.0.0.1:8769 rocksalt`, then visit
+`http://127.0.0.1:8769/`.
+
+Listen to the six recordings and mark the pauses you hear. Ratings
+save to the private packet on the Vast host. The server sets no-store
+headers and the app keeps no backup draft in browser storage. Audio and
+ratings are in memory-backed storage and disappear when the host restarts.

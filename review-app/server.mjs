@@ -8,6 +8,10 @@ import { registerDraftStore } from './draft-store.mjs';
 const appDir = fileURLToPath(new URL('.', import.meta.url));
 const bundle = resolve(process.env.REVIEW_BUNDLE ?? join(appDir, '../data/review/paired-call-floor-review'));
 const independent = process.argv.includes('--independent');
+const basis = process.argv.includes('--basis');
+if (basis && (!independent || bundle !== '/dev/shm/superturn-basis-review')) {
+  throw new Error('Basis review requires the private memory-backed independent packet');
+}
 const packetDir = join(bundle, independent ? 'hindi-review-b' : 'hindi-review-a');
 const audioDir = join(packetDir, 'audio');
 const dev = process.argv.includes('--dev');
@@ -48,7 +52,7 @@ async function loadPacket() {
         || new Set(windows).size !== windows.length) {
       throw new Error('Unexpected independent packet listening order');
     }
-    return { mode: 'independent', windows };
+    return { mode: 'independent', windows, ...(basis ? { basis: true, duration: 60 } : {}) };
   }
   const [manifest, template] = await Promise.all([
     readFile(join(bundle, 'hindi-review-a/packet.json'), 'utf8'),
@@ -85,9 +89,20 @@ async function start() {
   await Promise.all([...ids].map(id => access(join(audioDir, `${id}.wav`))));
   const dist = join(appDir, 'dist');
   if (!dev) await access(join(dist, 'index.html'));
+  if (basis) {
+    server.addHook('onRequest', async (request, reply) => {
+      const expected = `127.0.0.1:${process.env.PORT ?? 8767}`;
+      if (request.headers.host !== expected
+          || (request.headers.origin && request.headers.origin !== `http://${expected}`)) {
+        return reply.code(403).send();
+      }
+      reply.header('Cache-Control', 'no-store');
+    });
+  }
   await server.register(fastifyStatic, { root: dist, serve: !dev });
   const ballots = independent ? join(packetDir, 'ballots') : process.env.REVIEW_BALLOTS ?? join(packetDir, 'ballots');
-  registerDraftStore(server, resolve(ballots), independent ? 'superturn_independent_reviewer' : undefined);
+  registerDraftStore(server, resolve(ballots),
+    basis ? 'superturn_basis_reviewer' : independent ? 'superturn_independent_reviewer' : undefined);
   const waveforms = new Map();
   server.get('/api/packet', async (_request, reply) => {
     reply.header('Cache-Control', 'no-store');
@@ -105,7 +120,7 @@ async function start() {
       const waveform = await readFile(join(audioDir, `${id}.wav`)).then(stereoPeaks);
       waveforms.set(id, waveform);
     }
-    reply.header('Cache-Control', 'private, max-age=3600');
+    if (!basis) reply.header('Cache-Control', 'private, max-age=3600');
     return waveforms.get(id);
   });
 

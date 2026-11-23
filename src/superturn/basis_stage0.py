@@ -173,7 +173,7 @@ def joint_cut(calls, trials, durations=None, *, membership_out=None, held_target
             "joint_role_roster": {role: len(people) for role, people in roles.items()}}
 
 
-def run(root, cut_trials=None, *, estimate=False, pilot=False, held_target=30):
+def run(root, cut_trials=None, *, estimate=False, pilot=False, review_packet=False, held_target=30):
     from huggingface_hub import HfApi
 
     if not (root / ".campaign-machine").is_file():
@@ -191,7 +191,7 @@ def run(root, cut_trials=None, *, estimate=False, pilot=False, held_target=30):
         durations, received = recording_seconds(source.get("repo"), revision, os.environ["HF_TOKEN"])
         if set(durations) != {(language, call.name) for language, rows in calls.items() for call in rows}:
             raise ValueError("Basis recording manifest does not cover the pinned file inventory")
-        membership = {} if estimate or pilot else None
+        membership = {} if estimate or pilot or review_packet else None
         report = {"revision": revision, "scope": "joint metadata-only four-role candidate",
                   "minimum_held_roster": held_target, "provisional_dev_roster": 10,
                   "trials_per_language": cut_trials,
@@ -199,13 +199,13 @@ def run(root, cut_trials=None, *, estimate=False, pilot=False, held_target=30):
                   **joint_cut(calls, cut_trials, durations, membership_out=membership, held_target=held_target)}
         suffix = "" if held_target == 30 else f"-{held_target}"
         receipt = root / "reports" / f"basis-stage0-joint-cut{suffix}.json"
-        if pilot:
+        if pilot or review_packet:
             from .basis_stage1 import run_pilot
 
             prior = json.loads(receipt.read_text())
             if prior["membership_sha256"] != report["membership_sha256"]:
                 raise ValueError("the Basis audit membership changed")
-            run_pilot(root, source, membership, calls, report["membership_sha256"])
+            run_pilot(root, source, membership, calls, report["membership_sha256"], review_packet=review_packet)
             return
         if estimate:
             from .basis_stage0_yield import estimate_yield
@@ -253,14 +253,15 @@ if __name__ == "__main__":
     action = parser.add_mutually_exclusive_group()
     action.add_argument("--estimate-yield", action="store_true", help="estimate paused turns on the verified split")
     action.add_argument("--fit-audit-pilot", action="store_true", help="audit a small fit-only set")
+    action.add_argument("--fit-review-packet", action="store_true", help="prepare the blind fit-only listening packet")
     args = parser.parse_args()
     if args.cut_trials is not None and args.cut_trials < 1:
         parser.error("cut trials must be positive")
     if args.held_target < 30:
         parser.error("held-out roster must have at least 30 voices")
-    if (args.estimate_yield or args.fit_audit_pilot) and args.cut_trials is None:
+    if (args.estimate_yield or args.fit_audit_pilot or args.fit_review_packet) and args.cut_trials is None:
         parser.error("yield estimation and auditing require the verified cut's trial count")
-    if args.fit_audit_pilot and args.held_target != 40:
+    if (args.fit_audit_pilot or args.fit_review_packet) and args.held_target != 40:
         parser.error("the fit audit uses the 40-roster Stage 0 receipt")
     run(data_root(), args.cut_trials, estimate=args.estimate_yield,
-        pilot=args.fit_audit_pilot, held_target=args.held_target)
+        pilot=args.fit_audit_pilot, review_packet=args.fit_review_packet, held_target=args.held_target)

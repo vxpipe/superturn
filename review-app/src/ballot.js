@@ -33,16 +33,16 @@ export function candidateCsv(ballotIds, ratings) {
   }));
 }
 
-export function continuousCsv(windows, recordings) {
+export function continuousCsv(windows, recordings, durationMs = 30_000) {
   const rows = [];
   windows.forEach((id, recordingIndex) => {
     const lastStops = { left: [], right: [] };
     (recordings[id]?.events ?? []).forEach((event, index) => {
       const row = { ...eventDefaults, ...event };
       const { outcome, focal_channel: focal, stop_ms: stop, next_onset_ms: onset, next_channel: next } = row;
-      const validStop = /^\d+$/.test(stop) && Number(stop) <= 29700;
+      const validStop = /^\d+$/.test(stop) && Number(stop) <= durationMs - 300;
       const validNext = onset === '' ? !next && !['resume', 'handoff'].includes(outcome)
-        : /^\d+$/.test(onset) && Number(onset) >= Number(stop) + 300 && Number(onset) < 30000
+        : /^\d+$/.test(onset) && Number(onset) >= Number(stop) + 300 && Number(onset) < durationMs
           && sides.some(([side]) => side === next);
       if (!outcome || !row.language || !sides.some(([side]) => side === focal)
           || !validStop || !validNext) {

@@ -16,14 +16,14 @@ audio-only 973k E20 student. Release selection and measurements are pending.
 Superturn estimates whether a caller has finished their turn at an elapsed
 pause. The caller runs its own voice activity detector and supplies a context
 window of 16 kHz mono PCM through the decision instant. The combined
-candidate also receives the current live partial transcript when available.
+candidate also receives the prior turn tail and the current live STT partial.
 The release interface will be chosen from the audio-only and combined runs.
 
 | Input | Format |
 |---|---|
 | `audio` | Float32 `[batch, 48000]` in [-1, 1], zero-padded on the left |
 | `silence_ms` | Float32 `[batch, 1]` |
-| `text_bytes` (combined only) | Int32 `[batch, 128]`, right-aligned normalized UTF-8, zeros if unavailable |
+| `text_bytes` (combined only) | Int32 `[batch, L]`, right-aligned normalized UTF-8 with a turn separator, zeros when the current partial is unavailable |
 | `p_complete` | Float32 `[batch, 1]` probability output |
 
 The audio-only development artifact uses three seconds of audio, a 512-point

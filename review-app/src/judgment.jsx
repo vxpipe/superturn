@@ -18,13 +18,13 @@ export function SelectField({ label, value, options, onChange, placeholder }) {
   </label>;
 }
 
-export function Judgment({ row, update, compact, children }) {
+export function Judgment({ row, update, compact, children, languageOptions = languages }) {
   const group = useId();
   const clear = row.outcome && <button className="clear-rating" type="button" onClick={() => update('outcome', '')}>
     Clear selection
   </button>;
   const fields = <div className="fields">
-    <SelectField label="Focal language as heard" value={row.language} options={languages} placeholder="Choose language"
+    <SelectField label="Focal language as heard" value={row.language} options={languageOptions} placeholder="Choose language"
       onChange={value => update('language', value)} />
   </div>;
   return <>
