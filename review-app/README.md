@@ -137,3 +137,14 @@ through rocksalt with `ssh -N -L 8771:127.0.0.1:8771 rocksalt` and open
 `http://127.0.0.1:8771/`. Its autosave and blind reference have separate
 storage. Score the completed supplement with
 `python -m superturn.harper_text_review --score-supplement SAVED_DRAFT.json`.
+
+## English transcript plausibility
+
+On Vast, the Harper transcript benchmark can seal the blinded text panel
+with `--plausibility-panel` using the frozen Qwen checkpoint and dataset.
+Start it with `bin/vast-basis-review start harper-plausibility` and
+`bin/vast-basis-review tunnel harper-plausibility`. From another host run
+`ssh -N -L 8772:127.0.0.1:8772 rocksalt` and open
+`http://127.0.0.1:8772/`. Ratings autosave to a separate Vast directory.
+Use `python -m superturn.harper_text_plausibility SAVED_DRAFT.json`
+in a campaign job to score a completed draft.

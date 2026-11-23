@@ -11,15 +11,19 @@ const independent = process.argv.includes('--independent');
 const basis = process.argv.includes('--basis');
 const harper = process.argv.includes('--harper');
 const harperSupplement = process.argv.includes('--harper-supplement');
+const harperPlausibility = process.argv.includes('--harper-plausibility');
 const restricted = basis || harper;
 if (basis && (!independent || bundle !== '/dev/shm/superturn-basis-review')) {
   throw new Error('Basis review requires the private memory-backed independent packet');
 }
-const harperRoot = harperSupplement ? '/dev/shm/superturn-harper-supplement' : '/dev/shm/superturn-harper-review';
-if ((harperSupplement && !harper) || (harper && (!independent || basis || bundle !== harperRoot))) {
+const harperRoot = harperPlausibility ? '/dev/shm/superturn-harper-text-plausibility'
+  : harperSupplement ? '/dev/shm/superturn-harper-supplement' : '/dev/shm/superturn-harper-review';
+if (((harperSupplement || harperPlausibility) && !harper) || (harperSupplement && harperPlausibility)
+    || (harper && (!independent || basis || bundle !== harperRoot))) {
   throw new Error('Harper review requires the dedicated independent packet');
 }
-const packetDir = join(bundle, harper ? 'harper-review' : independent ? 'hindi-review-b' : 'hindi-review-a');
+const packetDir = harperPlausibility ? bundle
+  : join(bundle, harper ? 'harper-review' : independent ? 'hindi-review-b' : 'hindi-review-a');
 const audioDir = join(packetDir, 'audio');
 const dev = process.argv.includes('--dev');
 const defaults = { dev: 8766, production: 8765 };
@@ -52,6 +56,16 @@ function stereoPeaks(wav) {
 }
 
 async function loadPacket() {
+  if (harperPlausibility) {
+    const { items } = JSON.parse(await readFile(join(packetDir, 'packet.json'), 'utf8'));
+    if (!Array.isArray(items) || items.length !== 72
+        || items.some(item => !valid(item.id, 'text') || typeof item.previous !== 'string'
+          || typeof item.current !== 'string' || !item.current)
+        || new Set(items.map(item => item.id)).size !== items.length) {
+      throw new Error('Unexpected Harper text plausibility packet');
+    }
+    return { mode: 'plausibility', items: items.map(({ id, previous, current }) => ({ id, previous, current })) };
+  }
   if (harper) {
     const { windows, duration } = JSON.parse(await readFile(join(packetDir, 'packet.json'), 'utf8'));
     if (!Array.isArray(windows) || !windows.length || windows.length > 28
@@ -101,7 +115,7 @@ async function loadPacket() {
 
 async function start() {
   const packet = await loadPacket();
-  const ids = new Set(independent ? packet.windows : [...packet.clips, ...packet.windows, 'practice']);
+  const ids = new Set(harperPlausibility ? [] : independent ? packet.windows : [...packet.clips, ...packet.windows, 'practice']);
   await Promise.all([...ids].map(id => access(join(audioDir, `${id}.wav`))));
   const dist = join(appDir, 'dist');
   if (!dev) await access(join(dist, 'index.html'));
@@ -118,7 +132,8 @@ async function start() {
   await server.register(fastifyStatic, { root: dist, serve: !dev });
   const ballots = (!independent || harper ? process.env.REVIEW_BALLOTS : undefined) ?? join(packetDir, 'ballots');
   registerDraftStore(server, resolve(ballots),
-    harperSupplement ? 'superturn_harper_supplement_reviewer' : harper ? 'superturn_harper_reviewer'
+    harperPlausibility ? 'superturn_harper_plausibility_reviewer'
+      : harperSupplement ? 'superturn_harper_supplement_reviewer' : harper ? 'superturn_harper_reviewer'
       : basis ? 'superturn_basis_reviewer' : independent ? 'superturn_independent_reviewer' : undefined);
   const waveforms = new Map();
   server.get('/api/packet', async (_request, reply) => {

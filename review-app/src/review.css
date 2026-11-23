@@ -102,6 +102,12 @@ legend { font-size: .875rem; font-weight: 650; padding: 0; margin-bottom: .5rem;
 footer { margin-top: 1.5rem; }
 a { color: #315b42; text-underline-offset: .16em; }
 
+.text-review { max-width: 48rem; margin-top: 1.5rem; }
+.transcript-turns { margin: 1.25rem 0; }
+.transcript-turns dt { font-weight: 650; }
+.transcript-turns dd { margin: .2rem 0 1rem; max-width: 65ch; overflow-wrap: anywhere; }
+.text-review button[aria-pressed="true"] { border-color: var(--accent); color: white; background: var(--accent); }
+
 @media (max-width: 760px) {
   main { padding: 1.5rem 1rem; }
   h1 { font-size: 1.9rem; }

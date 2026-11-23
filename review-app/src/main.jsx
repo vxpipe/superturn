@@ -4,6 +4,7 @@ import { AudioTimeline } from './audio-timeline.jsx';
 import { candidateCsv, continuousCsv, judgmentDefaults } from './ballot.js';
 import { Judgment } from './judgment.jsx';
 import { IndependentReview } from './independent-review.jsx';
+import { PlausibilityReview } from './plausibility-review.jsx';
 import { defaultRange, getPauseQueue, PauseQueue } from './pause-queue.jsx';
 import { useReviewDraft } from './use-review-draft.js';
 import './review.css';
@@ -133,6 +134,7 @@ function App() {
   if (error) return <main><h1>Review packet unavailable</h1><p role="alert">{error}</p>
     <button onClick={() => location.reload()}>Retry</button></main>;
   if (!review) return <main><p role="status">Loading review packet…</p></main>;
+  if (review.packet.mode === 'plausibility') return <PlausibilityReview {...review} />;
   return review.packet.mode === 'independent' ? <IndependentReview {...review} /> : <Reviewer {...review} />;
 }
 

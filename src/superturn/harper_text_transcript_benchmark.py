@@ -78,7 +78,7 @@ def report_for(items):
 
 
 def run(root, dataset, base, checkpoint, device, report_name="harper-real-transcript-benchmark.json",
-        *, failure_analysis=False):
+        *, failure_analysis=False, plausibility_panel=False):
     from .harper_valley_benchmark import pinned_split
 
     if not (root / ".campaign-machine").is_file():
@@ -159,6 +159,10 @@ def run(root, dataset, base, checkpoint, device, report_name="harper-real-transc
             from .harper_text_failures import audit
 
             result["failure_analysis"] = audit(items, synthetic["train"])
+        if plausibility_panel and view == "last_two_words_cut":
+            from .harper_text_plausibility import write_panel
+
+            write_panel(root, items, result)
     _write_json(root / "reports" / report_name, result)
     print(json.dumps(result, indent=2))
 
@@ -172,8 +176,9 @@ if __name__ == "__main__":
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
     parser.add_argument("--report-name", default="harper-real-transcript-benchmark.json")
     parser.add_argument("--failure-analysis", action="store_true")
+    parser.add_argument("--plausibility-panel", action="store_true")
     args = parser.parse_args()
     if Path(args.report_name).name != args.report_name or not args.report_name.endswith(".json"):
         parser.error("--report-name must be a JSON filename")
     run(root, args.dataset, args.base, args.checkpoint, args.device, args.report_name,
-        failure_analysis=args.failure_analysis)
+        failure_analysis=args.failure_analysis, plausibility_panel=args.plausibility_panel)
