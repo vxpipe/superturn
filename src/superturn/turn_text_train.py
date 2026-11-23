@@ -288,13 +288,10 @@ def run(dataset, base, output, *, epochs=3, batch_size=32, layers=4, seed=29, de
     meter.finish()
 
 
-def load_fit(checkpoint, base, device, corpus_hash):
-    import torch
-    from transformers import AutoTokenizer
-
-    saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
-    receipt = saved["receipt"]
+def check_fit_base(receipt, base, corpus_hash, trained_epochs):
     backbone = receipt.get("backbone", "e5")
+    if backbone not in {"e5", "qwen3"}:
+        raise ValueError("unsupported model backbone in the fit receipt")
     qwen = backbone == "qwen3"
     expected_sha = QWEN_SHA256 if qwen else BASE_SHA256
     expected_base, expected_revision = (QWEN_BASE, QWEN_REVISION) if qwen else (BASE, REVISION)
@@ -302,9 +299,19 @@ def load_fit(checkpoint, base, device, corpus_hash):
             or receipt["base"] != expected_base or receipt["base_revision"] != expected_revision
             or digest(base / "model.safetensors") != expected_sha
             or receipt["tokenizer_sha256"] != digest(base / "tokenizer.json")
-            or len(saved["history"]) != receipt["epochs"]
+            or trained_epochs != receipt["epochs"]
             or receipt["token_budget"] != TOKEN_BUDGET or receipt["query_prefix"] != ("" if qwen else QUERY_PREFIX)):
         raise ValueError("evaluation inputs do not match the completed synthetic fit")
+    return backbone
+
+
+def load_fit(checkpoint, base, device, corpus_hash):
+    import torch
+    from transformers import AutoTokenizer
+
+    saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
+    receipt = saved["receipt"]
+    backbone = check_fit_base(receipt, base, corpus_hash, len(saved["history"]))
     tokenizer = AutoTokenizer.from_pretrained(base, local_files_only=True, use_fast=True)
     tokenizer.padding_side = "right"
     model = build_model(base, receipt["top_layers_trainable"], backbone).to(device).eval()

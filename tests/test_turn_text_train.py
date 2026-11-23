@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from superturn.turn_text_train import QUERY_PREFIX, TOKEN_BUDGET, pack, pack_qwen, read_dataset
 
 
@@ -14,6 +16,28 @@ class PairTokenizer:
     def num_special_tokens_to_add(self, *, pair):
         assert pair
         return 4
+
+
+def test_qwen_receipt_refuses_e5_base_files(tmp_path, monkeypatch):
+    from superturn import turn_text_train as module
+
+    qwen = tmp_path / "qwen"
+    e5 = tmp_path / "e5"
+    for path, weights in ((qwen, b"qwen weights"), (e5, b"e5 weights")):
+        path.mkdir()
+        (path / "model.safetensors").write_bytes(weights)
+        (path / "tokenizer.json").write_bytes(b"fixture tokenizer")
+    expected = module.digest(qwen / "model.safetensors")
+    monkeypatch.setattr(module, "QWEN_SHA256", expected)
+    receipt = {
+        "backbone": "qwen3", "base": module.QWEN_BASE, "base_revision": module.QWEN_REVISION,
+        "base_weights_sha256": expected, "dataset_manifest_sha256": "fixture",
+        "tokenizer_sha256": module.digest(qwen / "tokenizer.json"), "epochs": 3,
+        "token_budget": TOKEN_BUDGET, "query_prefix": "",
+    }
+    assert module.check_fit_base(receipt, qwen, "fixture", 3) == "qwen3"
+    with pytest.raises(ValueError, match="evaluation inputs do not match"):
+        module.check_fit_base(receipt, e5, "fixture", 3)
 
 
 def test_pack_preserves_first_turn_marker_and_recent_caller_tokens():

@@ -141,3 +141,16 @@ The final command reuses the five weighted controls and fits five
 matched candidates. It reports fixed-threshold and matched-recall
 metrics, separate number-ending hold and shift cells, timing sensitivity,
 and the held-out synthetic checks.
+
+The received transcript packer is
+`python -m superturn.timed_text_arrival TRACE.json PACKED.json` on Vast.
+The trace identifies provider settings by SHA-256 and binds each pause
+to the monotonic time of its first PCM sample, sample rate, VAD stop
+and resume, and capture end. Revision events carry receipt time,
+sequence number and caller-turn ID. The adapter supplies complete
+replacement text, including blank retractions. The packer renders the
+300 ms snapshot and the fixed 300–800 ms benchmark grid separately from
+application ticks. The 800 ms snapshot is for diagnostics. A late transcript
+starts the 100 ms cadence on receipt. A simultaneous caller resume or
+800 ms timeout takes priority. The output file stays on Vast. Standard
+output contains counts and hashes.

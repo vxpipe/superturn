@@ -22,6 +22,45 @@ def report_path(root, *, score_only):
     return root / "reports" / f"{filename}{suffix}.json"
 
 
+def publisher_rows(root):
+    if not (root / ".campaign-machine").is_file():
+        raise ValueError("publisher trial inputs stay on Vast")
+    freeze_path = root / "reports" / FREEZE
+    freeze = json.loads(freeze_path.read_text())
+    rows, _, membership = pack_rows(root)
+    if (freeze["membership_sha256"] != membership
+            or freeze["rendered_inputs_sha256"] != sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()):
+        raise ValueError("publisher development reference changed")
+    return [row for row in rows if row["has_previous"]], freeze_path
+
+
+def verify_seed(root, seed):
+    rows, freeze_path = publisher_rows(root)
+    archived = json.loads(report_path(root, score_only=False).read_text())
+    stored, = [item for item in archived["trials"]["balanced"] if item["seed"] == seed]
+    checkpoint = root / "runs" / f"turn-text-qwen3-length-balanced-{seed}/checkpoint.pt"
+    base = root / "cache/turn-text-qwen3-06b"
+    corpus_hash = digest(root / "cache/turn-text-focused-en-v1/manifest.json")
+    if (stored["checkpoint_sha256"] != digest(checkpoint) or archived["freeze_sha256"] != digest(freeze_path)
+            or archived["dataset_manifest_sha256"] != corpus_hash):
+        raise ValueError("the original score receipt has different inputs")
+    tokenizer, model = load_fit(checkpoint, base, "cuda", corpus_hash)
+    text = [row["text"] for row in rows]
+    original = predict(tokenizer, model, text, "cuda")
+    repeated = predict(tokenizer, model, text, "cuda")
+    probability_bytes = np.asarray(original, dtype="<f4").tobytes()
+    if probability_bytes != np.asarray(repeated, dtype="<f4").tobytes():
+        raise ValueError("frozen Qwen predictions did not reproduce bitwise")
+    expected = binary_metrics(list(zip(original, [row["label"] for row in rows], strict=True)))
+    if expected != stored["views"]["all"]:
+        raise ValueError("replay did not match the archived English scorecard")
+    outcome = {"seed": seed, "checkpoint_sha256": digest(checkpoint), "freeze_sha256": digest(freeze_path),
+               "probabilities_sha256": sha256(probability_bytes).hexdigest(),
+               "bitwise_between_two_replays": True, "archived_aggregate_exact_match": True, "rows": len(rows)}
+    _write_json(root / f"reports/publisher-timed-english-weighted-{seed}-replay.json", outcome)
+    print(json.dumps(outcome, indent=2))
+
+
 def short_hold_delta(rows, unweighted, balanced):
     short = [index for index, row in enumerate(rows)
              if not row["label"] and 300 <= row["gap_ms"] < 800 and row["words"] >= 8]
@@ -88,15 +127,7 @@ def matched_ranking(rows, controls, balanced):
 
 
 def run(root, *, score_only=False):
-    if not (root / ".campaign-machine").is_file():
-        raise ValueError("publisher trial inputs stay on Vast")
-    freeze_path = root / "reports" / FREEZE
-    freeze = json.loads(freeze_path.read_text())
-    rows, _, membership = pack_rows(root)
-    if (freeze["membership_sha256"] != membership
-            or freeze["rendered_inputs_sha256"] != sha256(json.dumps(rows, sort_keys=True).encode()).hexdigest()):
-        raise ValueError("publisher development reference changed")
-    rows = [row for row in rows if row["has_previous"]]
+    rows, freeze_path = publisher_rows(root)
     dataset = root / "cache/turn-text-focused-en-v1"
     base = root / "cache/turn-text-qwen3-06b"
     corpus_hash = digest(dataset / "manifest.json")
@@ -218,5 +249,11 @@ def run(root, *, score_only=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--score-only", action="store_true", help="replay completed checkpoints and add ranking guards")
-    run(data_root(), score_only=parser.parse_args().score_only)
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--score-only", action="store_true", help="replay completed checkpoints and add ranking guards")
+    modes.add_argument("--verify-seed", type=int, choices=SEEDS, help="verify an archived weighted Qwen scorecard")
+    args = parser.parse_args()
+    if args.verify_seed is None:
+        run(data_root(), score_only=args.score_only)
+    else:
+        verify_seed(data_root(), args.verify_seed)
