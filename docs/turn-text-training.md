@@ -68,3 +68,13 @@ end of completed synthetic turns. Both keep the original validation bytes.
 Use the derived directory with the trainer's `--dataset` and use a
 different `--output`. For transcript evaluation use the matching
 `--dataset` and `--checkpoint` with a distinct `--report-name`.
+
+Build a targeted English supplement with
+`python -m superturn.turn_text_english_supplement RUN_DIR --budget-usd 2`.
+Resume using the same directory. Production generation uses the existing
+Gemini ledger and validation, including exact word spans and the
+affirmative/negative opening condition. No real transcript text is used.
+The published supplement contains `dialogues.jsonl` and `receipt.json`.
+Run the same command with that directory and `--export DESTINATION` to
+derive training rows. Add `--replay-control` for the same-size English
+exposure control. Both export the original validation file verbatim.

@@ -114,6 +114,7 @@ def run(root, dataset, base, checkpoint, device, report_name="harper-real-transc
         "checkpoint_sha256": digest(checkpoint),
         "development_selection_audit_sha256": selection_audit,
         "transcripts_sha256": fingerprint.hexdigest(),
+        "scored_turns_sha256": sha256(json.dumps([(row[0], row[2]) for row in pairs]).encode()).hexdigest(),
         "transcript_inventory": dict(covered),
         "identical_interior_and_last_two_word_cuts": sum(
             views["interior_cut"] == views["last_two_words_cut"] for _, _, _, _, views in pairs),

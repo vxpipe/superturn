@@ -118,6 +118,16 @@ def clean_sample(row, spec):
     short = result["short_caller_reply"]
     if len(short) > 65 or len(short.split()) > 9:
         return None
+    if "full_caller_word_range" in spec:
+        before = result["caller_before_pause"].split()
+        after = result["caller_after_pause"].split()
+        low, high = spec["full_caller_word_range"]
+        min_prefix, max_prefix = spec["caller_prefix_word_range"]
+        starts_yes_no = before[0] in spec["yes_no_opening_words"]
+        if (not low <= len(before) + len(after) <= high
+                or not min_prefix <= len(before) <= max_prefix
+                or len(after) < 2 or starts_yes_no != spec["starts_yes_no"]):
+            return None
     return result
 
 
