@@ -1,0 +1,91 @@
+{
+  "scope": "synthetic training and diagnostic validation",
+  "plan_sha256": "87a770b6213c3b27c338dc1e18b554fb51bd3d0ca395e274dece92824392d87e",
+  "dialogues_sha256": "2dcff98529aab1567c26f41ff65b2cc962e8df2360b2b23766e9e599560f1e79",
+  "model_input_fields": [
+    "text"
+  ],
+  "input_layout": "previous speaker turn or --- on line one, current caller turn on line two",
+  "first_turn_marker": "---",
+  "dialogues": 2156,
+  "shortcut_checks": {
+    "scope": "synthetic validation balanced accuracy for shortcut baselines",
+    "current_character_count": 0.6266233766233766,
+    "length_threshold_characters": 103,
+    "length_predicts_shift_above_threshold": true,
+    "language_and_last_token": 0.5535714285714286,
+    "first_turn_marker_only": 0.5
+  },
+  "splits": {
+    "train": {
+      "sha256": "5d153514a8def1c1907f4ca5bd0a710a5e134eae2b77c7cd1cc3e79c1adaf06b",
+      "examples": 3696,
+      "labels": {
+        "hold": 1848,
+        "shift": 1848
+      },
+      "languages": {
+        "de": 264,
+        "en": 264,
+        "es": 264,
+        "fil": 264,
+        "fr": 264,
+        "hi": 264,
+        "id": 264,
+        "it": 264,
+        "ja": 264,
+        "kn": 264,
+        "ml": 264,
+        "ta": 264,
+        "te": 264,
+        "zh": 264
+      },
+      "groups": 66,
+      "by_turn_count": {
+        "1": {
+          "hold": 280,
+          "shift": 280
+        },
+        "2": {
+          "hold": 1568,
+          "shift": 1568
+        }
+      }
+    },
+    "validation": {
+      "sha256": "0d36d0b0e3c60bd2717c1dee564f05b41e9d43f4b324b9b3378087f153489a35",
+      "examples": 616,
+      "labels": {
+        "hold": 308,
+        "shift": 308
+      },
+      "languages": {
+        "de": 44,
+        "en": 44,
+        "es": 44,
+        "fil": 44,
+        "fr": 44,
+        "hi": 44,
+        "id": 44,
+        "it": 44,
+        "ja": 44,
+        "kn": 44,
+        "ml": 44,
+        "ta": 44,
+        "te": 44,
+        "zh": 44
+      },
+      "groups": 11,
+      "by_turn_count": {
+        "1": {
+          "hold": 28,
+          "shift": 28
+        },
+        "2": {
+          "hold": 280,
+          "shift": 280
+        }
+      }
+    }
+  }
+}

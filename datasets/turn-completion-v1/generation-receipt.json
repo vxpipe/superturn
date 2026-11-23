@@ -1,0 +1,56 @@
+{
+  "plan_sha256": "87a770b6213c3b27c338dc1e18b554fb51bd3d0ca395e274dece92824392d87e",
+  "dialogues_sha256": "2dcff98529aab1567c26f41ff65b2cc962e8df2360b2b23766e9e599560f1e79",
+  "generator_prompt_sha256": "22703c28942ddba52db8fd4b92f44f4d65fbf60101824017b76085ed34702597",
+  "cleaner_version": "turn-text-nfkc-v2",
+  "list_usd_per_million_tokens": {
+    "generator_input": 0.75,
+    "generator_output": 3.75
+  },
+  "generator": "gemini-3.8-flash",
+  "target_per_criterion": 2,
+  "target_dialogues": 2156,
+  "accepted_dialogues": 2156,
+  "derived_example_counts": {
+    "hold": 2156,
+    "shift": 2156
+  },
+  "accepted_by_language": {
+    "de": 154,
+    "en": 154,
+    "es": 154,
+    "fil": 154,
+    "fr": 154,
+    "hi": 154,
+    "id": 154,
+    "it": 154,
+    "ja": 154,
+    "kn": 154,
+    "ml": 154,
+    "ta": 154,
+    "te": 154,
+    "zh": 154
+  },
+  "accepted_by_pause_style": {
+    "complete-sounding answer with an added detail": 364,
+    "planning before a name or time": 364,
+    "short complete-sounding answer before a qualifier": 350,
+    "a short pause during a list": 350,
+    "long caller turn with multiple natural pause opportunities": 364,
+    "a self-repair after several words": 364
+  },
+  "seeded_from_smoke": 7,
+  "attempted_by_pause_style": {
+    "complete-sounding answer with an added detail": 364,
+    "planning before a name or time": 833,
+    "long caller turn with multiple natural pause opportunities": 365,
+    "a self-repair after several words": 871,
+    "short complete-sounding answer before a qualifier": 350,
+    "a short pause during a list": 792
+  },
+  "duplicates_rejected": 0,
+  "complete_criteria": 1078,
+  "target_criteria": 1078,
+  "estimated_spend_including_unknown_requests_usd": 3.051092,
+  "stop": "complete"
+}
