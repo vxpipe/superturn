@@ -139,6 +139,13 @@ def pack_trace_file(root, source, destination):
         if ident in ids or label not in {"hold", "shift"}:
             raise ValueError("duplicate pause ID or invalid label")
         ids.add(ident)
+        if exclusion := event.get("scoring_exclusion"):
+            if exclusion != "missing_previous_stt":
+                raise ValueError("unknown scoring exclusion")
+            counts[f"{label}/300_ms/{exclusion}"] += 1
+            results.append({"id": ident, "label": label, "scoring_exclusion": exclusion,
+                            "at_300_ms": None, "ticks": [], "benchmark_grid": [], "ended_by": "abstained"})
+            continue
         trace = PauseTrace(**event["trace"])
         observed = replay(trace, [Revision(**row) for row in event["revisions"]])
         first = observed.at_300_ms

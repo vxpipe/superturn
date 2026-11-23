@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# Stage pinned CUDA inference assets, then capture and preserve Harper traces on Vast.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+: "${SUPERTURN_DATA:?must run on Vast}"
+test -f "$SUPERTURN_DATA/.campaign-machine"
+umask 077
+
+cache="$SUPERTURN_DATA/cache/harper-streaming-model"
+mkdir -p "$cache"
+wheel=sherpa_onnx-1.12.23+cuda12.cudnn9-cp312-cp312-linux_x86_64.whl
+checkpoint=https://huggingface.co/csukuangfj/sherpa-onnx-streaming-zipformer-en-2023-06-26/resolve/672fbf1b30579d6585301139bb363f42a0ad4a24
+runtime=https://huggingface.co/csukuangfj2/sherpa-onnx-wheels/resolve/c9f5ed2cf4b2663d23f4e93ab7f642b176dc62e3/cuda/1.12.23
+fetch() {
+  local url="$1" filename="$2" bytes="$3" hash="$4" found
+  if [[ -s "$cache/$filename" ]]; then
+    read -r found _ < <(sha256sum "$cache/$filename")
+    if [[ "$found" = "$hash" ]]; then return; fi
+  fi
+  curl --fail --show-error --location --retry 3 --max-filesize "$bytes" \
+    --output "$cache/$filename.partial" "$url/$filename"
+  read -r found _ < <(sha256sum "$cache/$filename.partial")
+  test "$found" = "$hash"
+  mv "$cache/$filename.partial" "$cache/$filename"
+}
+
+assets=(
+  "encoder-epoch-99-avg-1-chunk-16-left-128.onnx 262127043 a423883ce5754507fd941755ab0b5bc426a84ac670cbe21cf060e9e2c66dc660"
+  "decoder-epoch-99-avg-1-chunk-16-left-128.onnx 2092621 7bf787f90b194b307e5a4ad6a34fadb4e748304c35f78a8d66358a05b13ee6ef"
+  "joiner-epoch-99-avg-1-chunk-16-left-128.onnx 1026405 210591f72b3c56b8364f85f345dca240bc2b4c00632848f4aa923630d5639d3b"
+  "tokens.txt 5048 7c025e7de139195720829e522dac7d1947ae0a321a8c74b7b13f2926aca49139"
+)
+for asset in "${assets[@]}"; do
+  read -r filename bytes hash <<< "$asset"
+  fetch "$checkpoint" "$filename" "$bytes" "$hash"
+done
+fetch "$runtime" "$wheel" 260450119 5c914eb6d5b6b5c4cfce3e78cbf33a67bb4313aed69250a7644b17d2e52231e6
+
+if [[ ! -d "$cache/runtime/sherpa_onnx" ]]; then
+  uv pip install --no-deps --target "$cache/runtime" "$cache/$wheel"
+fi
+site_dir="$(.venv/bin/python -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
+for library_dir in "$site_dir"/nvidia/*/lib "$site_dir"/torch/lib; do
+  if [[ -d "$library_dir" ]]; then
+    export LD_LIBRARY_PATH="$library_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  fi
+done
+export PYTHONPATH="$cache/runtime${PYTHONPATH:+:$PYTHONPATH}"
+.venv/bin/python -m superturn.harper_streaming_capture "$@"
+
+for option in "$@"; do
+  if [[ "$option" = --limit-per-class || "$option" = --limit-per-class=* ]]; then
+    exit 0
+  fi
+done
+set -a
+. ./.env
+set +a
+: "${SUPERTURN_REMOTE:?missing private storage remote}"
+files=(
+  cache/harper-valley/text-dev-streaming-trace-v1.json
+  cache/harper-valley/text-dev-streaming-v1.json
+  reports/harper-text-streaming-capture.json
+)
+for file in "${files[@]}"; do
+  read -r hash _ < <(sha256sum "$SUPERTURN_DATA/$file")
+  target="${SUPERTURN_REMOTE%/}/superturn/runs/harper-streaming-capture/$hash/${file##*/}"
+  rclone copyto "$SUPERTURN_DATA/$file" "$target" --log-level ERROR
+  test "$(rclone cat "$target" | sha256sum | cut -d' ' -f1)" = "$hash"
+  printf "verified %s %s\n" "$hash" "${file##*/}"
+done
