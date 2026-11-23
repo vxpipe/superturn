@@ -1,0 +1,792 @@
+{
+  "source": "https://github.com/vxpipe/barge-in-detector/tree/23fa741b19cdf5858aa0d53f6304282f9445d10f/generation/factors",
+  "licence": "MIT",
+  "domains": [
+    {
+      "id": "banking",
+      "description": "Retail banking, cards and payments.",
+      "scenarios": [
+        {
+          "id": "banking_balance_enquiry",
+          "description": "Balance or recent transactions."
+        },
+        {
+          "id": "banking_card_block",
+          "description": "Blocking a lost or stolen card."
+        },
+        {
+          "id": "banking_fraud_dispute",
+          "description": "Disputing an unknown transaction."
+        },
+        {
+          "id": "banking_loan_emi",
+          "description": "Loan EMI schedule or prepayment."
+        },
+        {
+          "id": "banking_kyc_update",
+          "description": "Updating KYC or contact details."
+        },
+        {
+          "id": "banking_upi_failure",
+          "description": "A failed UPI payment where the money was debited."
+        },
+        {
+          "id": "banking_preapproved_loan_offer",
+          "description": "Outbound call offering a pre-approved loan."
+        }
+      ]
+    },
+    {
+      "id": "insurance",
+      "description": "Insurance policies and claims.",
+      "scenarios": [
+        {
+          "id": "insurance_claim_status",
+          "description": "Status of an existing claim."
+        },
+        {
+          "id": "insurance_policy_renewal",
+          "description": "Renewing a policy."
+        },
+        {
+          "id": "insurance_new_quote",
+          "description": "Getting a premium quote."
+        }
+      ]
+    },
+    {
+      "id": "telecom",
+      "description": "Mobile and broadband providers.",
+      "scenarios": [
+        {
+          "id": "telecom_plan_change",
+          "description": "Changing or upgrading a plan."
+        },
+        {
+          "id": "telecom_bill_dispute",
+          "description": "Disputing a bill charge."
+        },
+        {
+          "id": "telecom_network_complaint",
+          "description": "Poor coverage or no signal."
+        },
+        {
+          "id": "telecom_recharge",
+          "description": "Prepaid recharge or top-up."
+        }
+      ]
+    },
+    {
+      "id": "public_services",
+      "description": "Utilities (electricity, water, gas) and government services.",
+      "scenarios": [
+        {
+          "id": "utilities_outage_report",
+          "description": "Reporting an outage."
+        },
+        {
+          "id": "utilities_bill_payment",
+          "description": "Paying or querying a utility bill."
+        },
+        {
+          "id": "utilities_new_connection",
+          "description": "Applying for a new connection."
+        },
+        {
+          "id": "government_application_status",
+          "description": "Status of a document or certificate application."
+        },
+        {
+          "id": "government_tax_enquiry",
+          "description": "Tax filing or refund question."
+        },
+        {
+          "id": "government_complaint",
+          "description": "Civic complaint (roads",
+          "water": null,
+          "waste).": null
+        }
+      ]
+    },
+    {
+      "id": "ecommerce",
+      "description": "Online shopping, couriers and parcel delivery.",
+      "scenarios": [
+        {
+          "id": "ecommerce_order_status",
+          "description": "Where an order or parcel is."
+        },
+        {
+          "id": "ecommerce_return_refund",
+          "description": "Returning an item or refund status."
+        },
+        {
+          "id": "ecommerce_exchange",
+          "description": "Exchanging size or colour."
+        },
+        {
+          "id": "ecommerce_product_enquiry",
+          "description": "Questions about a product."
+        },
+        {
+          "id": "logistics_reschedule",
+          "description": "Rescheduling a delivery."
+        },
+        {
+          "id": "logistics_address_change",
+          "description": "Changing the delivery address."
+        }
+      ]
+    },
+    {
+      "id": "food_and_rides",
+      "description": "Food and grocery delivery apps, taxis and ride-hailing.",
+      "scenarios": [
+        {
+          "id": "food_order_tracking",
+          "description": "Tracking a food delivery."
+        },
+        {
+          "id": "food_missing_item",
+          "description": "Missing or wrong item."
+        },
+        {
+          "id": "food_order_placement",
+          "description": "Placing an order by phone."
+        },
+        {
+          "id": "ride_booking",
+          "description": "Booking a ride."
+        },
+        {
+          "id": "ride_driver_issue",
+          "description": "Complaint about a driver or trip."
+        },
+        {
+          "id": "ride_fare_dispute",
+          "description": "Disputing a fare."
+        }
+      ]
+    },
+    {
+      "id": "travel",
+      "description": "Airlines, trains and buses.",
+      "scenarios": [
+        {
+          "id": "travel_new_booking",
+          "description": "Booking a ticket."
+        },
+        {
+          "id": "travel_change_cancel",
+          "description": "Changing or cancelling a booking."
+        },
+        {
+          "id": "travel_baggage",
+          "description": "Lost or delayed baggage."
+        },
+        {
+          "id": "travel_delay_info",
+          "description": "Delay or platform/gate information."
+        }
+      ]
+    },
+    {
+      "id": "hospitality",
+      "description": "Hotels and restaurants.",
+      "scenarios": [
+        {
+          "id": "hospitality_hotel_booking",
+          "description": "Booking or modifying a hotel stay."
+        },
+        {
+          "id": "hospitality_table_reservation",
+          "description": "Reserving a restaurant table."
+        },
+        {
+          "id": "hospitality_guest_request",
+          "description": "In-stay request or complaint."
+        }
+      ]
+    },
+    {
+      "id": "healthcare",
+      "description": "Clinics and hospitals, administrative calls only.",
+      "prompt_notes": "Administrative only (appointments, refills, reports, bills). Staff never diagnose, give medical advice or discuss treatment.\n",
+      "scenarios": [
+        {
+          "id": "healthcare_appointment",
+          "description": "Booking or moving an appointment."
+        },
+        {
+          "id": "healthcare_prescription_refill",
+          "description": "Prescription refill request."
+        },
+        {
+          "id": "healthcare_test_results",
+          "description": "Whether test results are ready (not what they say)."
+        },
+        {
+          "id": "healthcare_billing",
+          "description": "Hospital bill or insurance cover."
+        }
+      ]
+    },
+    {
+      "id": "education",
+      "description": "Schools, colleges and courses.",
+      "scenarios": [
+        {
+          "id": "education_admissions",
+          "description": "Admission process and deadlines."
+        },
+        {
+          "id": "education_fee_payment",
+          "description": "Fee payment or instalments."
+        },
+        {
+          "id": "education_course_info",
+          "description": "Course content and schedule."
+        }
+      ]
+    },
+    {
+      "id": "real_estate",
+      "description": "Property sales and rentals.",
+      "scenarios": [
+        {
+          "id": "real_estate_property_enquiry",
+          "description": "Details of a listing."
+        },
+        {
+          "id": "real_estate_site_visit",
+          "description": "Scheduling a visit."
+        },
+        {
+          "id": "real_estate_rent_maintenance",
+          "description": "Tenant rent or maintenance request."
+        }
+      ]
+    },
+    {
+      "id": "automotive",
+      "description": "Car sales, service and roadside help.",
+      "scenarios": [
+        {
+          "id": "automotive_service_booking",
+          "description": "Booking a service."
+        },
+        {
+          "id": "automotive_test_drive",
+          "description": "Scheduling a test drive."
+        },
+        {
+          "id": "automotive_roadside_assistance",
+          "description": "Breakdown assistance."
+        }
+      ]
+    },
+    {
+      "id": "tech_support",
+      "description": "Devices, internet, apps and accounts.",
+      "scenarios": [
+        {
+          "id": "tech_internet_troubleshooting",
+          "description": "Internet not working."
+        },
+        {
+          "id": "tech_device_setup",
+          "description": "Setting up a device or app",
+          "or fixing an app error.": null
+        },
+        {
+          "id": "tech_account_access",
+          "description": "Password reset or locked account."
+        }
+      ]
+    },
+    {
+      "id": "sales_outbound",
+      "description": "Outbound sales calls.",
+      "scenarios": [
+        {
+          "id": "sales_product_pitch",
+          "description": "Pitching a product."
+        },
+        {
+          "id": "sales_lead_qualification",
+          "description": "Qualifying a lead."
+        },
+        {
+          "id": "sales_renewal_offer",
+          "description": "Offering a renewal or upgrade."
+        }
+      ]
+    },
+    {
+      "id": "collections",
+      "description": "Payment reminders.",
+      "prompt_notes": "The person collecting stays polite and non-threatening: no threats, shaming, legal intimidation or mention of contacting family or employers.\n",
+      "scenarios": [
+        {
+          "id": "collections_payment_reminder",
+          "description": "Reminding of an overdue payment."
+        },
+        {
+          "id": "collections_payment_plan",
+          "description": "Arranging a payment plan."
+        }
+      ]
+    },
+    {
+      "id": "surveys",
+      "description": "Feedback and research calls.",
+      "scenarios": [
+        {
+          "id": "surveys_csat",
+          "description": "Satisfaction survey after a service."
+        },
+        {
+          "id": "surveys_market_research",
+          "description": "Market research questionnaire."
+        }
+      ]
+    },
+    {
+      "id": "recruiting",
+      "description": "Hiring and HR.",
+      "scenarios": [
+        {
+          "id": "recruiting_interview_scheduling",
+          "description": "Scheduling an interview."
+        },
+        {
+          "id": "recruiting_candidate_screening",
+          "description": "Screening questions."
+        }
+      ]
+    },
+    {
+      "id": "home_services",
+      "description": "Repairs, cleaning and personal services.",
+      "scenarios": [
+        {
+          "id": "home_repair_booking",
+          "description": "Plumber",
+          "electrician": null,
+          "appliance repair": null,
+          "cleaning or pest control.": null
+        },
+        {
+          "id": "home_salon_booking",
+          "description": "Salon or spa appointment."
+        }
+      ]
+    },
+    {
+      "id": "personal_assistant",
+      "description": "General-purpose voice assistant.",
+      "scenarios": [
+        {
+          "id": "assistant_reminders",
+          "description": "Setting reminders or alarms."
+        },
+        {
+          "id": "assistant_information",
+          "description": "Answering a general question (weather",
+          "recipe": null,
+          "facts).": null
+        }
+      ]
+    },
+    {
+      "id": "front_desk",
+      "description": "Front desk and reception for offices, clinics and hotels.",
+      "scenarios": [
+        {
+          "id": "front_desk_visitor_enquiry",
+          "description": "Opening hours",
+          "directions or visiting a person.": null
+        },
+        {
+          "id": "front_desk_call_routing",
+          "description": "Connecting the caller to a department or person."
+        },
+        {
+          "id": "front_desk_message",
+          "description": "Taking a message for someone."
+        }
+      ]
+    },
+    {
+      "id": "verification_onboarding",
+      "description": "Identity verification and onboarding calls.",
+      "scenarios": [
+        {
+          "id": "verification_kyc_call",
+          "description": "Verifying identity details for a new account."
+        },
+        {
+          "id": "verification_account_onboarding",
+          "description": "Welcome call to activate a new account or service."
+        },
+        {
+          "id": "verification_address_check",
+          "description": "Confirming an address before delivery or activation."
+        }
+      ]
+    },
+    {
+      "id": "agri_rural",
+      "description": "Agriculture and rural services.",
+      "scenarios": [
+        {
+          "id": "agri_mandi_prices",
+          "description": "Market prices for a crop."
+        },
+        {
+          "id": "agri_input_order",
+          "description": "Ordering seeds",
+          "fertilizer or equipment.": null
+        },
+        {
+          "id": "agri_scheme_enquiry",
+          "description": "Status of a farm subsidy or government scheme."
+        }
+      ]
+    }
+  ],
+  "languages": [
+    {
+      "code": "en",
+      "name": "English",
+      "scripts": [
+        "Latn"
+      ],
+      "romanized_usage": "none",
+      "regional_variants": [
+        "en-US",
+        "en-IN",
+        "en-SG"
+      ],
+      "tier": "A",
+      "rollout_phase": 1,
+      "code_switch_sets": [
+        {
+          "languages": [
+            "hi"
+          ],
+          "regional_variants": [
+            "en-IN"
+          ],
+          "mixed_in_scripts": [
+            "native"
+          ]
+        },
+        {
+          "languages": [
+            "kn"
+          ],
+          "regional_variants": [
+            "en-IN"
+          ],
+          "mixed_in_scripts": [
+            "native"
+          ]
+        },
+        {
+          "languages": [
+            "ta"
+          ],
+          "regional_variants": [
+            "en-IN"
+          ],
+          "mixed_in_scripts": [
+            "native"
+          ]
+        },
+        {
+          "languages": [
+            "te"
+          ],
+          "regional_variants": [
+            "en-IN"
+          ],
+          "mixed_in_scripts": [
+            "native"
+          ]
+        },
+        {
+          "languages": [
+            "ml"
+          ],
+          "regional_variants": [
+            "en-IN"
+          ],
+          "mixed_in_scripts": [
+            "native"
+          ]
+        },
+        {
+          "languages": [
+            "zh"
+          ],
+          "regional_variants": [
+            "en-SG"
+          ],
+          "mixed_in_scripts": [
+            "native"
+          ]
+        }
+      ]
+    },
+    {
+      "code": "hi",
+      "name": "Hindi",
+      "scripts": [
+        "Deva"
+      ],
+      "romanized_usage": "none",
+      "regional_variants": [],
+      "region": "IN",
+      "tier": "A",
+      "rollout_phase": 1,
+      "code_switch_sets": [
+        {
+          "languages": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "code": "kn",
+      "name": "Kannada",
+      "scripts": [
+        "Knda"
+      ],
+      "romanized_usage": "none",
+      "regional_variants": [],
+      "region": "IN",
+      "tier": "A",
+      "rollout_phase": 2,
+      "code_switch_sets": [
+        {
+          "languages": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "code": "ta",
+      "name": "Tamil",
+      "scripts": [
+        "Taml"
+      ],
+      "romanized_usage": "none",
+      "regional_variants": [
+        "ta-IN"
+      ],
+      "tier": "A",
+      "rollout_phase": 2,
+      "code_switch_sets": [
+        {
+          "languages": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "code": "te",
+      "name": "Telugu",
+      "scripts": [
+        "Telu"
+      ],
+      "romanized_usage": "none",
+      "regional_variants": [],
+      "region": "IN",
+      "tier": "C",
+      "rollout_phase": 3,
+      "code_switch_sets": [
+        {
+          "languages": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "code": "ml",
+      "name": "Malayalam",
+      "scripts": [
+        "Mlym"
+      ],
+      "romanized_usage": "none",
+      "regional_variants": [],
+      "region": "IN",
+      "tier": "C",
+      "rollout_phase": 3,
+      "code_switch_sets": [
+        {
+          "languages": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "code": "zh",
+      "name": "Mandarin Chinese",
+      "scripts": [
+        "Hans"
+      ],
+      "romanized_usage": "none",
+      "regional_variants": [
+        "zh-CN"
+      ],
+      "tier": "C",
+      "rollout_phase": 3,
+      "code_switch_sets": [
+        {
+          "languages": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "code": "ja",
+      "name": "Japanese",
+      "scripts": [
+        "Jpan"
+      ],
+      "romanized_usage": "none",
+      "regional_variants": [],
+      "tier": "C",
+      "rollout_phase": 3,
+      "code_switch_sets": [
+        {
+          "languages": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "code": "id",
+      "name": "Indonesian",
+      "scripts": [
+        "Latn"
+      ],
+      "romanized_usage": "none",
+      "regional_variants": [],
+      "tier": "C",
+      "rollout_phase": 3,
+      "code_switch_sets": [
+        {
+          "languages": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "code": "fil",
+      "name": "Filipino",
+      "scripts": [
+        "Latn"
+      ],
+      "romanized_usage": "none",
+      "regional_variants": [],
+      "tier": "C",
+      "rollout_phase": 3,
+      "code_switch_sets": [
+        {
+          "languages": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "code": "es",
+      "name": "Spanish",
+      "scripts": [
+        "Latn"
+      ],
+      "romanized_usage": "none",
+      "regional_variants": [
+        "es-ES",
+        "es-MX"
+      ],
+      "tier": "C",
+      "rollout_phase": 3,
+      "code_switch_sets": [
+        {
+          "languages": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "code": "fr",
+      "name": "French",
+      "scripts": [
+        "Latn"
+      ],
+      "romanized_usage": "none",
+      "regional_variants": [
+        "fr-FR"
+      ],
+      "tier": "C",
+      "rollout_phase": 3,
+      "code_switch_sets": [
+        {
+          "languages": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "code": "de",
+      "name": "German",
+      "scripts": [
+        "Latn"
+      ],
+      "romanized_usage": "none",
+      "regional_variants": [
+        "de-DE"
+      ],
+      "tier": "C",
+      "rollout_phase": 3,
+      "code_switch_sets": [
+        {
+          "languages": [
+            "en"
+          ]
+        }
+      ]
+    },
+    {
+      "code": "it",
+      "name": "Italian",
+      "scripts": [
+        "Latn"
+      ],
+      "romanized_usage": "none",
+      "regional_variants": [],
+      "tier": "C",
+      "rollout_phase": 3,
+      "code_switch_sets": [
+        {
+          "languages": [
+            "en"
+          ]
+        }
+      ]
+    }
+  ]
+}

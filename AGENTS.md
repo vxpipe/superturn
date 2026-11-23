@@ -38,10 +38,11 @@ includes the handover.
   speaker-disjoint and freeze calibration and test. Existing turn detectors
   are benchmark references only. Use a permissively licensed multilingual
   LM pretrained on other tasks.
-- Run one milestone stage at a time. Qualify the English benchmark first,
-  then generate and train. Use English dev to select the model and for at
-  most three targeted data rounds. Expand to other languages after English
-  reaches 80% balanced accuracy. Measure final export latency after quality.
+- The user advanced multilingual synthetic generation while the English
+  label audit is open. Qualify the benchmark before model scoring. Use
+  English dev to select the model and for at most three targeted data
+  rounds. Expand model evaluation to other languages after English reaches
+  80% balanced accuracy. Measure final export latency after quality.
 
 ## Repository layout
 
