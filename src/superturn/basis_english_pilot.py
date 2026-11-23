@@ -20,6 +20,18 @@ PAUSE_OPTIONS = {"holding": "hold", "normal_gap": "finished", "awkward_gap": "fi
                  "finished": "finished"}
 
 
+def decision_window_counts(rows):
+    counts = defaultdict(Counter)
+    for row in rows:
+        category = PAUSE_OPTIONS.get(row["label"])
+        if row["question"] != "pause" or category is None:
+            continue
+        width_ms = round((row["end"] - row["start"]) * 1000)
+        band = "under_300_ms" if width_ms < 300 else "300_to_800_ms" if width_ms <= 800 else "over_800_ms"
+        counts[category][band] += 1
+    return {category: dict(bands) for category, bands in counts.items()}
+
+
 def vote_census(rows, roles, eligible_calls):
     summary = defaultdict(Counter)
     priorities = defaultdict(Counter)
@@ -127,7 +139,7 @@ def flac_seek_table(handle, size):
     raise ValueError("the Basis FLAC metadata exceeded the bounded header walk")
 
 
-def run(root, *, reference_audit=False):
+def run(root, *, reference_audit=False, publisher_windows=False):
     from huggingface_hub import HfApi, HfFileSystem
 
     if not (root / ".campaign-machine").is_file():
@@ -140,6 +152,25 @@ def run(root, *, reference_audit=False):
     repo, revision = source.get("repo"), source.get("revision")
     token = os.environ["HF_TOKEN"]
     prefix = f"datasets/{repo}@{revision}"
+    fs = HfFileSystem(token=token)
+    path = f"{prefix}/en/human_judgments.jsonl"
+    size = fs.info(path)["size"]
+    if not 0 < size < 3_000_000:
+        raise ValueError("the English judgment file exceeds its metadata cap")
+    meter = Progress("basis-english-judgments", size, "B")
+    with fs.open(path, "rb") as handle:
+        rows = list(json_lines(handle, meter))
+    if size != meter.done:
+        raise ValueError("the English judgment file differs from the pinned size")
+    meter.finish()
+    window_counts = decision_window_counts(rows)
+    if publisher_windows:
+        report = {"scope": "English publisher judgment interval widths",
+                  "revision": revision, "decision_window_counts": window_counts,
+                  "metadata_bytes": size}
+        _write_json(root / "reports/basis-english-publisher-decision-windows.json", report)
+        print(json.dumps(report, indent=2))
+        return
     entries = defaultdict(list)
     api = HfApi(token=token)
     for entry in api.list_repo_tree(repo, repo_type="dataset", revision=revision, recursive=True):
@@ -157,23 +188,12 @@ def run(root, *, reference_audit=False):
         raise ValueError("the existing four-role split did not reproduce")
     roles = {call: role for role, batch in membership["en"].items() for call in batch}
     english = {call.name: call for call in calls["en"]}
-    fs = HfFileSystem(token=token)
-    path = f"{prefix}/en/human_judgments.jsonl"
-    size = fs.info(path)["size"]
-    if not 0 < size < 3_000_000:
-        raise ValueError("the English judgment file exceeds its metadata cap")
-    meter = Progress("basis-english-judgments", size, "B")
     fit_judgments = defaultdict(list)
-    with fs.open(path, "rb") as handle:
-        rows = list(json_lines(handle, meter))
     summary, priorities, annotated = vote_census(rows, roles, english)
     for row in rows:
         if (roles.get(row["conversation_id"]) == "fit" and row["question"] == "pause"
                 and row["label"] in PAUSE_OPTIONS and len(row.get("speakers", [])) == 1):
             fit_judgments[row["segment_id"]].append(row)
-    if size != meter.done:
-        raise ValueError("the English judgment file differs from the pinned size")
-    meter.finish()
     excluded = [call for name, call in english.items() if name not in roles]
     fit_annotated = [english[call] for call in membership["en"]["fit"] if priorities[call]]
     all_fit_annotated = [english[call] for call in membership["en"]["fit"] if call in annotated]
@@ -200,6 +220,7 @@ def run(root, *, reference_audit=False):
         "excluded": {**summarize(excluded),
                      "recorded_seconds": round(sum(duration["en", call.name] for call in excluded), 3)},
         "judgments_by_role": {role: dict(summary[role]) for role in (*CUT_ROLES, "excluded")},
+        "publisher_decision_window_counts": window_counts,
         "projection": projected,
         "metadata_bytes": recording_bytes + size + timing["word_sidecar_bytes"],
         "audio_bytes_downloaded": 0,
@@ -217,6 +238,10 @@ def run(root, *, reference_audit=False):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--reference-audit", action="store_true",
+    actions = parser.add_mutually_exclusive_group()
+    actions.add_argument("--reference-audit", action="store_true",
                         help="also run the bounded publisher-reference audio diagnostic")
-    run(data_root(), reference_audit=parser.parse_args().reference_audit)
+    actions.add_argument("--publisher-windows", action="store_true",
+                         help="count English judgment intervals by runtime silence band")
+    args = parser.parse_args()
+    run(data_root(), reference_audit=args.reference_audit, publisher_windows=args.publisher_windows)

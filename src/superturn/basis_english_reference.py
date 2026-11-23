@@ -101,35 +101,68 @@ def agreement_scorecard(call_counts):
     return report
 
 
+def reference_windows(judgments, length):
+    intervals = []
+    for mark in sorted(judgments, key=lambda row: row["start"]):
+        left = max(0, round(mark["start"] * RATE) - 4 * RATE)
+        right = min(length, round(mark["end"] * RATE) + 3 * RATE)
+        if right <= left:
+            continue
+        if intervals and left <= intervals[-1][1]:
+            intervals[-1] = intervals[-1][0], max(intervals[-1][1], right)
+        else:
+            intervals.append((left, right))
+    return intervals
+
+
+def window_proposals(segment, tracks, judgments, detect):
+    connected = {person["speaker"]: samples(person["on_call"]) for person in segment["speakers"]}
+    muted = samples(segment["muted_spans"])
+    counts, proposals = Counter(), []
+    for left, right in reference_windows(judgments, min(map(len, tracks.values()))):
+        clip = {voice: pcm[left:right] for voice, pcm in tracks.items()}
+        activity = [(start, stop, voice) for voice, pcm in clip.items() for start, stop in detect(pcm)]
+        connection = {voice: [(start - left, end - left) for start, end in spans]
+                      for voice, spans in connected.items()}
+        window_counts, window_events = events(
+            activity, connection, [(start - left, end - left) for start, end in muted],
+            right - left, tracks=clip,
+        )
+        counts.update(window_counts)
+        proposals.extend((stop + left, onset + left, label, voice, following)
+                         for stop, onset, label, voice, following in window_events)
+    return counts, proposals
+
+
 def run_reference_audit(root, fs, prefix, segments, judgments, audio_bytes, word_gaps, pause_options):
     if not 0 < audio_bytes <= REFERENCE_AUDIO_CAP:
         raise ValueError("the English reference audit exceeds its sealed audio cap")
     meter = Progress("basis-english-reference-audio", audio_bytes, "B")
+    segment_meter = Progress("basis-english-reference-labels", len(segments), "segments")
     detect = silero()
     calls, attrition = defaultdict(Counter), Counter()
     try:
         for segment in segments:
             tracks = read_segment(fs, prefix, "en", segment, meter)
-            activity = [(start, stop, voice) for voice, pcm in tracks.items()
-                        for start, stop in detect(pcm)]
-            connected = {person["speaker"]: samples(person["on_call"]) for person in segment["speakers"]}
-            counts, proposals = events(activity, connected, samples(segment["muted_spans"]),
-                                       min(map(len, tracks.values())), tracks=tracks)
+            moments = judgments[segment["segment_id"]]
+            counts, proposals = window_proposals(segment, tracks, moments, detect)
             veto_counts = human_exclusion_audit(segment, proposals)
             attrition.update(counts)
             attrition.update({f"audit_near_{label}": count for label, count in veto_counts.items()})
             local = calls[segment["conversation_id"]]
             local["segments"] += 1
-            coverage, confusion = match_reference(judgments[segment["segment_id"]],
-                                                  proposals, word_gaps(segment), pause_options)
+            coverage, confusion = match_reference(moments, proposals, word_gaps(segment), pause_options)
             local.update(coverage)
             local.update(confusion)
+            segment_meter.advance(1)
         if meter.done != audio_bytes:
             raise ValueError("English audit bytes did not match the sealed projection")
     except BaseException:
         meter.finish("failed")
+        segment_meter.finish("failed")
         raise
     meter.finish()
+    segment_meter.finish()
     totals = sum(calls.values(), Counter())
     report = {
         "scope": "English Basis publisher-reference diagnostic on the audit role",
@@ -146,6 +179,7 @@ def run_reference_audit(root, fs, prefix, segments, judgments, audio_bytes, word
                                         key=lambda counts: sorted(counts.items())),
         "agreement": agreement_scorecard(list(calls.values())),
         "edge_tolerance_ms": round(EDGE_TOLERANCE_SECONDS * 1000),
+        "waveform_scope": "merged publisher judgment windows with four seconds before and three after",
     }
     _write_json(root / "reports/basis-english-reference-audit.json", report)
     return report
