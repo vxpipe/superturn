@@ -1,5 +1,6 @@
 """Audit lexical visibility and length dependence on the frozen English development rows."""
 
+import argparse
 from collections import Counter
 from hashlib import sha256
 import json
@@ -9,9 +10,10 @@ import pyarrow.parquet as pq
 
 from .ami_calibration import _write_json
 from .ami_text_signal import fit
+from .audio import RATE
 from .shards import seed_for
 from .sources import data_root
-from .timed_text_pause_diagnostic import FREEZE, SHARD, pack_rows
+from .timed_text_pause_diagnostic import FREEZE, SHARD, pack_rows, pause_prefix
 from .turn_generation import normalize
 from .turn_metrics import auc
 from .turn_text_train import digest, load_fit, predict
@@ -93,8 +95,39 @@ def summarize(rows, attributes, scores):
             "oracle_repair_fixed_recall_ba": ba + repair["oracle_repaired_holds"] / (2 * holds)}
 
 
-def run(root):
-    from .audio import RATE
+def boundary_audit(rows, anchors, source):
+    counts = Counter()
+    open_endings = Counter()
+    last_word_gaps = []
+    for row in rows:
+        if not row["label"]:
+            continue
+        current = row["text"].split("\n")[1]
+        word = current.split()[-1]
+        if word not in OPEN:
+            continue
+        counts["open_ending_shifts"] += 1
+        open_endings[word] += 1
+        edge = anchors[row["rank"]]
+        raw = source[row["call"]]
+        aligned = [(item["start"], item["end"]) for item in raw["words"]
+                   if item["word"] and item["start"] is not None and item["end"] is not None
+                   and 0 <= item["start"] < item["end"]]
+        preceding = [end for _, end in aligned if round(end * RATE) <= round(edge * RATE)]
+        if preceding:
+            last_word_gaps.append((edge - max(preceding)) * 1000)
+        _, at_deadline = pause_prefix(raw, round((edge + .3) * RATE))
+        if current != at_deadline:
+            counts["changes_when_cut_at_deadline"] += 1
+            if at_deadline and at_deadline.split()[-1] not in OPEN:
+                counts["open_tag_changes_when_cut_at_deadline"] += 1
+        if any(start < edge < end <= edge + .3 for start, end in aligned):
+            counts["has_word_straddling_edge"] += 1
+    return {"counts": dict(counts), "ending_token_counts": dict(open_endings),
+            "last_pre_edge_word_gap_ms_p10_p50_p90": np.percentile(last_word_gaps, [10, 50, 90]).tolist()}
+
+
+def run(root, *, boundary_only=False):
     from .harper_partial_stt import english_membership
 
     if not (root / ".campaign-machine").is_file():
@@ -112,6 +145,11 @@ def run(root):
     if Counter(row["label"] for row in rows) != {0: 415, 1: 397}:
         raise ValueError("visibility diagnostic membership mismatch")
     source = pq.read_table(root / SHARD, columns=["words", "messages"]).to_pylist()
+    if boundary_only:
+        report = {"freeze_sha256": digest(freeze), **boundary_audit(rows, anchors, source)}
+        _write_json(root / "reports/publisher-timed-english-word-boundary.json", report)
+        print(json.dumps(report, indent=2))
+        return
     attributes = [tags(row, anchors[row["rank"]], source[row["call"]]) for row in rows]
     report = {"scope": "English publisher development only, fixed 0.5; oracle repair sensitivity is not a ceiling",
               "freeze_sha256": digest(freeze), "length_only_grouped_cv_auc": length_auc(rows), "arms": {}}
@@ -135,4 +173,6 @@ def run(root):
 
 
 if __name__ == "__main__":
-    run(data_root())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--boundary-only", action="store_true")
+    run(data_root(), boundary_only=parser.parse_args().boundary_only)

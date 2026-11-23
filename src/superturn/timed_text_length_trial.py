@@ -1,5 +1,6 @@
 """Compare capped length balancing with unweighted replay at fixed English coverage."""
 
+import argparse
 from hashlib import sha256
 import json
 
@@ -9,6 +10,7 @@ from .ami_calibration import _write_json
 from .progress import Progress
 from .sources import data_root
 from .timed_text_pause_diagnostic import FREEZE, pack_rows
+from .turn_metrics import auc
 from .turn_text_train import binary_metrics, digest, load_fit, predict, run as train
 
 SEEDS = (17, 29, 43, 71, 101)
@@ -31,7 +33,55 @@ def short_hold_delta(rows, unweighted, balanced):
             "paired_seed_and_turn_ci95": np.quantile(resampled / counts[draw_turns].sum(axis=1), [.025, .975]).tolist()}
 
 
-def run(root):
+def matched_ranking(rows, controls, balanced):
+    labels = np.array([row["label"] for row in rows], dtype=bool)
+    cell = np.array([not row["label"] and row["words"] >= 8 and 300 <= row["gap_ms"] < 800 for row in rows])
+    lengths = np.digitize([row["words"] for row in rows], [4, 8, 16])
+    target_recall = float(np.mean(np.asarray(controls)[:, labels] >= .5))
+    turns = {}
+    for index, row in enumerate(rows):
+        turns.setdefault(row["caller"], []).append(index)
+    groups = list(turns.values())
+    full = np.arange(len(rows))
+
+    def compare(scores, indices):
+        truth = labels[indices]
+        vals = scores[indices]
+        shifts = vals[truth]
+        hits = min(len(shifts), max(1, int(np.rint(target_recall * len(shifts)))))
+        threshold = np.sort(shifts)[-hits]
+        eligible = truth | cell[indices]
+        numerator, denominator = 0., 0
+        for band in range(4):
+            mask = lengths[indices] == band
+            positives = int(truth[mask].sum())
+            pairs = positives * (int(mask.sum()) - positives)
+            if pairs:
+                numerator += pairs * auc(vals[mask], truth[mask])
+                denominator += pairs
+        return np.array([np.mean(vals[cell[indices]] >= threshold), auc(vals[eligible], truth[eligible]),
+                         numerator / denominator, np.mean(shifts >= threshold)])
+
+    replay, trial = np.asarray(controls), np.asarray(balanced)
+    observed = np.mean([compare(a, full) for a in replay], axis=0), np.mean(
+        [compare(a, full) for a in trial], axis=0)
+    rng = np.random.default_rng(29)
+    draws = []
+    for _ in range(1000):
+        selected = np.concatenate([groups[i] for i in rng.integers(len(groups), size=len(groups))])
+        indices = rng.integers(len(SEEDS), size=len(SEEDS))
+        draws.append(np.mean([compare(trial[i], selected) - compare(replay[i], selected) for i in indices], axis=0))
+    names = ("matched_short_hold_false_complete", "cell_vs_shift_auc", "within_length_pair_weighted_auc",
+             "matched_actual_shift_recall")
+    report = {}
+    for i, name in enumerate(names):
+        control, intervention = float(observed[0][i]), float(observed[1][i])
+        report[name] = {"replay": control, "balanced": intervention, "delta": intervention - control,
+                        "paired_seed_turn_ci95": np.quantile(np.asarray(draws)[:, i], [.025, .975]).tolist()}
+    return {"target_control_shift_recall": target_recall, "metrics": report}
+
+
+def run(root, *, score_only=False):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("publisher trial inputs stay on Vast")
     freeze_path = root / "reports" / FREEZE
@@ -58,7 +108,8 @@ def run(root):
     for seed in SEEDS:
         for arm in trials:
             output = root / "runs" / f"turn-text-qwen3-length-{arm}-{seed}"
-            train(dataset, base, output, seed=seed, backbone="qwen3", balance_length=arm == "balanced")
+            if not score_only:
+                train(dataset, base, output, seed=seed, backbone="qwen3", balance_length=arm == "balanced")
             checkpoint = output / "checkpoint.pt"
             tokenizer, model = load_fit(checkpoint, base, "cuda", corpus_hash)
             scores = predict(tokenizer, model, [row["text"] for row in rows], "cuda")
@@ -90,9 +141,25 @@ def run(root):
                        "shift_recall": diff("all", "shift_recall") >= -.02,
                        "long_gap_auc": diff("long_gap", "auc") >= -.01,
                        "all_auc": diff("all", "auc") >= -.005}}
-    _write_json(root / "reports/publisher-timed-english-length-trial.json", report)
-    print(json.dumps({"rollup": rollup, "short_hold_comparison": delta, "gate": report["gate"]}, indent=2))
+    name = "publisher-timed-english-length-trial"
+    if score_only:
+        name += "-ranking"
+        ranking = matched_ranking(rows, arm_scores["replay"], arm_scores["balanced"])
+        measures = ranking["metrics"]
+        short = measures["matched_short_hold_false_complete"]
+        cell = measures["cell_vs_shift_auc"]
+        within = measures["within_length_pair_weighted_auc"]
+        report["matched_ranking"] = ranking
+        report["ranking_gate"] = {
+            "matched_short_hold": short["delta"] <= -.05 and short["paired_seed_turn_ci95"][1] < 0,
+            "cell_auc": cell["delta"] >= .03 and cell["paired_seed_turn_ci95"][0] > 0,
+            "within_length_auc": within["delta"] >= -.005,
+        }
+    _write_json(root / f"reports/{name}.json", report)
+    print(json.dumps({key: value for key, value in report.items() if key != "trials"}, indent=2))
 
 
 if __name__ == "__main__":
-    run(data_root())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--score-only", action="store_true", help="replay completed checkpoints and add ranking guards")
+    run(data_root(), score_only=parser.parse_args().score_only)
