@@ -49,6 +49,12 @@ when the independent audit supports use of the entire development pack.
 The two current listening panels audit a subset and their completion
 alone does not qualify all 358 inputs.
 
+Reserve the separate HarperValley calibration inputs on Vast with
+`uv run --no-sync python -m superturn.harper_text_inputs --role calibration`.
+This reuses the pinned historical validation roster and clocks, and
+reports word-timed first-query coverage. The calibration label audit
+and cutoff fit are separate steps. The text test role stays sealed.
+
 For the real-transcript challenge, run
 `uv run --no-sync python -m superturn.harper_text_transcript_benchmark`
 in a campaign job. It uses the pinned HarperValley development roster

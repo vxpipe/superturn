@@ -1,5 +1,6 @@
-"""Freeze causal text inputs for the staged HarperValley development cohort."""
+"""Freeze causal text inputs for the staged HarperValley English cohorts."""
 
+import argparse
 from collections import Counter, defaultdict
 from hashlib import sha256
 import json
@@ -96,22 +97,33 @@ def causal_example(segments, origins, agent_clock, vad, edge, common_start):
     }, None
 
 
-def run(root):
+def run(root, *, role="dev"):
     from .harper_partial_stt import pinned_membership
     from .harper_valley_audit import audit_call
 
     if not (root / ".campaign-machine").is_file():
         raise ValueError("real benchmark inputs stay on Vast")
-    pinned, membership = pinned_membership(root, "train")
+    if role not in {"dev", "calibration"}:
+        raise ValueError("only the staged development and calibration cohorts can be packed")
+    archived_role = "train" if role == "dev" else "validation"
+    pinned, membership = pinned_membership(root, archived_role)
+    if role == "calibration":
+        from .harper_valley_benchmark import pinned_split
+
+        roster, _, audit_sha = pinned_split(root, archived_role)
+        legacy = json.loads((root / "reports/harper-valley-development-stratified.json").read_text())
+        if (legacy["set"] != archived_role or legacy["decision_ms"] != 300
+                or legacy["audit_sha256"] != audit_sha):
+            raise ValueError("the calibration roster differs from its historical timing audit")
     by_call = defaultdict(dict)
     for _, call, local_stop, label, person in pinned:
         by_call[call][local_stop, label] = person
     raw = root / "raw/harper-valley"
-    destination = root / "cache/harper-valley/text-dev-v1.jsonl"
+    destination = root / "cache/harper-valley" / f"text-{role}-v1.jsonl"
     counts = Counter()
     records = []
     detect = silero()
-    meter = Progress("harper-causal-text-dev", len(by_call), "calls")
+    meter = Progress(f"harper-causal-text-{role}", len(by_call), "calls")
     for call, candidates in by_call.items():
         transcript = json.loads((raw / "data/transcript" / f"{call}.json").read_text())
         reproduced, evidence = [], {}
@@ -146,7 +158,7 @@ def run(root):
 
         audit_call(raw, call, detect, recover_clock=True, pauses=reproduced, evidence=evidence, observe=observe)
         if sorted(reproduced) != sorted(candidates):
-            raise ValueError("the Harper development membership changed")
+            raise ValueError(f"the Harper {role} membership changed")
         meter.advance(1)
     records.sort(key=lambda row: (row["call"], row["caller_sample"]))
     payload = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in records).encode()
@@ -155,15 +167,37 @@ def run(root):
         stream.write(payload)
         temporary = Path(stream.name)
     temporary.replace(destination)
-    result = {"scope": "causal English development inputs awaiting label qualification",
+    name = "development" if role == "dev" else "calibration"
+    result = {"scope": f"causal English {name} inputs awaiting label qualification",
               "archived_membership_sha256": membership, "rows": len(records),
               "callers": len({row["caller"] for row in records}),
               "serialized_sha256": sha256(payload).hexdigest(), "counts": dict(counts),
               "text_timing": "machine transcript word ends at the Silero stop; a delivered-STT proxy"}
-    _write_json(root / "reports/harper-text-dev-packing.json", result)
+    if role == "calibration":
+        speakers_by_stratum = defaultdict(set)
+        for row in records:
+            band = "300_to_800_ms" if row["gap_ms"] <= 800 else "over_800_ms"
+            speakers_by_stratum[row["label"], band].add(row["caller"])
+        result.update({
+            "archived_role": archived_role,
+            "archived_roster_calls": len(roster),
+            "archived_timing_audit_sha256": audit_sha,
+            "historical_exposure": "historical audio development benchmark; no text scores or fitted cutoff",
+            "archived_calls_with_proposals": len(by_call),
+            "archived_proposals": dict(Counter(label for _, _, _, label, _ in pinned)),
+            "caller_support": {f"{label}/{band}": len(speakers)
+                               for (label, band), speakers in sorted(speakers_by_stratum.items())},
+            "known_gap_support_by_elapsed_ms": {
+                str(elapsed): dict(Counter(row["label"] for row in records if row["gap_ms"] >= elapsed))
+                for elapsed in range(300, 800, 100)
+            },
+        })
+    _write_json(root / "reports" / f"harper-text-{role}-packing.json", result)
     meter.finish()
     print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
-    run(data_root())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--role", choices=("dev", "calibration"), default="dev")
+    run(data_root(), role=parser.parse_args().role)
