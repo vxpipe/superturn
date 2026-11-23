@@ -27,7 +27,7 @@ MODEL_FILES = {
     "encoder-epoch-99-avg-1-chunk-16-left-128.onnx": "a423883ce5754507fd941755ab0b5bc426a84ac670cbe21cf060e9e2c66dc660",
     "decoder-epoch-99-avg-1-chunk-16-left-128.onnx": "7bf787f90b194b307e5a4ad6a34fadb4e748304c35f78a8d66358a05b13ee6ef",
     "joiner-epoch-99-avg-1-chunk-16-left-128.onnx": "210591f72b3c56b8364f85f345dca240bc2b4c00632848f4aa923630d5639d3b",
-    "tokens.txt": "7c025e7de139195720829e522dac7d1947ae0a321a8c74b7b13f2926aca49139",
+    "tokens.txt": "49e3c2646595fd907228b3c6787069658f67b17377c60aeb8619c4551b2316fb",
 }
 RUNTIME = "1.12.23+cuda12.cudnn9"
 FRAME = RATE // 50
