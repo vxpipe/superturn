@@ -244,19 +244,21 @@ def add_e5_scalar_head(model):
     if width <= 0:
         raise ValueError("expected a fixed encoder hidden width")
     first, second = e5_probe_head_weights(width)
+    opset = next(item.version for item in model.opset_import if item.domain == "")
+    sum_input, sum_attrs = (["probe_axis"], {"keepdims": 0}) if opset >= 13 else ([], {"keepdims": 0, "axes": [1]})
     graph.input.extend([
         helper.make_tensor_value_info("caller_mask", TensorProto.FLOAT, ["batch_size", "sequence_length", 1]),
         helper.make_tensor_value_info("last_caller", TensorProto.INT64, ["batch_size", 2]),
     ])
-    graph.initializer.extend([numpy_helper.from_array(values, name) for name, values in (
-        ("probe_first", first), ("probe_second", second), ("probe_axis", np.array([1], dtype=np.int64)),
-    )])
+    graph.initializer.extend([numpy_helper.from_array(first, "probe_first"), numpy_helper.from_array(second, "probe_second")])
+    if sum_input:
+        graph.initializer.append(numpy_helper.from_array(np.array([1], dtype=np.int64), "probe_axis"))
     graph.node.extend([helper.make_node(op, inputs, [output], name=output, **attrs)
                        for op, inputs, output, attrs in (
         ("GatherND", [state.name, "last_caller"], "probe_last", {}),
         ("Mul", [state.name, "caller_mask"], "probe_masked", {}),
-        ("ReduceSum", ["probe_masked", "probe_axis"], "probe_sum", {"keepdims": 0}),
-        ("ReduceSum", ["caller_mask", "probe_axis"], "probe_count", {"keepdims": 0}),
+        ("ReduceSum", ["probe_masked", *sum_input], "probe_sum", sum_attrs),
+        ("ReduceSum", ["caller_mask", *sum_input], "probe_count", sum_attrs),
         ("Div", ["probe_sum", "probe_count"], "probe_mean", {}),
         ("Concat", ["probe_last", "probe_mean"], "probe_summary", {"axis": 1}),
         ("MatMul", ["probe_summary", "probe_first"], "probe_hidden", {}),
@@ -370,11 +372,12 @@ def token_needs(tokenizer, records, name):
     return report
 
 
-def encoder_screen(detail, languages, lengths, idle, loaded, load, expected_workers, *, timed_scope=None):
+def encoder_screen(detail, languages, lengths, idle, loaded, load, expected_workers, *, timed_scope=None, serving_cap=None):
     counts = {language: detail["token_needs"][language]["full_two_lines"] for language in languages}
     missing_languages = [language for language, count in counts.items() if not count["n"]]
     p90 = max((count["p90"] for count in counts.values() if count["n"]), default=None)
-    bracket = next((length for length in lengths if p90 is not None and length >= p90), None)
+    retained_p90 = min(p90, serving_cap) if p90 is not None and serving_cap is not None else p90
+    bracket = next((length for length in lengths if retained_p90 is not None and length >= retained_p90), None)
     key = str(bracket)
     gates = {
         "all_screen_languages_represented": not missing_languages,
@@ -389,6 +392,7 @@ def encoder_screen(detail, languages, lengths, idle, loaded, load, expected_work
     return {
         "languages": languages, "missing_languages": missing_languages, "largest_p90": p90,
         "conservative_measured_bucket": bracket, "p90_exceeds_128": p90 is not None and p90 > LENGTHS[-1],
+        "serving_token_cap": serving_cap,
         "timed_input_scope": timed_scope or "English synthetic strings at matching token lengths",
         "checks": gates, "passed": all(gates.values()),
     }
@@ -429,10 +433,11 @@ def pack_encoder(tokenizer, text, limit, name):
     return tokenizer.post_process(Encoding.merge([fixed, prior]), caller, add_special_tokens=True)
 
 
-def native_p90_inputs(tokenizer, records, name, language, token_stats):
+def native_p90_inputs(tokenizer, records, name, language, token_stats, *, serving_cap=None):
     if not token_stats["n"]:
         raise ValueError(f"no synthetic examples for {language}")
-    length = ceil(token_stats["p90"])
+    original_length = ceil(token_stats["p90"])
+    length = min(original_length, serving_cap) if serving_cap is not None else original_length
     if not 8 <= length <= LENGTHS[-1]:
         raise ValueError(f"{language} p90 of {length} tokens is outside the measured input range")
     by_length = []
@@ -441,13 +446,38 @@ def native_p90_inputs(tokenizer, records, name, language, token_stats):
             continue
         text = row["text"]
         packed = pack_encoder(tokenizer, text, LENGTHS[-1], name)
-        if len(packed.ids) >= length and 1 in packed.sequence_ids:
+        if len(packed.ids) >= min(original_length, LENGTHS[-1]) and 1 in packed.sequence_ids:
             by_length.append((len(packed.ids), text))
     # Use the nearest distinct examples without stretching or repeating caller text.
     cases = list(dict.fromkeys(text for _, text in sorted(by_length)))[:32]
     if not cases:
         raise ValueError(f"no real-length synthetic fixtures for {language} at {length} tokens")
     return length, cases
+
+
+def truncation_counts(tokenizer, records, name, language, limit):
+    from collections import Counter
+
+    counts = Counter()
+    prefix = "query: " if name.startswith("me5") else ""
+    prefix_tokens = len(tokenizer.encode(prefix, add_special_tokens=False).ids)
+    for row in records:
+        if row["language"] != language:
+            continue
+        previous, current = row["text"].split("\n")
+        packed = pack_encoder(tokenizer, row["text"], limit, name)
+        roles = packed.sequence_ids
+        caller_before = len(tokenizer.encode(current, add_special_tokens=False).ids)
+        caller_after = roles.count(1)
+        counts["rows"] += 1
+        counts["caller_trimmed"] += caller_after < caller_before
+        if previous != "---":
+            prior_before = len(tokenizer.encode(previous, add_special_tokens=False).ids)
+            prior_after = max(0, roles.count(0) - prefix_tokens)
+            counts["rows_with_prior"] += 1
+            counts["prior_trimmed"] += prior_after < prior_before
+            counts["all_prior_tokens_dropped"] += prior_after == 0
+    return dict(counts)
 
 
 def encoder_feed(tokenizer, text, limit, name, inputs):
@@ -580,7 +610,7 @@ def causal_trials(session, tokenizer, texts, warmups, iterations, precision):
 
 
 def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTHS, precisions=("fp32", "int8"),
-        native_p90=None):
+        native_p90=None, serving_cap=None):
     import onnxruntime as ort
     from tokenizers import Tokenizer
 
@@ -609,10 +639,12 @@ def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTH
             model_lengths, exact = lengths, None
             if native_p90:
                 stats = detail["token_needs"][native_p90]["full_two_lines"]
-                length, exact = native_p90_inputs(tokenizer, records, name, native_p90, stats)
+                length, exact = native_p90_inputs(tokenizer, records, name, native_p90, stats, serving_cap=serving_cap)
                 model_lengths = (length,)
                 detail["native_p90_fixtures"] = {"language": native_p90, "count": len(exact), "length": length,
                                                  "synthetic_corpus_sha256": digest(corpus)}
+                if serving_cap is not None:
+                    detail["serving_cap_truncation"] = truncation_counts(tokenizer, records, name, native_p90, serving_cap)
             result["encoders"][name] = detail
             paths = (causal_paths(root) if name == "smollm2" else e5_block_paths(root, name) if name in E5_DEPTHS
                      else graph_paths(root, name))
@@ -637,7 +669,8 @@ def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTH
                     languages = (native_p90,) if native_p90 else ("en",) if name == "minilm-en" else LANGUAGES
                     detail["screen_at_p90_bucket"] = encoder_screen(
                         detail, languages, model_lengths, idle, loaded, load, expected_workers=len(placement) - 1,
-                        timed_scope=f"{native_p90} synthetic inputs at rounded-up p90" if native_p90 else None,
+                        timed_scope=f"{native_p90} synthetic inputs at rounded-up p90 and declared cap" if native_p90 else None,
+                        serving_cap=serving_cap,
                     )
                 _write_json(root / report_name, result)
     finally:
@@ -660,6 +693,7 @@ if __name__ == "__main__":
     parser.add_argument("--lengths", type=int, nargs="+", default=LENGTHS)
     parser.add_argument("--precisions", nargs="+", choices=("fp32", "int8"), default=("fp32", "int8"))
     parser.add_argument("--native-p90", choices=LANGUAGES, help="time existing same-language inputs at their p90 length")
+    parser.add_argument("--cap-tokens", type=int, help="time capped inputs using the original native p90 fixtures")
     args = parser.parse_args()
     if Path(args.report_name).name != args.report_name:
         parser.error("use a plain report filename")
@@ -678,5 +712,8 @@ if __name__ == "__main__":
         if args.native_p90 and ("smollm2" in args.models or
                                 ("minilm-en" in args.models and args.native_p90 != "en")):
             parser.error("native p90 requires an encoder for the requested language")
+        if args.cap_tokens is not None and (not args.native_p90 or not 8 <= args.cap_tokens <= LENGTHS[-1]):
+            parser.error("a declared cap requires native p90 and a length from 8 to 128")
         run(args.artifacts, args.models, args.corpus, args.warmups, args.iterations, args.report_name,
-            lengths=lengths, precisions=tuple(dict.fromkeys(args.precisions)), native_p90=args.native_p90)
+            lengths=lengths, precisions=tuple(dict.fromkeys(args.precisions)), native_p90=args.native_p90,
+            serving_cap=args.cap_tokens)
