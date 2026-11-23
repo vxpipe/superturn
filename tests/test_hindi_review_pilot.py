@@ -7,11 +7,13 @@ from superturn.paired_call_review import QUIET
 
 def test_preflight_excludes_assisted_outcome_changed_after_first_choice():
     event = {"outcome": "resume", "views": {
-        "assisted": {"first_outcome": "handoff", "judgment": {"confidence": ""}},
+        "assisted": {"first_outcome": "handoff", "judgment": {"confidence": "", "language": "hindi"}},
     }}
     assert ballot_outcome(event) == (None, "assisted_first_and_final_disagree")
     event["views"]["assisted"]["first_outcome"] = "resume"
     assert ballot_outcome(event) == ("resume", None)
+    event["views"]["assisted"]["judgment"]["language"] = "mixed"
+    assert ballot_outcome(event) == (None, "review_language_not_hindi")
 
 
 def test_preflight_requires_focal_activity_and_bilateral_quiet_without_moving_edge():

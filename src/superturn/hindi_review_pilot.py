@@ -25,6 +25,8 @@ def ballot_outcome(event):
     if outcome not in OUTCOMES:
         return None, "unclear_or_conflicting"
     views = event["views"]
+    if {view["judgment"]["language"] for view in views.values()} - {"hindi"}:
+        return None, "review_language_not_hindi"
     if any(view["judgment"]["confidence"] == "1" for view in views.values()):
         return None, "low_reported_confidence"
     if "assisted" in views and views["assisted"]["first_outcome"] != outcome:

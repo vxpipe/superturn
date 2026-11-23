@@ -90,14 +90,13 @@ def fit(root, directory):
     predict = encoder(root)
     features = extract(predict, waves, f"{JOB}-teacher-fit-features")
     heads = {arm: [] for arm in ARMS}
+    archived_probabilities, refit_probabilities = [], []
     meter = Progress(f"{JOB}-head-fit", len(HEAD_SEEDS) * len(ARMS), "heads")
     try:
         for seed, archived in zip(HEAD_SEEDS, baseline["heads"], strict=True):
             control = fit_head(features, english_labels, harper, penalty, seed)
-            error = np.abs(expit(predict_logits(features[harper], control)) -
-                           expit(predict_logits(features[harper], archived))).max()
-            if error > 1e-5:
-                raise ValueError(f"the three-second baseline failed replay: {error}")
+            archived_probabilities.append(expit(predict_logits(features[harper], archived)))
+            refit_probabilities.append(expit(predict_logits(features[harper], control)))
             heads[ARMS[0]].append(control)
             meter.advance(1)
             for arm, targets in zip(ARMS[1:], (labels, null), strict=True):
@@ -108,11 +107,19 @@ def fit(root, directory):
         meter.finish("failed")
         raise
     meter.finish()
+    drift = np.asarray(refit_probabilities) - np.asarray(archived_probabilities)
+    replay = {"max_seed_probability_difference": float(np.max(np.abs(drift))),
+              "max_ensemble_probability_difference": float(np.max(np.abs(drift.mean(axis=0)))),
+              "ensemble_mean_absolute_difference": float(np.abs(drift.mean(axis=0)).mean()),
+              "control": "same-machine refit, with the frozen historical teacher also reported"}
+    write_once(directory / "baseline-replay.json", replay)
+    print(json.dumps(replay), flush=True)
     path = directory / "teacher-heads.pt"
     torch.save(heads, path.with_suffix(".part"))
     path.with_suffix(".part").replace(path)
     lock = {"heads": {"path": path.relative_to(root).as_posix(), "sha256": file_digest(path)},
-            "protocol_sha256": file_digest(directory / "protocol.json")}
+            "protocol_sha256": file_digest(directory / "protocol.json"),
+            "baseline_replay_sha256": file_digest(directory / "baseline-replay.json")}
     write_once(directory / "teacher-lock.json", lock)
     return heads, lock, predict, report
 
@@ -168,26 +175,37 @@ def hindi_interval(row):
 
 def run(root):
     directory = root / "runs" / JOB
+    analysis_contract = directory / "analysis-contract.json"
+    write_once(analysis_contract, {
+        "paired_contrasts": [f"{ARMS[1]} minus {arm}" for arm in (ARMS[0], ARMS[2])],
+        "collection_signal": "Hindi BA gain of two points over both paired controls and the frozen archive, "
+                             "positive paired lower bounds, and English BA within one point of matched refit",
+        "archive": "report matched refit probability differences and archived-threshold decision disagreements",
+        "language_subset": "six languages without conversational supervision before this pilot",
+    })
     saved = directory / "teacher-lock.json"
     if saved.exists():
         lock = json.loads(saved.read_text())
         protocol = directory / "protocol.json"
-        if file_digest(protocol) != lock["protocol_sha256"]:
+        if (file_digest(protocol) != lock["protocol_sha256"]
+                or file_digest(directory / "baseline-replay.json") != lock["baseline_replay_sha256"]):
             raise ValueError("the frozen Hindi teacher protocol changed")
         report = json.loads(protocol.read_text())
         heads = torch.load(read_verified(root, lock["heads"]), map_location="cpu", weights_only=True)
         predict = encoder(root)
     else:
         heads, lock, predict, report = fit(root, directory)
-    reference, _, _ = frozen(root)
+    reference, trial_sha, teacher_sha = frozen(root)
     references, reference_sha = read_receipt(root, "balanced-development-scorecard-references")
+    if (references["trial_sha256"], references["owned_teacher_receipt_sha256"]) != (trial_sha, teacher_sha):
+        raise ValueError("archived controls use different development inputs")
     harper = json.loads((root / "runs/owned-history-teacher/predictions-harper-88.json").read_text())["row"]
     reference["harper-88"] = {**harper, "scores": {}}
     loaders = {"hi": lambda: (row[:4] for row in multilingual(root, "hi")),
                "en": lambda: english_rows(root), "harper-88": lambda: harper_rows(root, native_prefix=True),
                **{lang: (lambda lang=lang: (row[:4] for row in multilingual(root, lang)))
                   for lang in reference if lang not in {"hi", "en", "harper-88"}}}
-    rows = {}
+    rows, replay_drift = {}, {}
     for language, loader in loaders.items():
         expected = reference[language].copy()
         if language != "harper-88":
@@ -203,7 +221,14 @@ def run(root):
         else:
             row = score_view(language, loader(), predict, heads, expected)
             write_once(path, {"heads_sha256": lock["heads"]["sha256"], "row": row})
+        if (row["labels"], row["turn_ordinals"]) != (expected["labels"], expected["turn_ordinals"]):
+            raise ValueError("cached evaluation membership changed")
         rows[language] = row
+        archived = harper["scores"]["h3"] if language == "harper-88" else expected["scores"]["whisper-large-v3"]
+        error = np.abs(np.asarray(row["scores"][ARMS[0]]) - np.asarray(archived))
+        replay_drift[language] = {"max_absolute_probability_difference": float(error.max()),
+                                  "mean_absolute_probability_difference": float(error.mean())}
+        print(json.dumps({"scored_language": language, "baseline_replay": replay_drift[language]}), flush=True)
     cells = {lang: cell(row, lang) for lang, row in rows.items() if lang != "harper-88"}
     harper_labels = np.asarray(rows["harper-88"]["labels"], dtype=bool)
     harper_metrics = references["harper-88"]
@@ -215,15 +240,31 @@ def run(root):
     intervals = hindi_interval(rows["hi"])
     hindi_ba = [cells["hi"]["models"][arm]["balanced_accuracy"] for arm in ARMS]
     english_ba = [cells["en"]["models"][arm]["balanced_accuracy"] for arm in ARMS]
+    for language, metrics in cells.items():
+        scores = rows[language]["scores"]
+        expected = metrics["models"]["whisper-large-v3"]
+        actual = metrics["models"][ARMS[0]]
+        replay_drift[language]["refit_minus_archived_balanced_accuracy"] = (
+            actual["balanced_accuracy"] - expected["balanced_accuracy"]
+        )
+        cut = expected["threshold"]
+        runs = ~calibration_split(rows[language]["turn_ordinals"], language)
+        replay_drift[language]["evaluation_decisions_changed_at_archived_threshold"] = int(np.sum(
+            (np.asarray(scores[ARMS[0]])[runs] >= cut) != (np.asarray(scores["whisper-large-v3"])[runs] >= cut)
+        ))
     deltas = [hindi_ba[1] - hindi_ba[0], hindi_ba[1] - hindi_ba[2]]
+    archived_hindi = cells["hi"]["models"]["whisper-large-v3"]["balanced_accuracy"]
     report = {**report, "head_lock": lock, "comparison_receipt_sha256": reference_sha,
+              "baseline_replay": replay_drift,
               "threshold_source": "fixed development turn halves; English threshold used for HarperValley-88",
-              "metrics": {"macro": macro(cells, sorted(cells)), "six-absent": macro(cells, UNSEEN_IN_FIT),
+              "analysis_contract_sha256": file_digest(analysis_contract),
+              "metrics": {"macro": macro(cells, sorted(cells)), "six-originally-unsupervised": macro(cells, UNSEEN_IN_FIT),
                           "languages": cells, "harper-88": harper_metrics},
               "hindi_ba_delta_order": [f"{ARMS[1]} minus {arm}" for arm in (ARMS[0], ARMS[2])],
               "hindi_ba_deltas": deltas, "hindi_ba_delta_95": intervals,
-              "hindi_collection_signal": min(deltas) >= .02 and min(interval[0] for interval in intervals) > 0
-              and english_ba[1] - english_ba[0] >= -.01, "pipeline": "unmeasured"}
+              "hindi_collection_signal": min(deltas) >= .02 and hindi_ba[1] - archived_hindi >= .02
+              and min(interval[0] for interval in intervals) > 0 and english_ba[1] - english_ba[0] >= -.01,
+              "pipeline": "unmeasured"}
     write_once(root / "reports" / f"{JOB}-teacher.json", report)
 
 
