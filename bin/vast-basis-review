@@ -12,6 +12,9 @@ case "${2:-basis}" in
   harper-plausibility) packet=harper-plausibility; port=8772; bundle=superturn-harper-text-plausibility
           flags="--harper --harper-plausibility"
           ballots="REVIEW_BALLOTS=$REMOTE_DATA/labels/harper-text-plausibility-review" ;;
+  publisher-plausibility) packet=publisher-plausibility; port=8773; bundle=superturn-publisher-text-plausibility
+          flags="--publisher-plausibility"
+          ballots="REVIEW_BALLOTS=$REMOTE_DATA/labels/publisher-text-plausibility-review" ;;
   *) die "unknown review packet" ;;
 esac
 
@@ -34,5 +37,5 @@ case "${1:-}" in
     exec ssh "${opts[@]}" -o ExitOnForwardFailure=yes -fN \
       -L "127.0.0.1:$port:127.0.0.1:$port" "$SSH_HOST"
     ;;
-  *) die "usage: bin/vast-basis-review start|tunnel [basis|harper|harper-supplement|harper-plausibility]" ;;
+  *) die "usage: bin/vast-basis-review start|tunnel [basis|harper|harper-supplement|harper-plausibility|publisher-plausibility]" ;;
 esac
