@@ -77,7 +77,7 @@ def report_for(items):
     return result
 
 
-def run(root, dataset, base, checkpoint, device):
+def run(root, dataset, base, checkpoint, device, report_name="harper-real-transcript-benchmark.json"):
     from .harper_valley_benchmark import pinned_split
 
     if not (root / ".campaign-machine").is_file():
@@ -148,7 +148,7 @@ def run(root, dataset, base, checkpoint, device):
             "current_only_ablation": report_for(masked),
             "current_only_within_turn_ranking": sum(masked_outcomes) / len(masked_outcomes),
         }
-    _write_json(root / "reports/harper-real-transcript-benchmark.json", result)
+    _write_json(root / "reports" / report_name, result)
     print(json.dumps(result, indent=2))
 
 
@@ -159,5 +159,8 @@ if __name__ == "__main__":
     parser.add_argument("--base", type=Path, default=root / "cache/turn-text-e5-small")
     parser.add_argument("--checkpoint", type=Path, default=root / "runs/turn-text-e5-v1/checkpoint.pt")
     parser.add_argument("--device", choices=("cuda", "cpu"), default="cuda")
+    parser.add_argument("--report-name", default="harper-real-transcript-benchmark.json")
     args = parser.parse_args()
-    run(root, args.dataset, args.base, args.checkpoint, args.device)
+    if Path(args.report_name).name != args.report_name or not args.report_name.endswith(".json"):
+        parser.error("--report-name must be a JSON filename")
+    run(root, args.dataset, args.base, args.checkpoint, args.device, args.report_name)

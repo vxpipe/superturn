@@ -57,3 +57,14 @@ runs followed by an agent reply with the same runs cut halfway or two
 words early. It reports exact current-word-count and context matching,
 a word-count-only baseline, and previous-turn masking. This challenge
 uses deliberate cuts. The 300 ms real-pause scorecard has its own audit.
+
+For the near-end training intervention, derive a new version from the
+published synthetic corpus with
+`python -m superturn.turn_text_near_end datasets/turn-completion-v1 DESTINATION`.
+The broad version replaces some early holds with later prefixes while
+keeping all shifts. Add `--english-length-control` to instead replace
+English holds by word-count-matched prefixes cut two words before the
+end of completed synthetic turns. Both keep the original validation bytes.
+Use the derived directory with the trainer's `--dataset` and use a
+different `--output`. For transcript evaluation use the matching
+`--dataset` and `--checkpoint` with a distinct `--report-name`.
