@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+# Restore the sealed AMI training windows for the paired mono replay.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+[[ -f .env ]] && { set -a; source .env; set +a; }
+: "${SUPERTURN_DATA:?set SUPERTURN_DATA}"
+: "${SUPERTURN_REMOTE:?set SUPERTURN_REMOTE}"
+[[ -f "$SUPERTURN_DATA/.campaign-machine" ]] || { echo "campaign machine required" >&2; exit 2; }
+[[ "$SUPERTURN_REMOTE" =~ ^[A-Za-z0-9_-]+:[A-Za-z0-9._-]+/?$ ]] || exit 2
+remote="${SUPERTURN_REMOTE%/}/superturn"
+
+if [[ "${1:-}" == "--model" ]]; then
+  uv run --no-sync python -m superturn.ami_mono_control --stage-model
+  uv pip install 'pyannote.audio==4.0.3'
+  exit
+fi
+[[ $# -eq 0 ]] || exit 2
+
+for path in labels/ami-hard-pauses.json reports/ami-hard-pauses-plan.json; do
+  if [[ ! -f "$SUPERTURN_DATA/$path" ]]; then
+    rclone copyto "$remote/$path" "$SUPERTURN_DATA/$path"
+  fi
+done
+uv run --no-sync python -m superturn.sync_progress restore-ami-mono-inputs \
+  "$remote/raw/ami-hard-pauses" "$SUPERTURN_DATA/raw/ami-hard-pauses"
+uv run --no-sync python -m superturn.ami_mono_control --verify-inputs
