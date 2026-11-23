@@ -39,6 +39,11 @@ sending each batch. The spend receipt uses uncached list prices and keeps a
 conservative charge for requests without usage receipts. The provider's
 billing statement is authoritative.
 
+`bin/backup-turn-generation` copies a consistent checkpoint through Vast
+to private R2 and reads it back to verify its checksum. It prints the hash
+used in `runs/turn-generation-v1/checkpoints/<hash>.json`. To resume on a
+new checkout, restore that file as `data/turn-generation-v1/state.json`.
+
 Gemini 3.8 Flash generates structured text. Local code normalizes
 punctuation and Unicode, checks script, rejects contact-like strings and
 deduplicates accepted samples. The main run uses one model call per batch.

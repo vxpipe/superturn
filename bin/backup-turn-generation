@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Preserve one complete generation transaction in private R2 through Vast.
+source "$(dirname "$0")/_lib.sh"
+
+generation_dir="${1:-$ROOT/data/turn-generation-v1}"
+[[ -s "$generation_dir/state.json" ]] || die "no generation checkpoint"
+snapshot="$(mktemp)"
+trap 'rm -f "$snapshot"' EXIT
+cp "$generation_dir/state.json" "$snapshot"
+read -r digest _ < <(sha256sum "$snapshot")
+
+read -r -d '' backup <<'REMOTE' || true
+set -euo pipefail
+cd "$1"
+set -a
+. ./.env
+set +a
+: "${SUPERTURN_REMOTE:?missing storage remote}"
+umask 077
+snapshot="$(mktemp)"
+trap 'rm -f "$snapshot"' EXIT
+cat > "$snapshot"
+read -r found _ < <(sha256sum "$snapshot")
+test "$found" = "$2"
+target="${SUPERTURN_REMOTE%/}/superturn/runs/turn-generation-v1/checkpoints/$2.json"
+rclone copyto "$snapshot" "$target" --log-level ERROR
+test "$(rclone cat "$target" | sha256sum | cut -d' ' -f1)" = "$2"
+REMOTE
+printf -v command 'bash -c %q backup %q %q' "$backup" "$REMOTE_REPO" "$digest"
+remote "$command" < "$snapshot"
+printf 'Verified generation checkpoint %s\n' "$digest"
