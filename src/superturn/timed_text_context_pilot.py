@@ -84,6 +84,16 @@ def run(root):
     trial = report["arms"]["new"]
     heldout = trial["synthetic_heldout"]
     report["short_hold_comparison"] = primary
+    report["length_strata"] = {}
+    for band, selected in bands.items():
+        for low, high in ((1, 4), (4, 8), (8, float("inf"))):
+            group = [row for row in selected if low <= len(row["text"].split("\n")[1].split()) < high]
+            if group:
+                report["length_strata"][f"{band}/{low}_to_{high}_caller_words_exclusive"] = {
+                    arm: binary_metrics([(predictions[arm, "context"][row["rank"]], row["label"])
+                                         for row in group])
+                    for arm in ("new", "replay")
+                }
     report["gate"] = {
         "short_hold_improvement": (primary["delta_false_complete"] <= -.05
                                    and primary["paired_turn_bootstrap_95"][1] < 0),
