@@ -12,6 +12,7 @@ from .basis_stage0 import CUT_ROLES, joint_cut, recording_seconds
 from .basis_stage0_yield import json_lines
 from .progress import Progress
 from .sources import data_root, load_sources
+from .yodas_mono_diarization import disjoint_bouts
 
 FIT_AUDIO_CEILING = 5_000_000_000
 PAUSE_OPTIONS = {"holding": "hold", "normal_gap": "finished", "awkward_gap": "finished",
@@ -46,6 +47,79 @@ def vote_census(rows, roles, eligible_calls):
     return summary, priorities, annotated
 
 
+def timing_support(segment, judgments):
+    """Check whether released word times independently support the judgment edges."""
+    words = sorted((word["start"], word["end"], utterance["speaker"])
+                   for utterance in segment["transcript"] for word in utterance["words"]
+                   if word["start"] < word["end"])
+    bouts = list(disjoint_bouts(words))
+    gaps = [(last[0][1], first[0][0], last[0][2], first[0][2])
+            for (_, last), (first, _) in zip(bouts, bouts[1:])
+            if len(last) == len(first) == 1 and first[0][0] - last[0][1] >= .3]
+    results = Counter()
+    for judgment in judgments:
+        category = PAUSE_OPTIONS[judgment["label"]]
+        focal, = judgment["speakers"]
+        matches = [(focal == next_voice) for stop, onset, voice, next_voice in gaps
+                   if voice == focal and abs(judgment["start"] - stop) <= .35
+                   and abs(judgment["end"] - onset) <= .35]
+        if len(matches) != 1:
+            status = "missing" if not matches else "ambiguous"
+        else:
+            status = "supported" if matches[0] == (category == "hold") else "role_mismatch"
+        results[f"{category}_{status}"] += 1
+    return results
+
+
+def inspect_fit_timings(fs, prefix, fit_judgments, audio_paths):
+    sidecar = f"{prefix}/en/segments.jsonl"
+    size = fs.info(sidecar)["size"]
+    if not 0 < size <= 130_000_000:
+        raise ValueError("the English word timing file exceeds its metadata cap")
+    meter = Progress("basis-english-word-time-preflight", size, "B")
+    supported, seen, audio_bytes = Counter(), set(), 0
+    first_track = None
+    with fs.open(sidecar, "rb", block_size=8 * 1024 * 1024) as handle:
+        for row in json_lines(handle, meter):
+            ident = row["segment_id"]
+            if ident not in fit_judgments:
+                continue
+            if ident in seen:
+                raise ValueError("a fit pause segment appears twice")
+            seen.add(ident)
+            supported.update(timing_support(row, fit_judgments[ident]))
+            for path in row["tracks"].values():
+                audio_bytes += audio_paths[path]
+                first_track = first_track or path
+    if meter.done != size or seen != set(fit_judgments):
+        raise ValueError("the English word timing file did not cover the fit judgment list")
+    meter.finish()
+    return {"fit_pause_segments": len(seen), "fit_pause_segment_whole_track_bytes": audio_bytes,
+            "word_timing_counts": dict(supported), "word_sidecar_bytes": size}, first_track
+
+
+def flac_seek_table(handle, size):
+    """Read only FLAC metadata block headers without fetching audio frames."""
+    if handle.read(4) != b"fLaC":
+        raise ValueError("the selected Basis track does not have a native FLAC header")
+    offset, requested, has_seek_table = 4, 4, False
+    for _ in range(32):
+        handle.seek(offset)
+        header = handle.read(4)
+        requested += 4
+        if len(header) != 4:
+            raise ValueError("the Basis FLAC metadata header is incomplete")
+        block_type = header[0] & 127
+        length = int.from_bytes(header[1:], "big")
+        offset += 4 + length
+        if offset >= size:
+            raise ValueError("the Basis FLAC metadata overlaps the listed end")
+        has_seek_table |= block_type == 3 and length >= 18
+        if header[0] & 128:
+            return {"sampled_track_has_seek_table": has_seek_table, "header_bytes_requested": requested}
+    raise ValueError("the Basis FLAC metadata exceeded the bounded header walk")
+
+
 def run(root):
     from huggingface_hub import HfApi, HfFileSystem
 
@@ -58,6 +132,7 @@ def run(root):
     source = load_sources()["basis_conversations"]
     repo, revision = source.get("repo"), source.get("revision")
     token = os.environ["HF_TOKEN"]
+    prefix = f"datasets/{repo}@{revision}"
     entries = defaultdict(list)
     api = HfApi(token=token)
     for entry in api.list_repo_tree(repo, repo_type="dataset", revision=revision, recursive=True):
@@ -76,25 +151,37 @@ def run(root):
     roles = {call: role for role, batch in membership["en"].items() for call in batch}
     english = {call.name: call for call in calls["en"]}
     fs = HfFileSystem(token=token)
-    path = f"datasets/{repo}@{revision}/en/human_judgments.jsonl"
+    path = f"{prefix}/en/human_judgments.jsonl"
     size = fs.info(path)["size"]
     if not 0 < size < 3_000_000:
         raise ValueError("the English judgment file exceeds its metadata cap")
     meter = Progress("basis-english-judgments", size, "B")
+    fit_judgments = defaultdict(list)
     with fs.open(path, "rb") as handle:
-        summary, priorities, annotated = vote_census(json_lines(handle, meter), roles, english)
+        rows = list(json_lines(handle, meter))
+    summary, priorities, annotated = vote_census(rows, roles, english)
+    for row in rows:
+        if (roles.get(row["conversation_id"]) == "fit" and row["question"] == "pause"
+                and row["label"] in PAUSE_OPTIONS and len(row.get("speakers", [])) == 1):
+            fit_judgments[row["segment_id"]].append(row)
     if size != meter.done:
         raise ValueError("the English judgment file differs from the pinned size")
     meter.finish()
     excluded = [call for name, call in english.items() if name not in roles]
     fit_annotated = [english[call] for call in membership["en"]["fit"] if priorities[call]]
     all_fit_annotated = [english[call] for call in membership["en"]["fit"] if call in annotated]
+    audio_sizes = {entry.path: entry.size for entry in entries["en"]}
+    timing, first_track = inspect_fit_timings(fs, prefix, fit_judgments, audio_sizes)
+    if first_track:
+        with fs.open(f"{prefix}/{first_track}", "rb", cache_type="none") as handle:
+            timing.update(flac_seek_table(handle, audio_sizes[first_track]))
     projected = {
         "fit_human_annotated_calls": len(all_fit_annotated),
         "fit_human_annotated_whole_track_bytes": sum(call.size for call in all_fit_annotated),
         "fit_consensus_annotated_calls": len(fit_annotated),
         "fit_consensus_annotated_whole_track_bytes": sum(call.size for call in fit_annotated),
         "fit_audio_ceiling_bytes": FIT_AUDIO_CEILING,
+        **timing,
     }
     result = {
         "scope": "English metadata census, existing calibration and test stay sealed",
@@ -106,7 +193,7 @@ def run(root):
                      "recorded_seconds": round(sum(duration["en", call.name] for call in excluded), 3)},
         "judgments_by_role": {role: dict(summary[role]) for role in (*CUT_ROLES, "excluded")},
         "projection": projected,
-        "metadata_bytes": recording_bytes + size,
+        "metadata_bytes": recording_bytes + size + timing["word_sidecar_bytes"],
         "audio_bytes_downloaded": 0,
     }
     _write_json(receipt_dir / "basis-english-pilot-census.json", result)
