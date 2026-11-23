@@ -12,7 +12,8 @@ import wave
 import numpy as np
 
 from .ami_calibration import _write_json
-from .audio import RATE
+from .audio import RATE, silero
+from .progress import Progress
 from .shards import seed_for
 from .sources import data_root
 
@@ -263,16 +264,110 @@ def summarize_calls(calls):
             "by_proposed_class": classes}
 
 
-def score(root, ballot):
-    reference = REVIEW_ROOT / "private-reference.json"
+def verified_packet(root, review_root):
+    reference = review_root / "private-reference.json"
     receipt = json.loads((root / "reports/harper-text-listening-packet.json").read_text())
-    if sha256(reference.read_bytes()).hexdigest() != receipt["private_reference_sha256"]:
+    payload = reference.read_bytes()
+    if sha256(payload).hexdigest() != receipt["private_reference_sha256"]:
         raise ValueError("the Harper listening reference changed")
-    windows = json.loads(reference.read_text())["windows"]
-    for ident, record in windows.items():
-        audio = REVIEW_ROOT / "harper-review" / "audio" / f"{ident}.wav"
+    packet = json.loads(payload)
+    if packet["membership_sha256"] != receipt["membership_sha256"]:
+        raise ValueError("the Harper listening membership changed")
+    for ident, record in packet["windows"].items():
+        audio = review_root / "harper-review" / "audio" / f"{ident}.wav"
         if sha256(audio.read_bytes()).hexdigest() != record["audio_sha256"]:
             raise ValueError("a Harper listening waveform changed")
+    return packet, receipt
+
+
+def gap_band(gap_ms):
+    return "300_to_800_ms" if gap_ms <= 800 else "over_800_ms"
+
+
+def window_input_keys(record, caller_offset):
+    anchor = record["anchor_ms"]
+    for proposal in record["proposals"]:
+        if anchor is None or proposal["stop_ms"] == anchor:
+            stop = proposal["stop_ms"] * RATE / 1000
+            onset = proposal["onset_ms"] * RATE / 1000
+            if int(stop) != stop or int(onset) != onset:
+                raise ValueError("the sealed proposal is off the PCM sample grid")
+            caller_sample = record["start_sample"] + caller_offset + int(stop)
+            yield (record["call"], caller_sample), proposal["outcome"], int(onset - stop)
+
+
+def audit_input_coverage(root, review_root=REVIEW_ROOT):
+    from .harper_valley_audit import audit_call
+
+    if not (root / ".campaign-machine").is_file():
+        raise ValueError("real benchmark inputs stay on Vast")
+    packet, receipt = verified_packet(root, review_root)
+    pack_receipt = json.loads((root / "reports/harper-text-dev-packing.json").read_text())
+    payload = (root / "cache/harper-valley/text-dev-v1.jsonl").read_bytes()
+    if (sha256(payload).hexdigest() != pack_receipt["serialized_sha256"]
+            or packet["membership_sha256"] != pack_receipt["archived_membership_sha256"]):
+        raise ValueError("the causal inputs do not match the packet's parent membership")
+    packed = {}
+    lines = payload.splitlines()
+    for line in lines:
+        row = json.loads(line)
+        packed[row["call"], row["caller_sample"]] = row["label"], row["gap_ms"] * RATE / 1000
+    if len(packed) != pack_receipt["rows"] or len(lines) != len(packed):
+        raise ValueError("unexpected causal input membership")
+
+    detect = silero()
+    meter = Progress("harper-text-audit-input-coverage", len(packet["windows"]), "windows")
+    seen, covered = {}, {}
+    for ident, record in packet["windows"].items():
+        with wave.open(str(review_root / "harper-review" / "audio" / f"{ident}.wav"), "rb") as handle:
+            if (handle.getframerate(), handle.getnchannels(), handle.getsampwidth(), handle.getnframes()) != (
+                    RATE, 2, 2, SAMPLES):
+                raise ValueError("unexpected format in the sealed review waveform")
+            sealed = handle.readframes(SAMPLES)
+
+        def verify(audio, origins, _vad, _words, _omissions, start, end):
+            left = start + record["start_sample"]
+            if left < start or left + SAMPLES > end:
+                raise ValueError("the sealed excerpt falls outside shared audio")
+            tracks = [audio[role][left - origins[role]:left - origins[role] + SAMPLES]
+                      for role in ("caller", "agent")]
+            if np.column_stack(tracks).astype("<i2").tobytes() != sealed:
+                raise ValueError("the sealed excerpt does not match the recovered clock")
+            proposals = list(window_input_keys(record, start - origins["caller"]))
+            if record["anchor_ms"] is not None and len(proposals) != 1:
+                raise ValueError("the sealed challenge does not have one anchor")
+            for key, label, gap in proposals:
+                band = gap_band(gap * 1000 / RATE)
+                stratum = f"{record['cohort']}/{label}/{band}"
+                seen.setdefault(stratum, set()).add(key)
+                if key in packed:
+                    if packed[key] != (label, gap):
+                        raise ValueError("the review and development label or gap disagree")
+                    covered.setdefault(stratum, set()).add(key)
+
+        replay = audit_call(root / "raw/harper-valley", record["call"], detect, recover_clock=True, observe=verify)
+        if replay["audited_calls"] != 1:
+            raise ValueError("the sealed excerpt did not pass phone recording replay")
+        meter.advance(1)
+    meter.finish()
+    result = {
+        "scope": "sealed listening proposal overlap with causal English development inputs",
+        "private_reference_sha256": receipt["private_reference_sha256"],
+        "packed_inputs_sha256": pack_receipt["serialized_sha256"],
+        "windows_reproduced": len(packet["windows"]),
+        "packed_inputs_by_gap_and_label": dict(Counter(f"{label}/{gap_band(gap * 1000 / RATE)}"
+                                                       for label, gap in packed.values())),
+        "unique_packed_inputs_covered": len(set().union(*covered.values())),
+        "by_cohort_label_and_gap": {name: {"proposals": len(keys), "packed_inputs": len(covered.get(name, ()))}
+                                    for name, keys in sorted(seen.items())},
+    }
+    _write_json(root / "reports/harper-text-audit-input-coverage.json", result)
+    print(json.dumps(result, indent=2))
+
+
+def score(root, ballot):
+    packet, receipt = verified_packet(root, REVIEW_ROOT)
+    windows = packet["windows"]
     ballot_bytes = ballot.read_bytes()
     saved = json.loads(ballot_bytes)["draft"]["windows"]
     if set(saved) != set(windows) or any(not row.get("reviewed") for row in saved.values()):
@@ -306,5 +401,12 @@ def score(root, ballot):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("ballot", type=Path, help="complete review draft from the local-loopback reviewer")
-    score(data_root(), parser.parse_args().ballot)
+    parser.add_argument("ballot", nargs="?", type=Path, help="complete review draft from the local-loopback reviewer")
+    parser.add_argument("--input-coverage", action="store_true", help="cross-check sealed windows against causal inputs")
+    args = parser.parse_args()
+    if args.input_coverage == (args.ballot is not None):
+        parser.error("provide either a completed ballot or --input-coverage")
+    if args.input_coverage:
+        audit_input_coverage(data_root())
+    else:
+        score(data_root(), args.ballot)

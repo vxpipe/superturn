@@ -1,4 +1,4 @@
-from superturn.harper_text_review import matches, score_window, summarize_calls
+from superturn.harper_text_review import matches, score_window, summarize_calls, window_input_keys
 
 
 def test_match_maximizes_cardinality_before_timing_distance():
@@ -44,3 +44,13 @@ def test_scorecard_distinguishes_stop_coverage_confirmation_and_missed_events():
     assert holds["confirmation_call_bootstrap_95"] is None
     assert report["events"]["shift_unmatched_eligible_human_marks"] == 1
     assert report["events"]["shift_eligible_human_marks"] == 1
+
+
+def test_coverage_maps_the_challenge_anchor_to_the_native_caller_sample():
+    window = {"call": "fixture", "start_sample": 1000, "anchor_ms": 8000.0625, "proposals": [
+        {"stop_ms": 4000, "onset_ms": 4550, "outcome": "hold"},
+        {"stop_ms": 8000.0625, "onset_ms": 8400, "outcome": "shift"},
+    ]}
+    assert list(window_input_keys(window, caller_offset=11)) == [
+        (("fixture", 129012), "shift", 6399),
+    ]
