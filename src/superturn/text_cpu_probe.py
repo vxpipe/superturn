@@ -226,10 +226,10 @@ def pack_encoder(tokenizer, text, limit, name):
     return tokenizer.post_process(Encoding.merge([fixed, prior]), caller, add_special_tokens=True)
 
 
-def encoder_trials(session, tokenizer, texts, warmups, iterations, name):
+def encoder_trials(session, tokenizer, texts, warmups, iterations, name, lengths=LENGTHS):
     inputs = {item.name for item in session.get_inputs()}
     result = {}
-    for length in LENGTHS:
+    for length in lengths:
         fixtures = []
         for text in texts:
             previous, caller = text.split("\n")
@@ -338,7 +338,7 @@ def causal_trials(session, tokenizer, texts, warmups, iterations, precision):
             "over_128_token_context_stress_only": ["cached_128_append_4", "cached_128_append_8"]}
 
 
-def run(root, names, corpus, warmups, iterations, report_name):
+def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTHS, precisions=("fp32", "int8")):
     import onnxruntime as ort
     from tokenizers import Tokenizer
 
@@ -349,11 +349,11 @@ def run(root, names, corpus, warmups, iterations, report_name):
                "We need to change our booking.\nThe one for two people."]
     affinity, placement, hardware = cpus()
     result = {"scope": "batch-one synthetic CPU screening, no quality scoring", "hardware": hardware,
-              "ort": ort.__version__, "warmups": warmups, "iterations": iterations,
+              "ort": ort.__version__, "warmups": warmups, "iterations": iterations, "lengths": lengths,
               "cpu_execution_provider_only": True, "ort_intra_threads": 1, "ort_inter_threads": 1,
               "language_rows": dict((language, sum(row["language"] == language for row in records))
                                     for language in LANGUAGES), "encoders": {}}
-    meter = Progress("text-cpu-encoders", 4 * len(names), "model conditions")
+    meter = Progress("text-cpu-encoders", 2 * len(precisions) * len(names), "model conditions")
     os.sched_setaffinity(0, {placement[0]})
     try:
         for name in names:
@@ -367,9 +367,12 @@ def run(root, names, corpus, warmups, iterations, report_name):
             paths = (causal_paths(root) if name == "smollm2" else six_layer_paths(root) if name == "me5-6"
                      else graph_paths(root, name))
             for precision, path in paths.items():
+                if precision not in precisions:
+                    continue
                 session = get_session(path)
                 measure = (lambda: causal_trials(session, tokenizer, fixture, warmups, iterations, precision)
-                           if name == "smollm2" else encoder_trials(session, tokenizer, fixture, warmups, iterations, name))
+                           if name == "smollm2" else encoder_trials(session, tokenizer, fixture, warmups,
+                                                                   iterations, name, lengths))
                 idle = measure()
                 meter.advance(1)
                 with busy_cores(placement[1:]) as load:
@@ -381,12 +384,14 @@ def run(root, names, corpus, warmups, iterations, report_name):
                     languages = ("en",) if name == "minilm-en" else LANGUAGES
                     p90 = max(detail["token_needs"][language]["full_two_lines"].get("p90", 0)
                               for language in languages)
-                    bracket = next((length for length in LENGTHS if length >= p90), LENGTHS[-1])
+                    required = min(p90, LENGTHS[-1])
+                    bracket = next((length for length in lengths if length >= required), None)
                     key = str(bracket)
                     detail["screen_at_p90_bucket"] = {
                         "languages": languages, "largest_p90": p90, "conservative_measured_bucket": bracket,
                         "p90_exceeds_128": p90 > LENGTHS[-1],
-                        "passed": (loaded is not None and load["workers_with_cpu_ticks"] == len(placement) - 1
+                        "passed": (bracket is not None and loaded is not None
+                                   and load["workers_with_cpu_ticks"] == len(placement) - 1
                                    and idle[key]["synthetic_text_to_scalar"]["p99_ms"] < 5
                                    and loaded[key]["synthetic_text_to_scalar"]["p99_ms"] <= 10),
                     }
@@ -406,10 +411,16 @@ if __name__ == "__main__":
     parser.add_argument("--warmups", type=int, default=200)
     parser.add_argument("--iterations", type=int, default=2000)
     parser.add_argument("--report-name", default="encoder-latency.json")
+    parser.add_argument("--lengths", type=int, nargs="+", default=LENGTHS)
+    parser.add_argument("--precisions", nargs="+", choices=("fp32", "int8"), default=("fp32", "int8"))
     args = parser.parse_args()
     if args.stage:
         stage(args.artifacts, args.models)
     else:
         if Path(args.report_name).name != args.report_name or args.iterations <= 0 or args.warmups < 0:
             parser.error("use a plain report filename and valid timing counts")
-        run(args.artifacts, args.models, args.corpus, args.warmups, args.iterations, args.report_name)
+        lengths = tuple(sorted(set(args.lengths)))
+        if lengths[0] < 8 or lengths[-1] > LENGTHS[-1] or ("smollm2" in args.models and lengths != LENGTHS):
+            parser.error("encoder lengths must be 8–128; the causal lengths are fixed")
+        run(args.artifacts, args.models, args.corpus, args.warmups, args.iterations, args.report_name,
+            lengths=lengths, precisions=tuple(dict.fromkeys(args.precisions)))

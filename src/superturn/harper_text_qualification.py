@@ -322,6 +322,11 @@ def score(root, ballot):
     saved = json.loads(ballot.read_text())["draft"]["windows"]
     if saved.keys() != packet["windows"].keys() or any(not row.get("reviewed") for row in saved.values()):
         raise ValueError("review every Harper qualification window before scoring")
+    roles = Counter(record["cohort"] for record in packet["windows"].values())
+    excluded_roles = {name: count for name, count in roles.items() if name.startswith("excluded/")}
+    if (len(packet["windows"]) != 160 or roles["continuous"] != 20
+            or len(excluded_roles) != 5 or any(count != 4 for count in excluded_roles.values())):
+        raise ValueError("the Harper qualification review composition changed")
     views = {}
     for tolerance in (250, 80):
         calls = defaultdict(Counter)
