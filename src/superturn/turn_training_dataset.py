@@ -83,6 +83,43 @@ def split_examples(rows):
     return splits, Counter(assignments.values())
 
 
+def balanced_accuracy(rows, predicts_shift):
+    totals, correct = Counter(), Counter()
+    for row in rows:
+        label = row["label"]
+        totals[label] += 1
+        correct[label] += (label == "shift") == predicts_shift(row)
+    return sum(correct[label] / totals[label] for label in ("hold", "shift")) / 2
+
+
+def shortcut_checks(splits):
+    train, validation = splits["train"], splits["validation"]
+    lengths = sorted({len(row["current_turn"]) for row in train})
+    length_rule = max(
+        ((threshold, direction) for threshold in lengths for direction in (True, False)),
+        key=lambda rule: balanced_accuracy(train, lambda row: (len(row["current_turn"]) >= rule[0]) == rule[1]),
+    )
+    endings = {}
+    for row in train:
+        tail = row["current_turn"].split()[-1]
+        endings.setdefault((row["language"], tail), Counter())[row["label"]] += 1
+
+    def last_token(row):
+        counts = endings.get((row["language"], row["current_turn"].split()[-1]), Counter())
+        return counts["shift"] > counts["hold"]
+
+    threshold, direction = length_rule
+    return {
+        "scope": "synthetic validation balanced accuracy for shortcut baselines",
+        "current_character_count": balanced_accuracy(
+            validation, lambda row: (len(row["current_turn"]) >= threshold) == direction),
+        "length_threshold_characters": threshold,
+        "length_predicts_shift_above_threshold": direction,
+        "language_and_last_token": balanced_accuracy(validation, last_token),
+        "first_turn_marker_only": balanced_accuracy(validation, lambda row: not row["previous_turn"]),
+    }
+
+
 def export(source, destination):
     plan = make_plan(json.loads(CATALOGUE.read_text()))
     rows, receipt = verify_dialogues(source, plan)
@@ -98,6 +135,7 @@ def export(source, destination):
         "input_layout": "previous speaker turn or --- on line one, current caller turn on line two",
         "first_turn_marker": "---",
         "dialogues": len(rows),
+        "shortcut_checks": shortcut_checks(splits),
         "splits": {},
     }
     with TemporaryDirectory(dir=destination.parent, prefix="turn-training-") as temporary:
