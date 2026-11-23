@@ -133,18 +133,21 @@ def binary_metrics(items, threshold=.5):
 
 def scorecard(scores, rows):
     groups = defaultdict(list)
-    pairs = defaultdict(dict)
+    pairs = defaultdict(lambda: defaultdict(list))
     for score, row in zip(scores, rows, strict=True):
         example = (score, LABELS[row["label"]])
-        pairs[row["slot"]][row["label"]] = score
+        pairs[row["slot"]][row["label"]].append(score)
         groups["all"].append(example)
         groups[f"language/{row['language']}"].append(example)
         groups["one_turn" if row["text"].startswith("---\n") else "two_turn"].append(example)
     report = {name: binary_metrics(items) for name, items in groups.items()}
-    margins = [pair["shift"] - pair["hold"] for pair in pairs.values()]
+    comparable = [pair for pair in pairs.values() if pair.get("hold") and pair.get("shift")]
+    margins = [shift - hold for pair in comparable for shift in pair["shift"] for hold in pair["hold"]]
     report["all"]["dialogue_pairs"] = len(margins)
-    report["all"]["within_dialogue_ranking"] = sum(
-        1. if delta > 0 else .5 if delta == 0 else 0. for delta in margins) / len(margins)
+    report["all"]["comparable_dialogues"] = len(comparable)
+    report["all"]["shift_only_dialogues"] = sum(not pair.get("hold") for pair in pairs.values())
+    report["all"]["within_dialogue_ranking"] = (sum(
+        1. if delta > 0 else .5 if delta == 0 else 0. for delta in margins) / len(margins) if margins else None)
     return report
 
 

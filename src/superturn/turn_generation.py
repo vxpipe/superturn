@@ -195,12 +195,20 @@ def request_json(path, key, payload=None):
 
 
 def generation_system(spec):
+    if spec.get("scale_family"):
+        from .turn_text_scale_generation import SCALE_SYSTEM
+
+        return SCALE_SYSTEM
     if spec.get("number_pilot"):
         return NUMBER_SYSTEM
     return CONTEXT_SYSTEM if spec.get("pair_type") else SYSTEM
 
 
 def generate_batch(specs, key, attempt):
+    if specs[0].get("scale_family"):
+        from .turn_text_scale_generation import generate_scale_batch
+
+        return generate_scale_batch(specs, key, attempt)
     content = {"attempt": attempt, "cases": specs}
     system = generation_system(specs[0])
     if attempt > 1 and system == SYSTEM:
@@ -252,6 +260,10 @@ def sample_key(row):
 
 def paired_examples(row):
     """Keep observational evidence outside the two model inputs."""
+    if row.get("scale_family"):
+        from .turn_text_scale_generation import scale_examples
+
+        return scale_examples(row)
     hold = {"slot": row["slot"], "language": row["language"], "label": "hold",
             "previous_turn": row["previous_agent"], "current_turn": row["caller_before_pause"]}
     if row.get("pair_type"):
@@ -271,6 +283,10 @@ def paired_examples(row):
 def plan_checksum(plan):
     system = generation_system(plan[0]) if plan else SYSTEM
     protocol = [plan, system, SCHEMA, GENERATOR, CLEANER_VERSION]
+    if plan and plan[0].get("scale_family"):
+        from .turn_text_scale_generation import SCALE_SCHEMA, SCALE_VERSION
+
+        protocol.extend([SCALE_SCHEMA, SCALE_VERSION])
     return sha256(json.dumps(protocol).encode()).hexdigest()
 
 
@@ -304,7 +320,8 @@ def schedule_batches(pending, attempts, available):
     groups = [sorted(languages[language], key=lambda spec: attempts.get(spec["slot"], 0))
               for language in sorted(languages, key=lambda language: (attempted[language], language))]
     batches = []
-    size = [3 if group[0]["native_script"] in {"Knda", "Taml", "Telu", "Mlym"} else BATCH for group in groups]
+    size = [12 if group[0].get("scale_family") else
+            3 if group[0]["native_script"] in {"Knda", "Taml", "Telu", "Mlym"} else BATCH for group in groups]
     for batch_index in range(max((len(group) + n - 1) // n for group, n in zip(groups, size, strict=True))):
         for group, n in zip(groups, size, strict=True):
             if batch := group[batch_index * n:(batch_index + 1) * n]:
@@ -353,6 +370,7 @@ def run(plan, directory, budget, workers, key, *, smoke_source=None, attempts_pe
         state = initial_state(plan, smoke_source)
     accepted, attempts = state["accepted"], state["attempts"]
     seen = {sample_key(row) for row in accepted.values()}
+    seen.update(tuple(key) for key in state.get("excluded_sample_keys", ()))
     by_criterion = defaultdict(list)
     for row in accepted.values():
         by_criterion[row["criterion"]].append(row)
@@ -432,8 +450,16 @@ def run(plan, directory, budget, workers, key, *, smoke_source=None, attempts_pe
         "estimated_spend_including_unknown_requests_usd": round(state["spend_usd"], 6),
         "stop": stop,
     }
+    if plan and plan[0].get("scale_family"):
+        receipt["accepted_by_family_and_role"] = dict(Counter(
+            f"{row['scale_family']}/{row['split']}" for row in ordered))
+        receipt["revalidation_rejected"] = state.get("revalidation_rejected", 0)
+        receipt["export_rejected"] = len(state.get("excluded_sample_keys", ()))
     _write_json(directory / "receipt.json", receipt)
-    print(json.dumps(receipt, indent=2))
+    display = dict(receipt)
+    if plan and plan[0].get("scale_family"):
+        del display["target_per_criterion"]
+    print(json.dumps(display, indent=2))
     return receipt
 
 

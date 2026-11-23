@@ -1,0 +1,42 @@
+import json
+
+from superturn.turn_generation import CATALOGUE
+from superturn.turn_text_scale_generation import TOTALS, build_plan, clean_scale_row, scale_examples
+from superturn.turn_text_scale_trial import evaluate_dialogues
+from superturn.turn_text_train import scorecard
+
+
+def test_scale_plan_is_disjoint_and_exact():
+    plan = build_plan(json.loads(CATALOGUE.read_text()))
+    assert len({row["slot"] for row in plan}) == len(plan) == sum(TOTALS.values())
+    scenario = {role: {row["scenario"] for row in plan if row["split"] == role}
+                for role in ("train", "validation", "test")}
+    assert len(scenario["validation"]) == len(scenario["test"]) == 6
+    assert not scenario["train"] & (scenario["validation"] | scenario["test"])
+    assert not scenario["validation"] & scenario["test"]
+
+
+def test_scale_validates_multiple_holds_and_short_shifts():
+    spec = {"slot": "1", "scale_family": "G1", "shape": "G1", "prior": "none", "split": "train"}
+    raw = {"previous_agent": "", "caller": "I called the repair shop this morning ‖ "
+           "but the manager said the part had not arrived ‖ so can you check which day will work",
+           "next_agent": "I can check our delivery schedule"}
+    row = {**spec, **clean_scale_row(raw, spec)}
+    assert [item["label"] for item in scale_examples(row)] == ["hold", "hold", "shift"]
+    block = {("this", "morning", "but", "the", "manager", "said", "the", "part")}
+    accepted, rejected = evaluate_dialogues([row], {"1": spec}, {}, block)
+    assert not accepted and rejected == {"1": "benchmark_eight_word_overlap"}
+    question = {"previous_agent": "Which shelf was it on?", "caller": "the bottom one", "next_agent": "I will check"}
+    short = {"prior": "usual", "shape": "G3-short"}
+    assert clean_scale_row(question, short)
+    assert clean_scale_row({**question, "caller": "okay"}, short) is None
+    assert clean_scale_row({**question, "next_agent": "i will check your account"}, short) is None
+    assert clean_scale_row({**question, "next_agent": "try four one five four two five nine"}, short) is None
+
+
+def test_scorecard_supports_shift_only_and_several_holds():
+    rows = [{"text": "---\ntext", "language": "en", "slot": slot, "label": label}
+            for slot, label in (("1", "hold"), ("1", "hold"), ("1", "shift"), ("2", "shift"))]
+    report = scorecard([.2, .8, .6, .7], rows)["all"]
+    assert report["dialogue_pairs"] == 2 and report["comparable_dialogues"] == 1
+    assert report["shift_only_dialogues"] == 1 and report["within_dialogue_ranking"] == .5
