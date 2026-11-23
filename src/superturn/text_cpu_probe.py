@@ -341,7 +341,7 @@ def number_stats(lengths):
 
 def token_needs(tokenizer, records, name):
     report = {}
-    prefix = "query: " if name.startswith("me5") else ""
+    prefix = "query:" if name.startswith("me5") else ""
     special = (len(tokenizer.encode("\n", add_special_tokens=False).ids)
                if name == "smollm2" else tokenizer.num_special_tokens_to_add(is_pair=True))
     unknown_id = next((ident for token in ("[UNK]", "<unk>")
@@ -363,7 +363,7 @@ def token_needs(tokenizer, records, name):
             if name == "smollm2":
                 full.append(len(tokenizer.encode(previous + "\n" + current).ids))
             else:
-                fixed = tokenizer.encode(prefix + (previous if previous == "---" else ""), add_special_tokens=False)
+                fixed = tokenizer.encode(encoder_prefix(previous, name), add_special_tokens=False)
                 prior = len(prior_ids) if previous != "---" else 0
                 full.append(len(fixed.ids) + prior + len(current_ids) + special)
         report[language] = {"caller": number_stats(caller), "caller_plus_16_prior": number_stats(short_prior),
@@ -413,12 +413,16 @@ def timing_stats(durations):
     return dict(zip(("p50_ms", "p99_ms"), np.percentile(durations, [50, 99]).tolist(), strict=True))
 
 
+def encoder_prefix(previous, name):
+    prefix = "query:" if name.startswith("me5") else ""
+    return " ".join(part for part in (prefix, "---" if previous == "---" else "") if part)
+
+
 def pack_encoder(tokenizer, text, limit, name):
     from tokenizers import Encoding
 
-    previous, current = text.split("\n")
-    prefix = "query: " if name.startswith("me5") else ""
-    fixed = tokenizer.encode(prefix + (previous if previous == "---" else ""), add_special_tokens=False)
+    previous, current = (" ".join(line.split()) for line in text.split("\n"))
+    fixed = tokenizer.encode(encoder_prefix(previous, name), add_special_tokens=False)
     prior = tokenizer.encode(previous if previous != "---" else "", add_special_tokens=False)
     caller = tokenizer.encode(current, add_special_tokens=False)
     remaining = limit - tokenizer.num_special_tokens_to_add(is_pair=True) - len(fixed.ids)

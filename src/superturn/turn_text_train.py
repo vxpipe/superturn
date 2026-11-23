@@ -89,13 +89,25 @@ def build_model(base_path, layers, backbone="e5"):
             self.backbone = backbone
             precision = {"dtype": torch.float32} if backbone == "qwen3" else {}
             self.encoder = AutoModel.from_pretrained(base_path, local_files_only=True, use_safetensors=True, **precision)
+            if backbone == "e5-caller":
+                blocks = self.encoder.encoder.layer
+                if not 1 <= layers <= len(blocks):
+                    raise ValueError("the caller-pool recipe requires at least one retained E5 block")
+                self.encoder.encoder.layer = torch.nn.ModuleList(list(blocks[:layers]))
+                self.encoder.config.num_hidden_layers = layers
+                self.encoder.pooler = None
+                self.encoder.requires_grad_(True)
+                width = self.encoder.config.hidden_size
+                self.head = torch.nn.Sequential(torch.nn.Linear(2 * width, 128, bias=False), torch.nn.ReLU(),
+                                                torch.nn.Linear(128, 1, bias=False))
+                return
             self.encoder.requires_grad_(False)
             if layers:
                 blocks = self.encoder.layers if backbone == "qwen3" else self.encoder.encoder.layer
                 blocks[-layers:].requires_grad_(True)
             self.head = torch.nn.Linear(self.encoder.config.hidden_size, 1)
 
-        def forward(self, input_ids, attention_mask):
+        def forward(self, input_ids, attention_mask, caller_mask=None):
             if self.backbone == "qwen3":
                 hidden = self.encoder(input_ids=input_ids, attention_mask=attention_mask,
                                       use_cache=False).last_hidden_state
@@ -103,11 +115,45 @@ def build_model(base_path, layers, backbone="e5"):
                 final = attention_mask.sum(dim=1) - 1
                 return self.head(hidden[rows, final]).squeeze(-1)
             hidden = self.encoder(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
+            if self.backbone == "e5-caller":
+                positions = torch.arange(hidden.size(1), device=hidden.device)
+                last = (positions * caller_mask).amax(dim=1)
+                indices = torch.arange(hidden.size(0), device=hidden.device)
+                mask = caller_mask.unsqueeze(-1).to(hidden.dtype)
+                mean = (hidden * mask).sum(dim=1) / mask.sum(dim=1)
+                return self.head(torch.cat((hidden[indices, last], mean), dim=-1)).squeeze(-1)
             mask = attention_mask.unsqueeze(-1)
             pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1)
             return self.head(pooled).squeeze(-1)
 
     return EncoderClassifier()
+
+
+def tokenize_fit_input(tokenizer, text, backbone):
+    if backbone == "e5-caller":
+        from .text_cpu_probe import pack_encoder
+
+        packed = pack_encoder(tokenizer.backend_tokenizer, text, TOKEN_BUDGET, "me5")
+        caller = [int(sequence == 1 and not special)
+                  for sequence, special in zip(packed.sequence_ids, packed.special_tokens_mask, strict=True)]
+        if not any(caller):
+            raise ValueError("the two-line input has no caller tokens")
+        return packed.ids, caller
+    encode = pack_qwen if backbone == "qwen3" else pack
+    return encode(tokenizer, text), None
+
+
+def fit_input_batch(tokenizer, sequences, device):
+    import torch
+
+    ids, caller_masks = zip(*sequences, strict=True)
+    inputs = tokenizer.pad({"input_ids": list(ids)}, padding=True, return_tensors="pt")
+    if caller_masks[0] is not None:
+        if tokenizer.padding_side != "right":
+            raise ValueError("caller-pool batches require right padding")
+        size = inputs["input_ids"].size(1)
+        inputs["caller_mask"] = torch.tensor([mask + [0] * (size - len(mask)) for mask in caller_masks], dtype=torch.long)
+    return inputs.to(device)
 
 
 def binary_metrics(items, threshold=.5):
@@ -182,6 +228,8 @@ def run(dataset, base, output, *, epochs=3, batch_size=32, layers=4, seed=29, de
 
     splits, corpus_hash = read_dataset(dataset)
     qwen = backbone == "qwen3"
+    caller_pool = backbone == "e5-caller"
+    learning_rate = 3e-5 if caller_pool else 2e-5
     expected_sha = QWEN_SHA256 if qwen else BASE_SHA256
     if digest(base / "model.safetensors") != expected_sha:
         raise ValueError("the downloaded encoder does not match its pinned weights")
@@ -191,18 +239,21 @@ def run(dataset, base, output, *, epochs=3, batch_size=32, layers=4, seed=29, de
         "base_weights_sha256": expected_sha, "tokenizer_sha256": digest(base / "tokenizer.json"),
         "dataset_manifest_sha256": corpus_hash, "token_budget": TOKEN_BUDGET, "query_prefix": QUERY_PREFIX,
         "seed": seed, "epochs": epochs, "batch_size": batch_size, "top_layers_trainable": layers,
-        "device": device, "learning_rate": 2e-5, "torch": str(torch.__version__),
+        "device": device, "learning_rate": learning_rate, "torch": str(torch.__version__),
         "turn_boundary": "native tokenizer pair separators",
     }
     if qwen:
         receipt.update(backbone=backbone, query_prefix="", turn_boundary="newline; last real caller token",
                        inference_dtype="float32")
+    if caller_pool:
+        receipt.update(backbone=backbone, retained_encoder_blocks=layers, inference_dtype="float32",
+                       turn_boundary="native pair separators; last caller token plus caller mean",
+                       packing="text_cpu_probe.pack_encoder", embeddings_trainable=True)
     tokenizer = AutoTokenizer.from_pretrained(base, local_files_only=True, use_fast=True)
     tokenizer.padding_side = "right"
-    if not qwen and pack(tokenizer, "---\nhello") != tokenizer(f"{QUERY_PREFIX}---", "hello")["input_ids"]:
+    if backbone == "e5" and pack(tokenizer, "---\nhello") != tokenizer(f"{QUERY_PREFIX}---", "hello")["input_ids"]:
         raise ValueError("the tokenizer changed its native pair layout")
-    encode = pack_qwen if qwen else pack
-    packed = {name: [encode(tokenizer, row["text"]) for row in rows] for name, rows in splits.items()}
+    packed = {name: [tokenize_fit_input(tokenizer, row["text"], backbone) for row in rows] for name, rows in splits.items()}
     train = splits["train"]
     truth = [LABELS[row["label"]] for row in train]
     weights = None
@@ -237,19 +288,25 @@ def run(dataset, base, output, *, epochs=3, batch_size=32, layers=4, seed=29, de
     meter.skip(initial_epoch * steps_per_epoch)
 
     def forward(sequences):
-        inputs = tokenizer.pad({"input_ids": sequences}, padding=True, return_tensors="pt").to(device)
-        mixed_precision = use_bf16 and (not qwen or model.training)
+        inputs = fit_input_batch(tokenizer, sequences, device)
+        mixed_precision = use_bf16 and (backbone == "e5" or model.training)
         with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=mixed_precision):
             return model(**inputs).float()
 
-    if qwen:
-        probe = [encode(tokenizer, "---\nhello"), encode(tokenizer, "what day would work for you\nfriday works for me")]
+    if qwen or caller_pool:
+        probe = [tokenize_fit_input(tokenizer, text, backbone) for text in
+                 ("---\nhello", "what day would work for you\nfriday works for me")]
+        if caller_pool:
+            for (ids, mask), caller in zip(probe, ("hello", "friday works for me"), strict=True):
+                visible = [token for token, selected in zip(ids, mask, strict=True) if selected]
+                if visible != tokenizer.encode(caller, add_special_tokens=False) or mask[-1]:
+                    raise ValueError("caller pooling must exclude the prefix and special tokens")
         model.eval()
         with torch.inference_mode():
             single = forward(probe[:1])[0]
             mixed = forward(probe)[0]
         if not torch.allclose(single, mixed, rtol=0, atol=.0001):
-            raise ValueError("right-padding changed the decoder's caller-token logit")
+            raise ValueError("right-padding changed the caller-token logit")
 
     for epoch in range(initial_epoch, epochs):
         random.Random(seed + epoch).shuffle(order := list(range(len(train))))
@@ -293,7 +350,7 @@ def run(dataset, base, output, *, epochs=3, batch_size=32, layers=4, seed=29, de
 
 def check_fit_base(receipt, base, corpus_hash, trained_epochs):
     backbone = receipt.get("backbone", "e5")
-    if backbone not in {"e5", "qwen3"}:
+    if backbone not in {"e5", "e5-caller", "qwen3"}:
         raise ValueError("unsupported model backbone in the fit receipt")
     qwen = backbone == "qwen3"
     expected_sha = QWEN_SHA256 if qwen else BASE_SHA256
@@ -305,6 +362,9 @@ def check_fit_base(receipt, base, corpus_hash, trained_epochs):
             or trained_epochs != receipt["epochs"]
             or receipt["token_budget"] != TOKEN_BUDGET or receipt["query_prefix"] != ("" if qwen else QUERY_PREFIX)):
         raise ValueError("evaluation inputs do not match the completed synthetic fit")
+    if backbone == "e5-caller" and (receipt.get("packing") != "text_cpu_probe.pack_encoder"
+                                     or receipt.get("retained_encoder_blocks") != receipt["top_layers_trainable"]):
+        raise ValueError("evaluation inputs do not match the caller-pool recipe")
     return backbone
 
 
@@ -330,14 +390,12 @@ def load_fit(checkpoint, base, device, corpus_hash):
 def predict(tokenizer, model, texts, device):
     import torch
 
-    encode = pack_qwen if model.backbone == "qwen3" else pack
-    tokens = [encode(tokenizer, text) for text in texts]
-    use_bf16 = model.backbone != "qwen3" and device == "cuda" and torch.cuda.is_bf16_supported()
+    tokens = [tokenize_fit_input(tokenizer, text, model.backbone) for text in texts]
+    use_bf16 = model.backbone == "e5" and device == "cuda" and torch.cuda.is_bf16_supported()
     scores = []
     with torch.inference_mode():
         for index in range(0, len(tokens), 32):
-            inputs = tokenizer.pad({"input_ids": tokens[index:index + 32]},
-                                   padding=True, return_tensors="pt").to(device)
+            inputs = fit_input_batch(tokenizer, tokens[index:index + 32], device)
             with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=use_bf16):
                 scores.extend(model(**inputs).float().sigmoid().tolist())
     return scores
@@ -381,7 +439,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--layers", type=int, default=4)
-    parser.add_argument("--backbone", choices=("e5", "qwen3"), default="e5")
+    parser.add_argument("--backbone", choices=("e5", "e5-caller", "qwen3"), default="e5")
     parser.add_argument("--seed", type=int, default=29)
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
     parser.add_argument("--evaluate", action="store_true", help="score the final checkpoint on synthetic validation")
@@ -389,6 +447,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
     if args.epochs < 1 or args.batch_size < 1 or not 0 <= args.layers <= 12:
         parser.error("positive epochs and batch size, and 0–12 trainable encoder layers are required")
+    if args.backbone == "e5-caller" and not args.layers:
+        parser.error("the caller-pool E5 recipe requires at least one retained encoder block")
     if args.evaluate:
         evaluate(args.dataset, args.base, args.output, args.device)
     else:
