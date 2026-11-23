@@ -228,6 +228,8 @@ def reopen_excluded(directory, plan, audit_path):
     for slot in audit["excluded_slots"]:
         rejected = state["accepted"].pop(slot)
         state.setdefault("excluded_sample_keys", []).append(sample_key(rejected))
+        allowance = state.setdefault("additional_attempts", {})
+        allowance[slot] = allowance.get(slot, 0) + 3
     _write_json(path, state)
     print(f"reopened {len(audit['excluded_slots'])} pretraining audit exclusions", flush=True)
 

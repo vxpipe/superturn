@@ -111,7 +111,8 @@ def audit_export(root, generation, parent, destination):
         })
         read_dataset(output)
         if destination.exists():
-            if digest(destination / "manifest.json") != digest(output / "manifest.json"):
+            if (digest(destination / "manifest.json") != digest(output / "manifest.json")
+                    or digest(destination / "test.jsonl") != splits["test"]["sha256"]):
                 raise ValueError("the existing scale export has different inputs")
             read_dataset(destination)
         else:

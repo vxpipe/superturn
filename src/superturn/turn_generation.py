@@ -377,9 +377,10 @@ def run(plan, directory, budget, workers, key, *, smoke_source=None, attempts_pe
     meter = Progress("turn-generation-accepted", len(plan), "dialogues", path=directory / "progress.json")
     meter.skip(len(accepted))
     stop = "attempt_limit"
+    extra_attempts = state.get("additional_attempts", {})
     with ThreadPoolExecutor(max_workers=workers) as pool:
         while pending := [spec for spec in plan if spec["slot"] not in accepted
-                          and attempts.get(spec["slot"], 0) < attempts_per_slot]:
+                          and attempts.get(spec["slot"], 0) < attempts_per_slot + extra_attempts.get(spec["slot"], 0)]:
             reserve = GEN_RESERVE_USD
             available = min(workers, int((budget - state["spend_usd"] + 1e-9) / reserve))
             if available <= 0:
