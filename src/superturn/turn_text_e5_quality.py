@@ -41,7 +41,8 @@ def diagnostics(root, dataset, base, output):
     texts = [row["text"] for row in rows]
     labels = np.asarray([row["label"] for row in rows], dtype=bool)
     lengths = np.asarray([row["words"] for row in rows])
-    by_model = {"length_only_grouped_cv": length_scores(rows)}
+    raw_length_scores = length_scores(rows)
+    by_model = {"length_only_grouped_cv": 1 / (1 + np.exp(-raw_length_scores))}
     for name, checkpoint, backbone, expected in (
             ("e5_caller", e5_checkpoint, base, quality["publisher"]),
             ("qwen_b1_29", qwen_checkpoint, root / "cache/turn-text-qwen3-06b", qwen_seed["views"]["all"])):
