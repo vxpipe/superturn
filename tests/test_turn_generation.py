@@ -11,12 +11,14 @@ def test_quota_and_native_language_filters():
     hindi = next(row for row in plan if row["language"] == "hi")
     assert gen.clean_sample(dict.fromkeys(gen.FIELDS, "haan theek hai"), hindi) is None
     assert gen.normalize("नेहा, ठीक है।") == "नेहा ठीक है"
+    assert gen.normalize("ok,thanks") == "ok thanks"
+    assert gen.normalize("അ\u200dമ്മ") == "അ\u200dമ്മ"
 
 
 def test_generator_applies_judge_and_resumes_without_duplicate_calls(monkeypatch, tmp_path):
     spec = gen.make_plan(json.loads(gen.CATALOGUE.read_text()))[0]
-    sample = dict(zip(gen.FIELDS, ("what would you like", "check my account", "the savings one",
-                                   "i can check that for you"), strict=True))
+    sample = dict(zip(gen.FIELDS, ("", "check my account", "the savings one",
+                                   "i can check that for you", "", ""), strict=True))
     calls = []
 
     def fake_request(path, key, payload):
@@ -35,3 +37,8 @@ def test_generator_applies_judge_and_resumes_without_duplicate_calls(monkeypatch
     assert 0 < receipt["estimated_spend_including_unknown_requests_usd"] < .05
     assert gen.run([spec], tmp_path, .05, 1, "fixture-key") == receipt
     assert len(calls) == 2
+    row = json.loads((tmp_path / "dialogues.jsonl").read_text())
+    hold, shift = gen.paired_examples(row)
+    assert hold["current_turn"] == "check my account"
+    assert shift["current_turn"] == "check my account the savings one"
+    assert hold["slot"] == shift["slot"] and set(hold) == set(shift)

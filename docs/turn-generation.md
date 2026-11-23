@@ -4,9 +4,10 @@ The first multilingual matrix uses the 14 language entries and every one
 of the 77 scenarios across 22 domains in the pinned barge-in-detector
 catalogue. A criterion is one language and one scenario. The first quota
 is two accepted dialogues per criterion, for 2,156 dialogues in all.
-Regional variants rotate where the catalogue specifies them. Each
-criterion has one complete-sounding hold extension and one planning
-pause in a shorter reply. This matrix is monolingual and native-script.
+Regional variants and six pause styles rotate across scenarios. Each
+criterion has one dialogue with a short substantive reply as the shift.
+Some dialogues begin with the caller and have an empty previous turn.
+This matrix is monolingual and native-script.
 It does not cross every regional, intent, register or code-switch factor.
 
 The catalogue's MIT notice is in
@@ -16,8 +17,9 @@ The catalogue's MIT notice is in
 A record contains the preceding agent turn, caller text before and after
 a plausible pause, and the next substantive agent reply. Derive two
 training decisions from that conversation. The prefix followed by caller
-continuation is a hold. The complete caller turn followed by an actual
-handoff is a shift. Keep both decisions in one split and remove label,
+continuation is a hold. A complete caller turn followed by an actual
+handoff is a shift. Use the later short caller turn as the shift when
+the record contains one. Keep both decisions in one split and remove label,
 future turns, pause markers and catalogue metadata from the model input.
 Use synthetic-only material, distinct scenario descriptions from the
 source catalogue and fictional details.
@@ -25,7 +27,8 @@ source catalogue and fictional details.
 Inspect the matrix with `uv run --no-sync python -m superturn.turn_generation --plan`.
 For an approved API run, load `GEMINI_API_KEY` from the ignored environment
 and supply the total spend cap with `--budget-usd`. The destination defaults
-to `data/turn-generation-v1`. Restart with the same directory to continue
+to `data/turn-generation-v1`. Run the isolated `--smoke` option first to
+check one dialogue per native script. Restart with the same directory to continue
 unfilled slots. The runner keeps an atomic ledger and reserves budget before
 sending each batch. The spend receipt uses uncached list prices and keeps a
 conservative charge for requests without usage receipts. The provider's
