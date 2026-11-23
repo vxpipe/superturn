@@ -32,6 +32,11 @@ includes the handover.
   Check the approved dollar cap before
   generation, and report spend. Keep every real dataset out of training,
   generation prompts and Git.
+- LiveKit, Smart Turn and other existing turn detectors are reference
+  benchmarks for the model card. Keep their outputs and results out of
+  Superturn labels, training, distillation, sample selection, calibration,
+  checkpoint selection and failure-driven data generation. Use only our
+  own fitted classifier as a turn-detection teacher.
 - Use openly accessible real conversations for reproducible benchmarks.
   HarperValleyBank is the English pilot. Basis requires access approval
   and is excluded. Use Silero on synchronized speaker tracks to propose
