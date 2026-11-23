@@ -65,3 +65,32 @@ it. Silero proposes shared gaps on the separate speaker tracks. Mixed
 audio would require separately validated speaker diarization. This queue
 supports assisted ratings of selected proposals and cannot measure how
 many pauses the detector missed.
+
+## Independent Hindi review
+
+Run `npm start -- --independent` after building and open
+`http://127.0.0.1:8767/` from rocksalt or an explicitly authorized SSH
+forward. This instance serves the six uncued stereo recordings in the
+sealed listening order. Open only this instance for the second review.
+The first review and its suggestions are served by the original app.
+
+Pause and scrub to each boundary, capture the playhead, adjust the
+millisecond fields and save the pause. Listen to the whole recording
+and explicitly mark it reviewed with both channel languages. Drafts
+save under `hindi-review-b/ballots/` with a separate browser session.
+The reviewer never needs to download or export anything.
+
+After confirming the independent reviewer and identifying their saved
+draft, prepare both CSVs from the same revision as the operator:
+
+```sh
+npm run prepare-independent -- SAVED_DRAFT.json \
+  ../data/review/paired-call-floor-review/hindi-review-b/reviewer-b-order.txt \
+  NEW_BALLOT_DIR
+```
+
+Pass the two files in that directory to `superturn.hindi_review_audit`
+with `--reviewer-b` and `--reviewer-b-windows`. The preparation command
+requires all six windows to be marked reviewed and refuses an existing
+output directory. The audit checks timing and agreement against the
+sealed packet.

@@ -2,12 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const cookie = 'superturn_reviewer';
-const reviewerId = request => request.headers.cookie?.match(
-  /(?:^|;\s*)superturn_reviewer=([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})(?=;|$)/,
-)?.[1];
-
-export function registerDraftStore(server, directory) {
+export function registerDraftStore(server, directory, cookie = 'superturn_reviewer') {
+  const cookiePattern = new RegExp(`(?:^|;\\s*)${cookie}=([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})(?=;|$)`);
+  const reviewerId = request => request.headers.cookie?.match(cookiePattern)?.[1];
   const writes = new Map();
   const filename = id => join(directory, `${id}.json`);
   const read = id => readFile(filename(id), 'utf8').then(JSON.parse).catch(error => {

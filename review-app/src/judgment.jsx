@@ -24,7 +24,7 @@ export function Judgment({ row, update, compact, children }) {
     Clear selection
   </button>;
   const fields = <div className="fields">
-    <SelectField label="Focal language as heard" value={row.language} options={languages}
+    <SelectField label="Focal language as heard" value={row.language} options={languages} placeholder="Choose language"
       onChange={value => update('language', value)} />
   </div>;
   return <>

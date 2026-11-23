@@ -92,6 +92,12 @@ legend { font-size: .875rem; font-weight: 650; padding: 0; margin-bottom: .5rem;
 .clear-rating { margin-top: .8rem; }
 .sheet-bottom { margin-top: 1.25rem; }
 .sheet-bottom { border-top: 1px solid var(--line); padding-top: 1.2rem; }
+.manual-mark { border-top: 1px solid var(--line); margin-top: 1.4rem; padding-top: 1rem; }
+.manual-mark h3 + .fields { margin-top: .65rem; }
+.manual-mark input[type=number] { width: 8rem; }
+.manual-marks { margin: .6rem 0 0; padding-left: 1.3rem; }
+.manual-marks li { padding: .35rem 0; }
+.manual-marks .actions { display: inline-flex; margin-inline-start: .65rem; }
 .error { color: #8c2b1c; font-weight: 550; margin-top: .7rem; }
 footer { margin-top: 1.5rem; }
 a { color: #315b42; text-underline-offset: .16em; }

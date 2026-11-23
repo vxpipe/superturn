@@ -12,10 +12,12 @@ function browserDraft(key) {
   }
 }
 
-export function useReviewDraft(server, defaults) {
+export function useReviewDraft(server, defaults, independent = false) {
+  const activeDraftKey = independent ? 'superturn-hindi-independent-draft' : draftKey;
+  const activePendingKey = independent ? 'superturn-hindi-independent-pending' : pendingKey;
   const [initial] = useState(() => {
-    const pending = browserDraft(pendingKey);
-    const local = browserDraft(draftKey) ?? browserDraft(previousKey);
+    const pending = browserDraft(activePendingKey);
+    const local = browserDraft(activeDraftKey) ?? (independent ? null : browserDraft(previousKey));
     return {
       draft: { ...defaults, ...(pending?.draft ?? server.draft ?? local) },
       pending: Boolean(pending || (!server.draft && local)),
@@ -33,8 +35,8 @@ export function useReviewDraft(server, defaults) {
 
   function storeBrowser() {
     try {
-      localStorage.setItem(draftKey, JSON.stringify(latest.current));
-      localStorage.setItem(pendingKey, JSON.stringify({ draft: latest.current, revision: revision.current }));
+      localStorage.setItem(activeDraftKey, JSON.stringify(latest.current));
+      localStorage.setItem(activePendingKey, JSON.stringify({ draft: latest.current, revision: revision.current }));
     } catch {
       // Server persistence remains available when browser storage is blocked.
     }
@@ -70,7 +72,7 @@ export function useReviewDraft(server, defaults) {
         }
         if (waiting.current) storeBrowser();
       }
-      try { localStorage.removeItem(pendingKey); } catch { /* Disk save already succeeded. */ }
+      try { localStorage.removeItem(activePendingKey); } catch { /* Disk save already succeeded. */ }
       setStatus('Saved to rocksalt');
     } catch (error) {
       waiting.current = latest.current;

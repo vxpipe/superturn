@@ -7,7 +7,9 @@ import { registerDraftStore } from './draft-store.mjs';
 
 const appDir = fileURLToPath(new URL('.', import.meta.url));
 const bundle = resolve(process.env.REVIEW_BUNDLE ?? join(appDir, '../data/review/paired-call-floor-review'));
-const audioDir = join(bundle, 'hindi-review-a/audio');
+const independent = process.argv.includes('--independent');
+const packetDir = join(bundle, independent ? 'hindi-review-b' : 'hindi-review-a');
+const audioDir = join(packetDir, 'audio');
 const dev = process.argv.includes('--dev');
 const defaults = { dev: 8766, production: 8765 };
 const server = Fastify();
@@ -38,7 +40,16 @@ function stereoPeaks(wav) {
   return { channels, duration: frames / wav.readUInt32LE(24) };
 }
 
-async function start() {
+async function loadPacket() {
+  if (independent) {
+    const order = await readFile(join(packetDir, 'reviewer-b-order.txt'), 'utf8');
+    const windows = order.trim().split(/\r?\n/);
+    if (windows.length !== 6 || !windows.every(id => valid(id, 'call'))
+        || new Set(windows).size !== windows.length) {
+      throw new Error('Unexpected independent packet listening order');
+    }
+    return { mode: 'independent', windows };
+  }
   const [manifest, template] = await Promise.all([
     readFile(join(bundle, 'hindi-review-a/packet.json'), 'utf8'),
     readFile(join(bundle, 'packet-v1/listening/reviewer-a.csv'), 'utf8'),
@@ -58,7 +69,6 @@ async function start() {
   if (ids.size !== clips.length + windows.length + 1) {
     throw new Error('Duplicate review audio IDs');
   }
-  await Promise.all([...ids].map(id => access(join(audioDir, `${id}.wav`))));
   const receipt = await readFile(join(bundle, 'hindi-review-a/suggested-pauses.json'), 'utf8')
     .then(JSON.parse)
     .catch(error => { if (error.code !== 'ENOENT') throw error; return null; });
@@ -66,15 +76,22 @@ async function start() {
       || !receipt.proposals.every(proposal => windows.includes(proposal.recording)))) {
     throw new Error('Unexpected suggested-pause receipt');
   }
+  return { clips, windows, ballotIds, receipt };
+}
 
+async function start() {
+  const packet = await loadPacket();
+  const ids = new Set(independent ? packet.windows : [...packet.clips, ...packet.windows, 'practice']);
+  await Promise.all([...ids].map(id => access(join(audioDir, `${id}.wav`))));
   const dist = join(appDir, 'dist');
   if (!dev) await access(join(dist, 'index.html'));
   await server.register(fastifyStatic, { root: dist, serve: !dev });
-  registerDraftStore(server, resolve(process.env.REVIEW_BALLOTS ?? join(audioDir, '../ballots')));
+  const ballots = independent ? join(packetDir, 'ballots') : process.env.REVIEW_BALLOTS ?? join(packetDir, 'ballots');
+  registerDraftStore(server, resolve(ballots), independent ? 'superturn_independent_reviewer' : undefined);
   const waveforms = new Map();
   server.get('/api/packet', async (_request, reply) => {
     reply.header('Cache-Control', 'no-store');
-    return { clips, windows, ballotIds, receipt };
+    return packet;
   });
   server.get('/api/audio/:id', async (request, reply) => {
     const { id } = request.params;
@@ -92,7 +109,7 @@ async function start() {
     return waveforms.get(id);
   });
 
-  const port = dev ? defaults.dev : Number(process.env.PORT ?? defaults.production);
+  const port = dev ? defaults.dev : Number(process.env.PORT ?? (independent ? 8767 : defaults.production));
   await server.listen({ port, host: '127.0.0.1' });
   console.log(`Superturn review listening at http://127.0.0.1:${port}/`);
 }

@@ -28,7 +28,7 @@ function WavePeaks({ waveform, focal }) {
 }
 
 export function AudioTimeline({ recording, durationHint, selected, markers = [], onSelect,
-  reveal = false, reviewed = {}, label = 'Recording playback' }) {
+  reveal = false, reviewed = {}, label = 'Recording playback', renderControls }) {
   const audio = useRef(null);
   const edge = selected ? selected.stop_ms / 1000 : 0;
   const start = selected ? Math.max(0, edge - 4) : 0;
@@ -150,6 +150,10 @@ export function AudioTimeline({ recording, durationHint, selected, markers = [],
         </select>
       </label>
     </div>
+    {renderControls?.({
+      ready: ready && !playing,
+      capture: () => Math.round(audio.current.currentTime * 1000),
+    })}
     {error && <p role="alert" className="timeline-error">{error}</p>}
     {waveError && <p className="timeline-error">Waveform unavailable. Audio controls are still available.</p>}
   </section>;

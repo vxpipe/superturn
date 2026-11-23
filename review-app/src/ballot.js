@@ -16,6 +16,16 @@ function csv(fields, rows) {
     .join('\r\n') + '\r\n';
 }
 
+export function completedWindowsCsv(windows, recordings) {
+  return csv(['recording', 'reviewed', 'left_language', 'right_language'], windows.map(id => {
+    const { reviewed, left_language, right_language } = recordings[id] ?? {};
+    if (reviewed !== true || !left_language || !right_language) {
+      throw new Error('Review every recording and record both channel languages before preparing the ballot.');
+    }
+    return [id, 'yes', left_language, right_language];
+  }));
+}
+
 export function candidateCsv(ballotIds, ratings) {
   return csv(['example', ...judgmentFields], ballotIds.map(id => {
     const row = ratings[id];
@@ -32,8 +42,10 @@ export function continuousCsv(windows, recordings) {
       const { outcome, focal_channel: focal, stop_ms: stop, next_onset_ms: onset, next_channel: next } = row;
       const validStop = /^\d+$/.test(stop) && Number(stop) <= 29700;
       const validNext = onset === '' ? !next && !['resume', 'handoff'].includes(outcome)
-        : /^\d+$/.test(onset) && Number(onset) >= Number(stop) + 300 && Number(onset) < 30000 && next;
-      if (!outcome || !validStop || !validNext) {
+        : /^\d+$/.test(onset) && Number(onset) >= Number(stop) + 300 && Number(onset) < 30000
+          && sides.some(([side]) => side === next);
+      if (!outcome || !row.language || !sides.some(([side]) => side === focal)
+          || !validStop || !validNext) {
         throw new Error(`Check the outcome and timestamps for recording ${recordingIndex + 1}, pause ${index + 1}.`);
       }
       if (lastStops[focal].some(previous => Math.abs(previous - Number(stop)) < 300)) {
