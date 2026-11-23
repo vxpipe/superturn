@@ -3,6 +3,7 @@
 import argparse
 from contextlib import contextmanager
 import json
+from math import ceil
 import os
 from pathlib import Path
 import subprocess
@@ -217,15 +218,19 @@ def token_needs(tokenizer, records, name):
             if unknown_id is not None:
                 unknown += current_ids.count(unknown_id)
             short_prior.append(len(current_ids) + min(16, len(prior_ids)) + len(prefix_ids) + special)
-            full.append(len(tokenizer.encode(previous + "\n" + current).ids if name == "smollm2"
-                            else tokenizer.encode(prefix + previous, current).ids))
+            if name == "smollm2":
+                full.append(len(tokenizer.encode(previous + "\n" + current).ids))
+            else:
+                fixed = tokenizer.encode(prefix + (previous if previous == "---" else ""), add_special_tokens=False)
+                prior = len(prior_ids) if previous != "---" else 0
+                full.append(len(fixed.ids) + prior + len(current_ids) + special)
         report[language] = {"caller": number_stats(caller), "caller_plus_16_prior": number_stats(short_prior),
                             "full_two_lines": number_stats(full),
                             "caller_unknown_token_share": unknown / sum(caller) if caller and sum(caller) else None}
     return report
 
 
-def encoder_screen(detail, languages, lengths, idle, loaded, load, expected_workers):
+def encoder_screen(detail, languages, lengths, idle, loaded, load, expected_workers, *, timed_scope=None):
     counts = {language: detail["token_needs"][language]["full_two_lines"] for language in languages}
     missing_languages = [language for language, count in counts.items() if not count["n"]]
     p90 = max((count["p90"] for count in counts.values() if count["n"]), default=None)
@@ -244,7 +249,7 @@ def encoder_screen(detail, languages, lengths, idle, loaded, load, expected_work
     return {
         "languages": languages, "missing_languages": missing_languages, "largest_p90": p90,
         "conservative_measured_bucket": bracket, "p90_exceeds_128": p90 is not None and p90 > LENGTHS[-1],
-        "timed_input_scope": "English synthetic strings at matching token lengths",
+        "timed_input_scope": timed_scope or "English synthetic strings at matching token lengths",
         "checks": gates, "passed": all(gates.values()),
     }
 
@@ -284,19 +289,42 @@ def pack_encoder(tokenizer, text, limit, name):
     return tokenizer.post_process(Encoding.merge([fixed, prior]), caller, add_special_tokens=True)
 
 
-def encoder_trials(session, tokenizer, texts, warmups, iterations, name, lengths=LENGTHS):
+def native_p90_inputs(tokenizer, records, name, language, token_stats):
+    if not token_stats["n"]:
+        raise ValueError(f"no synthetic examples for {language}")
+    length = ceil(token_stats["p90"])
+    if not 8 <= length <= LENGTHS[-1]:
+        raise ValueError(f"{language} p90 of {length} tokens is outside the measured input range")
+    by_length = []
+    for row in records:
+        if row["language"] != language:
+            continue
+        text = row["text"]
+        packed = pack_encoder(tokenizer, text, LENGTHS[-1], name)
+        if len(packed.ids) >= length and 1 in packed.sequence_ids:
+            by_length.append((len(packed.ids), text))
+    # Use the nearest distinct examples without stretching or repeating caller text.
+    cases = list(dict.fromkeys(text for _, text in sorted(by_length)))[:32]
+    if not cases:
+        raise ValueError(f"no real-length synthetic fixtures for {language} at {length} tokens")
+    return length, cases
+
+
+def encoder_trials(session, tokenizer, texts, warmups, iterations, name, lengths=LENGTHS, *, exact=None):
     inputs = {item.name for item in session.get_inputs()}
     result = {}
     for length in lengths:
-        fixtures = []
-        for text in texts:
-            previous, caller = text.split("\n")
-            words = caller.split() * length
-            for size in range(1, len(words) + 1):
-                value = previous + "\n" + " ".join(words[:size])
-                if len(pack_encoder(tokenizer, value, length, name).ids) == length:
-                    fixtures.append(value)
-                    break
+        fixtures = exact
+        if fixtures is None:
+            fixtures = []
+            for text in texts:
+                previous, caller = text.split("\n")
+                words = caller.split() * length
+                for size in range(1, len(words) + 1):
+                    value = previous + "\n" + " ".join(words[:size])
+                    if len(pack_encoder(tokenizer, value, length, name).ids) == length:
+                        fixtures.append(value)
+                        break
 
         def prepare(text):
             packed = pack_encoder(tokenizer, text, length, name)
@@ -396,7 +424,8 @@ def causal_trials(session, tokenizer, texts, warmups, iterations, precision):
             "over_128_token_context_stress_only": ["cached_128_append_4", "cached_128_append_8"]}
 
 
-def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTHS, precisions=("fp32", "int8")):
+def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTHS, precisions=("fp32", "int8"),
+        native_p90=None):
     import onnxruntime as ort
     from tokenizers import Tokenizer
 
@@ -407,7 +436,8 @@ def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTH
                "We need to change our booking.\nThe one for two people."]
     affinity, placement, hardware = cpus()
     result = {"scope": "batch-one synthetic CPU screening, no quality scoring", "hardware": hardware,
-              "ort": ort.__version__, "warmups": warmups, "iterations": iterations, "lengths": lengths,
+              "ort": ort.__version__, "warmups": warmups, "iterations": iterations,
+              "lengths": lengths if not native_p90 else None,
               "cpu_execution_provider_only": True, "ort_intra_threads": 1, "ort_inter_threads": 1,
               "language_rows": dict((language, sum(row["language"] == language for row in records))
                                     for language in LANGUAGES), "encoders": {}}
@@ -421,6 +451,13 @@ def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTH
             tokenizer.no_truncation()
             detail = {"license": SOURCES[original][2], "source": SOURCES[original][:2],
                       "token_needs": token_needs(tokenizer, records, original)}
+            model_lengths, exact = lengths, None
+            if native_p90:
+                stats = detail["token_needs"][native_p90]["full_two_lines"]
+                length, exact = native_p90_inputs(tokenizer, records, name, native_p90, stats)
+                model_lengths = (length,)
+                detail["native_p90_fixtures"] = {"language": native_p90, "count": len(exact), "length": length,
+                                                 "synthetic_corpus_sha256": digest(corpus)}
             result["encoders"][name] = detail
             paths = (causal_paths(root) if name == "smollm2" else six_layer_paths(root) if name == "me5-6"
                      else graph_paths(root, name))
@@ -430,7 +467,7 @@ def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTH
                 session = get_session(path)
                 measure = (lambda: causal_trials(session, tokenizer, fixture, warmups, iterations, precision)
                            if name == "smollm2" else encoder_trials(session, tokenizer, fixture, warmups,
-                                                                   iterations, name, lengths))
+                                                                   iterations, name, model_lengths, exact=exact))
                 idle = measure()
                 meter.advance(1)
                 with busy_cores(placement[1:]) as load:
@@ -440,9 +477,10 @@ def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTH
                                      "onnx_artifact": str(path.relative_to(root)),
                                      "idle": idle, "loaded": loaded, "load_verification": load}
                 if precision == "int8" and name != "smollm2":
-                    languages = ("en",) if name == "minilm-en" else LANGUAGES
+                    languages = (native_p90,) if native_p90 else ("en",) if name == "minilm-en" else LANGUAGES
                     detail["screen_at_p90_bucket"] = encoder_screen(
-                        detail, languages, lengths, idle, loaded, load, expected_workers=len(placement) - 1,
+                        detail, languages, model_lengths, idle, loaded, load, expected_workers=len(placement) - 1,
+                        timed_scope=f"{native_p90} synthetic inputs at rounded-up p90" if native_p90 else None,
                     )
                 _write_json(root / report_name, result)
     finally:
@@ -462,6 +500,7 @@ if __name__ == "__main__":
     parser.add_argument("--report-name", default="encoder-latency.json")
     parser.add_argument("--lengths", type=int, nargs="+", default=LENGTHS)
     parser.add_argument("--precisions", nargs="+", choices=("fp32", "int8"), default=("fp32", "int8"))
+    parser.add_argument("--native-p90", choices=LANGUAGES, help="time existing same-language inputs at their p90 length")
     args = parser.parse_args()
     if args.stage:
         stage(args.artifacts, args.models)
@@ -471,5 +510,8 @@ if __name__ == "__main__":
         lengths = tuple(sorted(set(args.lengths)))
         if lengths[0] < 8 or lengths[-1] > LENGTHS[-1] or ("smollm2" in args.models and lengths != LENGTHS):
             parser.error("encoder lengths must be 8–128; the causal lengths are fixed")
+        if args.native_p90 and ("smollm2" in args.models or
+                                ("minilm-en" in args.models and args.native_p90 != "en")):
+            parser.error("native p90 requires an encoder for the requested language")
         run(args.artifacts, args.models, args.corpus, args.warmups, args.iterations, args.report_name,
-            lengths=lengths, precisions=tuple(dict.fromkeys(args.precisions)))
+            lengths=lengths, precisions=tuple(dict.fromkeys(args.precisions)), native_p90=args.native_p90)
