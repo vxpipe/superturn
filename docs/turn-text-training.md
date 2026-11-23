@@ -150,7 +150,7 @@ the independent English process described in the milestone.
 
 After the full HarperValley streaming capture is available, run the
 same scoring command with `--streaming`. The reference checks the
-capture receipt against the frozen pack, reports coverage and the
+v2 fixed-hash batch receipt against the frozen pack, reports coverage and the
 scorecard at 300 ms, and simulates the received-text calls through the
 800 ms timeout. This writes `reports/livekit-text-streaming-reference.json`
 separately from the timing-proxy comparison.

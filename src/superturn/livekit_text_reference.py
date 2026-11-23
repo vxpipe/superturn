@@ -26,6 +26,7 @@ TAG = "v0.4.1-intl"
 REVISION = "87e35fcb1e60a569bea70346191c4886ea92e281"
 RUNTIME = "1.8.13"
 ONNX = "onnx/model_q8.onnx"
+CAPTURE_BATCH_ORDER = "sort by SHA-256 of call:caller_sample, no salt, independent of playback length"
 PINNED_HASHES = {
     ONNX: "bd2c30776882138a1d95a07faddc13756fe1a35bef6323505f1124fca349bc9c",
     "LICENSE": "4f5b74db4fd26299a166688de8a3bde046fd7d9cc13ecab64532c24310bc18d7",
@@ -87,13 +88,17 @@ def chat_context(text, context):
 
 
 def streaming_rows(root, frozen, input_sha):
-    receipt_path = root / "reports/harper-text-streaming-capture.json"
+    receipt_path = root / "reports/harper-text-streaming-capture-v2.json"
     receipt = json.loads(receipt_path.read_text())
-    trace = root / "cache/harper-valley/text-dev-streaming-trace-v1.json"
-    packed = root / "cache/harper-valley/text-dev-streaming-v1.json"
+    trace = root / "cache/harper-valley/text-dev-streaming-trace-v2.json"
+    packed = root / "cache/harper-valley/text-dev-streaming-v2.json"
+    settings = receipt["provider_settings"]
+    settings_sha = sha256(json.dumps(settings, sort_keys=True).encode()).hexdigest()
     if (receipt["frozen_pack_sha256"] != input_sha or receipt["rows"] != len(frozen)
             or digest(trace) != receipt["trace_sha256"] or digest(packed) != receipt["packed_sha256"]):
         raise ValueError("the full Harper streaming capture does not match the frozen reference inputs")
+    if settings.get("benchmark_batch_order") != CAPTURE_BATCH_ORDER or settings_sha != receipt["provider_settings_sha256"]:
+        raise ValueError("the Harper streaming capture must use fixed batches independent of playback length")
     capture = json.loads(packed.read_text())
     if (capture["input_sha256"] != receipt["trace_sha256"]
             or capture["provider_settings_sha256"] != receipt["provider_settings_sha256"]):
