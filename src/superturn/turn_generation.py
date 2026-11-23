@@ -143,7 +143,15 @@ def request_json(path, key, payload=None):
 
 
 def generate_batch(specs, key, attempt):
-    prompt = json.dumps({"attempt": attempt, "cases": specs}, ensure_ascii=False)
+    content = {"attempt": attempt, "cases": specs}
+    if attempt > 1:
+        content["retry_notes"] = (
+            "Follow the required blank fields exactly. For short_shift=true, the short_caller_reply must be "
+            "a standalone answer using at most five words and 50 characters, with no explanations or "
+            "listener acknowledgments. Write the agent's response to that answer separately in final_agent_reply. "
+            "Make a distinct exchange and avoid contact details, long numeral strings and staged dialogue markers."
+        )
+    prompt = json.dumps(content, ensure_ascii=False)
     response = request_json(f"models/{GENERATOR}:generateContent", key, {
         "system_instruction": {"parts": [{"text": SYSTEM}]},
         "contents": [{"parts": [{"text": prompt}]}],
@@ -174,7 +182,8 @@ def generate_batch(specs, key, attempt):
             continue
         cleaned = clean_sample(by_slot[spec["slot"]], spec)
         if cleaned is not None:
-            checked.append({**spec, **cleaned, "generator_version": response.get("modelVersion")})
+            checked.append({**spec, **cleaned, "generator_version": response.get("modelVersion"),
+                            "generation_attempt": attempt})
     return checked, spend
 
 
