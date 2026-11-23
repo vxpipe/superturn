@@ -1,5 +1,6 @@
 """Check original IndicVoices call pairing without staging an archive."""
 
+import argparse
 from collections import Counter, defaultdict
 import io
 import json
@@ -75,12 +76,28 @@ def decode(wav):
     return value
 
 
-def inspect_pairs(members):
+def own_intervals(sidecar, frames):
+    speaker = sidecar.get("speaker_id")
+    result = []
+    for row in sidecar.get("verbatim", []):
+        if not speaker or row.get("speaker_id") != speaker:
+            continue
+        try:
+            start, stop = (round(float(row[field]) * RATE) for field in ("start", "end"))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            continue
+        if 0 <= start < stop <= frames:
+            result.append((start, stop))
+    return sorted(result)
+
+
+def inspect_pairs(members, *, clock=False):
     from scipy.signal import resample_poly
     from .dral_label_pilot import isolation
 
     counts = Counter()
     pairs = []
+    signals = {}
     detect = silero()
     for group in members.values():
         if set(group) != {(side, ext) for side in ("0", "1") for ext in (".wav", ".json")}:
@@ -101,20 +118,57 @@ def inspect_pairs(members):
             activity = [detect(track) for track in tracks]
             checks.update({"seconds": len(audio[0]) / 8000, "silero_activity_segments": list(map(len, activity)),
                            "channel_isolation": isolation(tracks, activity)})
+            if clock:
+                from .nsc_part6_clock_probe import candidate_windows, direct_power, spectral_frames
+
+                tracks_clock = []
+                for track, spans, sidecar in zip(tracks, activity, sidecars, strict=True):
+                    signal = spectral_frames(track)
+                    own = own_intervals(sidecar, len(track))
+                    tracks_clock.append((signal, candidate_windows(spans, len(track)),
+                                         direct_power(signal[1], spans), own, len(track)))
+                signals[len(pairs) + 1] = tracks_clock
         pairs.append(checks)
-    return {"counts": counts, "pair_checks": pairs,
+    clock_checks = compare_clock(signals) if clock else None
+    return {"counts": counts, "pair_checks": pairs, **({"clock_checks": clock_checks} if clock else {}),
             "scope": "bounded original audio preflight; common clock, reuse terms and speaker semantics still pending"}
 
 
-def run(root):
+def compare_clock(signals):
+    from .nsc_part4_native_clock import test_clock
+
+    if set(signals) != {1, 2}:
+        raise ValueError("the clock test requires the two expected complete pairs")
+    mapped = {(pair, side): value for pair, tracks in signals.items()
+              for side, value in enumerate(tracks, start=1)}
+    report = []
+    for pair, tracks in signals.items():
+        result = test_clock([], mapped, pair)
+        report.append({"sidecar_intervals": [len(track[3]) for track in tracks],
+                       "passes": result["passes"], "nulls_pass": result["nulls_pass"],
+                       "clock": result["clock"],
+                       "coarse_envelope_offset": result["coarse_envelope_offset"],
+                       "directions": [{"candidates": direction["candidates"],
+                                       "matched": len(direction["matches"]),
+                                       "anchors": len(direction["directional_anchors"]),
+                                       "wrong_pair": direction["wrong_pair"],
+                                       "wrong_time": direction["wrong_time"]}
+                                      for direction in result["directions"]]})
+    return report
+
+
+def run(root, *, clock=False):
     if not (root / ".campaign-machine").is_file():
         raise ValueError("IndicVoices audio stays on the campaign machine")
     source = load_sources()[SOURCE]
     report = {"archive_etag": source.get("archive_etag"), "range_bytes": PREFIX_BYTES,
-              **inspect_pairs(read_members(fetch(source)))}
-    write_once(root / "reports" / f"{JOB}.json", report)
+              **inspect_pairs(read_members(fetch(source)), clock=clock)}
+    name = f"{JOB}-clock" if clock else JOB
+    write_once(root / "reports" / f"{name}.json", report)
     print(json.dumps(report, indent=2))
 
 
 if __name__ == "__main__":
-    run(data_root())
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--clock", action="store_true", help="look for mutual timing anchors and test wrong-time controls")
+    run(data_root(), clock=parser.parse_args().clock)
