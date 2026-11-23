@@ -78,3 +78,13 @@ The published supplement contains `dialogues.jsonl` and `receipt.json`.
 Run the same command with that directory and `--export DESTINATION` to
 derive training rows. Add `--replay-control` for the same-size English
 exposure control. Both export the original validation file verbatim.
+
+The general-language transfer comparison uses
+[Qwen3-0.6B-Base](https://huggingface.co/Qwen/Qwen3-0.6B-Base/tree/da87bfb608c14b7cf20ba1ce41287e8de496c0cd)
+under Apache 2.0. Stage the pinned weights on Vast and use
+`--backbone qwen3 --base BASE_DIR` with the same trainer. The 128-token
+input preserves the caller suffix and a newline between turns. The
+classifier reads the last caller token and tests that right padding
+preserves its logit. The scoring command reads the backbone from the
+fit receipt and checks the expected weights. This is a GPU quality
+comparison. CPU release qualifications have their own gate.

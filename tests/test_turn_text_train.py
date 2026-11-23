@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from superturn.turn_text_train import QUERY_PREFIX, TOKEN_BUDGET, pack, read_dataset
+from superturn.turn_text_train import QUERY_PREFIX, TOKEN_BUDGET, pack, pack_qwen, read_dataset
 
 
 class PairTokenizer:
@@ -37,3 +37,17 @@ def test_pack_keeps_previous_tail_after_reserving_current_turn():
 def test_trainer_reads_the_published_immutable_dataset():
     rows, _ = read_dataset(Path("datasets/turn-completion-v1"))
     assert [len(rows[name]) for name in ("train", "validation")] == [3696, 616]
+
+
+def test_decoder_keeps_opening_marker_and_last_actual_caller_word():
+    class DecoderTokenizer(PairTokenizer):
+        def encode(self, text, *, add_special_tokens):
+            if text == "\n":
+                return [999]
+            return super().encode(text, add_special_tokens=add_special_tokens)
+
+    current = " ".join(map(str, range(100, 280)))
+    result = pack_qwen(DecoderTokenizer(), "---\n" + current)
+    assert len(result) == TOKEN_BUDGET
+    assert result[:2] == [1, 999]
+    assert result[-1] == 279

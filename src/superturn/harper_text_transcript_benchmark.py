@@ -115,6 +115,7 @@ def run(root, dataset, base, checkpoint, device, report_name="harper-real-transc
         "development_selection_audit_sha256": selection_audit,
         "transcripts_sha256": fingerprint.hexdigest(),
         "scored_turns_sha256": sha256(json.dumps([(row[0], row[2]) for row in pairs]).encode()).hexdigest(),
+        "rendered_inputs_sha256": sha256(json.dumps([row[4] for row in pairs], sort_keys=True).encode()).hexdigest(),
         "transcript_inventory": dict(covered),
         "identical_interior_and_last_two_word_cuts": sum(
             views["interior_cut"] == views["last_two_words_cut"] for _, _, _, _, views in pairs),
@@ -142,11 +143,14 @@ def run(root, dataset, base, checkpoint, device, report_name="harper-real-transc
                 }
                 items.append(item)
                 masked.append({**item, "score": mask})
+        matched = length_matched(items)
         result["views"][view] = {
             "all": report_for(items),
             "one_turn": report_for([item for item in items if item["context"] == "one_turn"]),
             "two_turn": report_for([item for item in items if item["context"] == "two_turn"]),
-            "exact_word_count_and_context_matched": report_for(length_matched(items)),
+            "exact_word_count_and_context_matched": report_for(matched),
+            "matched_inputs_sha256": sha256(json.dumps(
+                [(item["rank"], item["label"], item["text"]) for item in matched]).encode()).hexdigest(),
             "within_turn_ranking": sum(outcomes) / len(outcomes),
             "current_only_ablation": report_for(masked),
             "current_only_within_turn_ranking": sum(masked_outcomes) / len(masked_outcomes),

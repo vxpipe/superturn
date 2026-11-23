@@ -14,6 +14,9 @@ from .sources import data_root
 BASE = "intfloat/multilingual-e5-small"
 REVISION = "614241f622f53c4eeff9890bdc4f31cfecc418b3"
 BASE_SHA256 = "1a55775f53449dac10a2bcbc312469fac40b96d53198c407081a831f81c98477"
+QWEN_BASE = "Qwen/Qwen3-0.6B-Base"
+QWEN_REVISION = "da87bfb608c14b7cf20ba1ce41287e8de496c0cd"
+QWEN_SHA256 = "cd2a512003e2f9f3cd3c32a9c3573f820bb28c940f73c57b1ddaa983d9223eba"
 TOKEN_BUDGET = 128
 QUERY_PREFIX = "query: "
 LABELS = {"hold": 0, "shift": 1}
@@ -65,20 +68,40 @@ def pack(tokenizer, text):
     return [bos, *prior, eos, eos, *caller, eos]
 
 
-def build_model(base_path, layers):
+def pack_qwen(tokenizer, text):
+    previous, current = text.split("\n")
+    prior = tokenizer.encode(previous, add_special_tokens=False)
+    separator = tokenizer.encode("\n", add_special_tokens=False)
+    caller = tokenizer.encode(current, add_special_tokens=False)
+    minimum_prior = len(prior) if previous == "---" else 0
+    caller = caller[-(TOKEN_BUDGET - len(separator) - minimum_prior):]
+    keep = TOKEN_BUDGET - len(separator) - len(caller)
+    return [*(prior[-keep:] if keep else []), *separator, *caller]
+
+
+def build_model(base_path, layers, backbone="e5"):
     import torch
     from transformers import AutoModel
 
     class EncoderClassifier(torch.nn.Module):
         def __init__(self):
             super().__init__()
-            self.encoder = AutoModel.from_pretrained(base_path, local_files_only=True, use_safetensors=True)
+            self.backbone = backbone
+            precision = {"dtype": torch.float32} if backbone == "qwen3" else {}
+            self.encoder = AutoModel.from_pretrained(base_path, local_files_only=True, use_safetensors=True, **precision)
             self.encoder.requires_grad_(False)
             if layers:
-                self.encoder.encoder.layer[-layers:].requires_grad_(True)
+                blocks = self.encoder.layers if backbone == "qwen3" else self.encoder.encoder.layer
+                blocks[-layers:].requires_grad_(True)
             self.head = torch.nn.Linear(self.encoder.config.hidden_size, 1)
 
         def forward(self, input_ids, attention_mask):
+            if self.backbone == "qwen3":
+                hidden = self.encoder(input_ids=input_ids, attention_mask=attention_mask,
+                                      use_cache=False).last_hidden_state
+                rows = torch.arange(len(hidden), device=hidden.device)
+                final = attention_mask.sum(dim=1) - 1
+                return self.head(hidden[rows, final]).squeeze(-1)
             hidden = self.encoder(input_ids=input_ids, attention_mask=attention_mask).last_hidden_state
             mask = attention_mask.unsqueeze(-1)
             pooled = (hidden * mask).sum(dim=1) / mask.sum(dim=1).clamp_min(1)
@@ -125,30 +148,38 @@ def scorecard(scores, rows):
     return report
 
 
-def run(dataset, base, output, *, epochs=3, batch_size=32, layers=4, seed=29, device="cuda"):
+def run(dataset, base, output, *, epochs=3, batch_size=32, layers=4, seed=29, device="cuda", backbone="e5"):
     import torch
     from transformers import AutoTokenizer, get_linear_schedule_with_warmup
 
     splits, corpus_hash = read_dataset(dataset)
-    if digest(base / "model.safetensors") != BASE_SHA256:
+    qwen = backbone == "qwen3"
+    expected_sha = QWEN_SHA256 if qwen else BASE_SHA256
+    if digest(base / "model.safetensors") != expected_sha:
         raise ValueError("the downloaded encoder does not match its pinned weights")
     receipt = {
-        "scope": "fixed-epoch synthetic-only diagnostic", "base": BASE, "base_revision": REVISION,
-        "base_weights_sha256": BASE_SHA256, "tokenizer_sha256": digest(base / "tokenizer.json"),
+        "scope": "fixed-epoch synthetic-only diagnostic", "base": QWEN_BASE if qwen else BASE,
+        "base_revision": QWEN_REVISION if qwen else REVISION,
+        "base_weights_sha256": expected_sha, "tokenizer_sha256": digest(base / "tokenizer.json"),
         "dataset_manifest_sha256": corpus_hash, "token_budget": TOKEN_BUDGET, "query_prefix": QUERY_PREFIX,
         "seed": seed, "epochs": epochs, "batch_size": batch_size, "top_layers_trainable": layers,
         "device": device, "learning_rate": 2e-5, "torch": str(torch.__version__),
         "turn_boundary": "native tokenizer pair separators",
     }
+    if qwen:
+        receipt.update(backbone=backbone, query_prefix="", turn_boundary="newline; last real caller token",
+                       inference_dtype="float32")
     tokenizer = AutoTokenizer.from_pretrained(base, local_files_only=True, use_fast=True)
-    if pack(tokenizer, "---\nhello") != tokenizer(f"{QUERY_PREFIX}---", "hello")["input_ids"]:
+    tokenizer.padding_side = "right"
+    if not qwen and pack(tokenizer, "---\nhello") != tokenizer(f"{QUERY_PREFIX}---", "hello")["input_ids"]:
         raise ValueError("the tokenizer changed its native pair layout")
-    packed = {name: [pack(tokenizer, row["text"]) for row in rows] for name, rows in splits.items()}
+    encode = pack_qwen if qwen else pack
+    packed = {name: [encode(tokenizer, row["text"]) for row in rows] for name, rows in splits.items()}
     train = splits["train"]
     truth = [LABELS[row["label"]] for row in train]
     steps_per_epoch = (len(train) + batch_size - 1) // batch_size
     torch.manual_seed(seed)
-    model = build_model(base, layers).to(device)
+    model = build_model(base, layers, backbone).to(device)
     params = {name: weight for name, weight in model.named_parameters() if weight.requires_grad}
     optimizer = torch.optim.AdamW(params.values(), lr=receipt["learning_rate"], weight_decay=.01)
     steps = epochs * steps_per_epoch
@@ -175,8 +206,18 @@ def run(dataset, base, output, *, epochs=3, batch_size=32, layers=4, seed=29, de
 
     def forward(sequences):
         inputs = tokenizer.pad({"input_ids": sequences}, padding=True, return_tensors="pt").to(device)
-        with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=use_bf16):
+        mixed_precision = use_bf16 and (not qwen or model.training)
+        with torch.autocast(device_type=device, dtype=torch.bfloat16, enabled=mixed_precision):
             return model(**inputs).float()
+
+    if qwen:
+        probe = [encode(tokenizer, "---\nhello"), encode(tokenizer, "what day would work for you\nfriday works for me")]
+        model.eval()
+        with torch.inference_mode():
+            single = forward(probe[:1])[0]
+            mixed = forward(probe)[0]
+        if not torch.allclose(single, mixed, rtol=0, atol=.0001):
+            raise ValueError("right-padding changed the decoder's caller-token logit")
 
     for epoch in range(initial_epoch, epochs):
         random.Random(seed + epoch).shuffle(order := list(range(len(train))))
@@ -221,14 +262,20 @@ def load_fit(checkpoint, base, device, corpus_hash):
 
     saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
     receipt = saved["receipt"]
-    if (receipt["dataset_manifest_sha256"] != corpus_hash or receipt["base_weights_sha256"] != BASE_SHA256
-            or digest(base / "model.safetensors") != BASE_SHA256
+    backbone = receipt.get("backbone", "e5")
+    qwen = backbone == "qwen3"
+    expected_sha = QWEN_SHA256 if qwen else BASE_SHA256
+    expected_base, expected_revision = (QWEN_BASE, QWEN_REVISION) if qwen else (BASE, REVISION)
+    if (receipt["dataset_manifest_sha256"] != corpus_hash or receipt["base_weights_sha256"] != expected_sha
+            or receipt["base"] != expected_base or receipt["base_revision"] != expected_revision
+            or digest(base / "model.safetensors") != expected_sha
             or receipt["tokenizer_sha256"] != digest(base / "tokenizer.json")
             or len(saved["history"]) != receipt["epochs"]
-            or receipt["token_budget"] != TOKEN_BUDGET or receipt["query_prefix"] != QUERY_PREFIX):
+            or receipt["token_budget"] != TOKEN_BUDGET or receipt["query_prefix"] != ("" if qwen else QUERY_PREFIX)):
         raise ValueError("evaluation inputs do not match the completed synthetic fit")
     tokenizer = AutoTokenizer.from_pretrained(base, local_files_only=True, use_fast=True)
-    model = build_model(base, receipt["top_layers_trainable"]).to(device).eval()
+    tokenizer.padding_side = "right"
+    model = build_model(base, receipt["top_layers_trainable"], backbone).to(device).eval()
     parameters = {name: param for name, param in model.named_parameters() if param.requires_grad}
     if set(saved["weights"]) != set(parameters):
         raise ValueError("the checkpoint is missing trained parameters")
@@ -241,8 +288,9 @@ def load_fit(checkpoint, base, device, corpus_hash):
 def predict(tokenizer, model, texts, device):
     import torch
 
-    tokens = [pack(tokenizer, text) for text in texts]
-    use_bf16 = device == "cuda" and torch.cuda.is_bf16_supported()
+    encode = pack_qwen if model.backbone == "qwen3" else pack
+    tokens = [encode(tokenizer, text) for text in texts]
+    use_bf16 = model.backbone != "qwen3" and device == "cuda" and torch.cuda.is_bf16_supported()
     scores = []
     with torch.inference_mode():
         for index in range(0, len(tokens), 32):
@@ -291,6 +339,7 @@ if __name__ == "__main__":
     parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--layers", type=int, default=4)
+    parser.add_argument("--backbone", choices=("e5", "qwen3"), default="e5")
     parser.add_argument("--seed", type=int, default=29)
     parser.add_argument("--device", choices=("cpu", "cuda"), default="cuda")
     parser.add_argument("--evaluate", action="store_true", help="score the final checkpoint on synthetic validation")
@@ -301,4 +350,4 @@ if __name__ == "__main__":
         evaluate(args.dataset, args.base, args.output, args.device)
     else:
         run(args.dataset, args.base, args.output, epochs=args.epochs, batch_size=args.batch_size,
-            layers=args.layers, seed=args.seed, device=args.device)
+            layers=args.layers, seed=args.seed, device=args.device, backbone=args.backbone)
