@@ -114,3 +114,30 @@ Run `python -m superturn.timed_text_context_audit` after the diagnostic
 to compare Qwen with and without the previous turn on identical rows.
 The report separates published pause-length bands and reports a
 false-complete interval for bands with holds only.
+
+The English loss-weighting comparison is
+`python -m superturn.timed_text_length_trial` on Vast. It keeps the same
+synthetic rows and seeds in both arms and reweights the two classes
+within language and caller-length bands. Build the score sensitivity
+mask with `python -m superturn.timed_text_deadline_audit`. Run
+`python -m superturn.timed_text_length_trial --score-only` to measure
+matched-recall performance and replay the metrics with timing-sensitive
+rows excluded. The original freeze remains the development reference.
+
+To reproduce the last synthetic English number trial, run these on Vast
+with the existing focused English synthetic parent and publisher freeze.
+The three commands reuse versioned synthetic rows and make no model API
+calls.
+
+```sh
+python -m superturn.turn_text_number_layout
+python -m superturn.turn_text_number_layout \
+  --export-source datasets/turn-completion-en-number-v1 \
+  --dataset-out "$SUPERTURN_DATA/cache/turn-text-number-pilot-v1"
+python -m superturn.timed_text_number_trial
+```
+
+The final command reuses the five weighted controls and fits five
+matched candidates. It reports fixed-threshold and matched-recall
+metrics, separate number-ending hold and shift cells, timing sensitivity,
+and the held-out synthetic checks.
