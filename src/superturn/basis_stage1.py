@@ -6,6 +6,8 @@ import resource
 from collections import Counter
 from pathlib import Path, PurePosixPath
 
+import numpy as np
+
 from .ami_calibration import _write_json
 from .audio import RATE, flac_streaminfo, read_audio, silero
 from .basis_stage0_yield import json_lines
@@ -17,11 +19,22 @@ LANGUAGES = ("en", "hi")
 MAX_AUDIO_BYTES = 120_000_000
 
 
-def events(activity, connected, muted, length):
+def _speech_edge_status(tracks, start, stop, voice):
+    peaks = {person: int(np.max(np.abs(signal[start:stop].astype(np.int32)), initial=0))
+             for person, signal in tracks.items()}
+    focal = peaks.pop(voice)
+    if focal < 128:
+        return "low_edge_level"
+    if focal < 1.414 * max(peaks.values(), default=0):
+        return "suspected_bleed"
+    return None
+
+
+def events(activity, connected, muted, length, *, tracks=None):
     """Abstain on overlaps, short interjections, mutes and track transitions."""
     groups = list(disjoint_bouts(sorted(activity)))
     counts, proposed = Counter(), []
-    for (_, last), (first, _) in zip(groups, groups[1:]):
+    for index, ((_, last), (first, _)) in enumerate(zip(groups, groups[1:])):
         if len(last) != 1 or len(first) != 1:
             counts["ambiguous_overlap_boundary"] += 1
             continue
@@ -53,6 +66,17 @@ def events(activity, connected, muted, length):
         if next_voice != focal and end - onset < RATE:
             counts["short_other"] += 1
             continue
+        if index and next_voice != focal and stop - start < RATE:
+            _, prior = groups[index - 1]
+            if len(prior) == 1 and prior[0][2] == next_voice and start - prior[0][1] <= 2 * RATE:
+                counts["focal_backchannel"] += 1
+                continue
+        if tracks is not None:
+            issue = (_speech_edge_status(tracks, max(start, stop - RATE // 5), stop, focal)
+                     or _speech_edge_status(tracks, onset, min(end, onset + RATE // 5), next_voice))
+            if issue:
+                counts[issue] += 1
+                continue
         label = "hold" if focal == next_voice else "shift"
         counts[label] += 1
         proposed.append((stop, onset, label, focal, next_voice))

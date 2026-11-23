@@ -57,7 +57,7 @@ def match_reference(judgments, proposals, word_gaps, pause_options):
     return metrics, confusion
 
 
-def filter_human_exclusions(row, proposals):
+def human_exclusion_audit(row, proposals):
     vetoes = [
         (mark["start"] * RATE, mark["end"] * RATE,
          "human_backchannel" if mark["question"] == "backchannel" else "human_overlap")
@@ -65,15 +65,12 @@ def filter_human_exclusions(row, proposals):
         if mark["question"] == "backchannel" or
         (mark["question"] == "overlap" and mark["label"] in {"competitive", "simultaneous_start"})
     ]
-    retained, counts = [], Counter()
+    counts = Counter()
     for event in proposals:
         stop, onset, _, _, _ = event
         reasons = {reason for start, end, reason in vetoes if start < onset + RATE and end > stop - RATE / 5}
-        if reasons:
-            counts.update(reasons)
-        else:
-            retained.append(event)
-    return retained, counts
+        counts.update(reasons)
+    return counts
 
 
 def agreement_scorecard(call_counts):
@@ -117,14 +114,14 @@ def run_reference_audit(root, fs, prefix, segments, judgments, audio_bytes, word
                         for start, stop in detect(pcm)]
             connected = {person["speaker"]: samples(person["on_call"]) for person in segment["speakers"]}
             counts, proposals = events(activity, connected, samples(segment["muted_spans"]),
-                                       min(map(len, tracks.values())))
-            retained, veto_counts = filter_human_exclusions(segment, proposals)
+                                       min(map(len, tracks.values())), tracks=tracks)
+            veto_counts = human_exclusion_audit(segment, proposals)
             attrition.update(counts)
-            attrition.update(veto_counts)
+            attrition.update({f"audit_near_{label}": count for label, count in veto_counts.items()})
             local = calls[segment["conversation_id"]]
             local["segments"] += 1
             coverage, confusion = match_reference(judgments[segment["segment_id"]],
-                                                  retained, word_gaps(segment), pause_options)
+                                                  proposals, word_gaps(segment), pause_options)
             local.update(coverage)
             local.update(confusion)
         if meter.done != audio_bytes:

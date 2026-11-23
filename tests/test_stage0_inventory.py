@@ -42,6 +42,14 @@ def test_english_reference_matches_before_comparing_the_outcome():
     assert confusion == {"hold_predicted_shift": 1}
 
 
+def test_basis_pause_rule_does_not_promote_a_backchannel_to_a_shift():
+    counts, proposals = events([(20_000, 64_000, "a"), (72_000, 80_000, "b"),
+                                (88_000, 120_000, "a")],
+                               {speaker: [(0, 128_000)] for speaker in ("a", "b")}, [], 128_000)
+    assert counts["short_other"] == counts["focal_backchannel"] == 1
+    assert not proposals
+
+
 def test_four_roles_preserve_whole_speaker_components():
     assert not four_roles_possible([530])
     assert not four_roles_possible([402, 6, 2, 2, 2, 2, 2])
