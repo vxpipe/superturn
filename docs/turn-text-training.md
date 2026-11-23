@@ -115,6 +115,39 @@ to compare Qwen with and without the previous turn on identical rows.
 The report separates published pause-length bands and reports a
 false-complete interval for bands with holds only.
 
+### LiveKit text reference
+
+The English reference uses the multilingual text plugin at
+`v0.4.1-intl`, revision `87e35fcb1e60a569bea70346191c4886ea92e281`.
+The artifact is the 396,316,457-byte INT8 ONNX model and the operating
+point is the publisher's English threshold of 0.011. The model's terms
+require the LiveKit Agents framework and limit use of its results to
+the reference comparison. The local Agents inference process runs on
+Vast using the published plugin. The scoring run has no model-service
+connection and writes aggregate metrics only. [Pinned model license](https://huggingface.co/livekit/turn-detector/blob/87e35fcb1e60a569bea70346191c4886ea92e281/LICENSE)
+
+From the Vast project directory, install the two pinned packages into
+an isolated overlay and run the stage and score entry points. The
+reference does not modify the project environment.
+
+```sh
+livekit_overlay="$SUPERTURN_DATA/cache/livekit-text-python"
+uv pip install --python .venv/bin/python --target "$livekit_overlay" \
+  'livekit-agents==1.8.13' 'livekit-plugins-turn-detector==1.8.13' \
+  'transformers==5.24.0' 'onnxruntime==1.32.0'
+PYTHONPATH="$livekit_overlay" .venv/bin/python -m superturn.livekit_text_reference --stage
+PYTHONPATH="$livekit_overlay" .venv/bin/python -m superturn.livekit_text_reference
+```
+
+The stage retrieves the pinned weight, tokenizer and metadata files.
+The scorer verifies the publisher and HarperValley input checksums. It
+uses the same two-line text inputs as the current diagnostics, mapping
+each line to its LiveKit speaker role and omitting the missing-turn
+marker. The resulting `reports/livekit-text-reference.json` has the
+released operating point, retrospective ROC metrics, and hold and
+shift counts for each diagnostic. Model selection and qualification use
+the independent English process described in the milestone.
+
 The English loss-weighting comparison is
 `python -m superturn.timed_text_length_trial` on Vast. It keeps the same
 synthetic rows and seeds in both arms and reweights the two classes
