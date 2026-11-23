@@ -78,7 +78,7 @@ def report_for(items):
 
 
 def run(root, dataset, base, checkpoint, device, report_name="harper-real-transcript-benchmark.json",
-        *, failure_analysis=False, plausibility_panel=False):
+        *, failure_analysis=False, plausibility_panel=False, compare=None):
     from .harper_valley_benchmark import pinned_split
 
     if not (root / ".campaign-machine").is_file():
@@ -106,6 +106,9 @@ def run(root, dataset, base, checkpoint, device, report_name="harper-real-transc
     if not pairs:
         raise ValueError("no eligible real transcript pairs")
     tokenizer, model = load_fit(checkpoint, base, device, manifest)
+    if compare:
+        compare_base, compare_checkpoint = compare
+        reference_tokenizer, reference_model = load_fit(compare_checkpoint, compare_base, device, manifest)
     result = {
         "scope": "real HarperValley English development transcript diagnostic",
         "label_contract": "recorded speaker handoff vs controlled word-prefix cut",
@@ -163,6 +166,18 @@ def run(root, dataset, base, checkpoint, device, report_name="harper-real-transc
             from .harper_text_plausibility import write_panel
 
             write_panel(root, items, result)
+        if compare and view == "last_two_words_cut":
+            from .harper_text_comparison import paired_intervals
+
+            reference_scores = predict(reference_tokenizer, reference_model, inputs, device)
+            by_rank = {item["rank"]: score for item, score in zip(items, reference_scores, strict=True)}
+            result["paired_near_end_comparison"] = {
+                "reference_checkpoint_sha256": digest(compare_checkpoint),
+                "scope": "fixed fits, resampling callers; fixed threshold 0.5",
+                "all": paired_intervals(items, by_rank),
+                "exact_word_count_and_context_matched": paired_intervals(
+                    matched, {item["rank"]: by_rank[item["rank"]] for item in matched}),
+            }
     _write_json(root / "reports" / report_name, result)
     print(json.dumps(result, indent=2))
 
@@ -177,8 +192,13 @@ if __name__ == "__main__":
     parser.add_argument("--report-name", default="harper-real-transcript-benchmark.json")
     parser.add_argument("--failure-analysis", action="store_true")
     parser.add_argument("--plausibility-panel", action="store_true")
+    parser.add_argument("--compare-base", type=Path)
+    parser.add_argument("--compare-checkpoint", type=Path)
     args = parser.parse_args()
     if Path(args.report_name).name != args.report_name or not args.report_name.endswith(".json"):
         parser.error("--report-name must be a JSON filename")
+    if bool(args.compare_base) != bool(args.compare_checkpoint):
+        parser.error("--compare-base and --compare-checkpoint must be provided together")
+    compare = (args.compare_base, args.compare_checkpoint) if args.compare_base else None
     run(root, args.dataset, args.base, args.checkpoint, args.device, args.report_name,
-        failure_analysis=args.failure_analysis, plausibility_panel=args.plausibility_panel)
+        failure_analysis=args.failure_analysis, plausibility_panel=args.plausibility_panel, compare=compare)

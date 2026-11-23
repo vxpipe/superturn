@@ -88,3 +88,11 @@ classifier reads the last caller token and tests that right padding
 preserves its logit. The scoring command reads the backbone from the
 fit receipt and checks the expected weights. This is a GPU quality
 comparison. CPU release qualifications have their own gate.
+
+To compare two frozen fits on the same transcript inputs, pass
+`--compare-base REFERENCE_BASE --compare-checkpoint REFERENCE_FIT` to the
+transcript benchmark. Both fits must reference the same synthetic
+manifest. It reports Qwen-minus-reference style differences with a
+paired caller bootstrap on the full near-end set and the frozen
+word-count-matched subset. Threshold 0.5 stays fixed for the operating
+point metrics. Recall at 5% false completes comes from the resampled ROC.
