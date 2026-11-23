@@ -7,12 +7,38 @@ from superturn import diarbench_inventory
 from superturn import basis_stage0
 from superturn.basis_split import Call
 from superturn.basis_stage0 import four_roles_possible
+from superturn.basis_stage0_yield import count_gaps, json_lines
 
 
 def test_four_roles_preserve_whole_speaker_components():
     assert not four_roles_possible([530])
     assert not four_roles_possible([402, 6, 2, 2, 2, 2, 2])
     assert four_roles_possible([2, 2, 29, 29, 1, 1])
+
+
+def test_metadata_capacity_counts_resumes_and_substantive_handoffs():
+    counts, speakers = count_gaps([(0, 4_000, "a"), (4_400, 5_000, "a"),
+                                   (5_300, 7_100, "b"), (7_700, 8_100, "a")])
+    assert counts == {"hold": 1, "shift": 1, "short_other": 1}
+    assert speakers == {"hold": {"a"}, "shift": {"a"}}
+
+
+def test_timing_json_reader_handles_split_records_and_final_line():
+    class Chunked(io.BytesIO):
+        def read(self, size):
+            return super().read(min(size, 4))
+
+    class Meter:
+        def __init__(self):
+            self.bytes = 0
+
+        def advance(self, size):
+            self.bytes += size
+
+    payload = b'{"a": 1}\n{"b": 2}'
+    meter = Meter()
+    assert list(json_lines(Chunked(payload), meter)) == [{"a": 1}, {"b": 2}]
+    assert meter.bytes == len(payload)
 
 
 def test_joint_cut_never_places_a_shared_voice_in_two_roles(monkeypatch):

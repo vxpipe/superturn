@@ -106,7 +106,7 @@ def candidate_rosters(calls, excluded, trials):
     return dict(sorted(result.items()))
 
 
-def joint_cut(calls, trials, durations=None):
+def joint_cut(calls, trials, durations=None, *, membership_out=None):
     frequencies = Counter(person for rows in calls.values() for person in voices(rows))
     multilingual = {person for person, count in frequencies.items() if count > 1}
     names = [call.name for rows in calls.values() for call in rows]
@@ -167,11 +167,13 @@ def joint_cut(calls, trials, durations=None):
     if sum(map(len, roles.values())) != len(set().union(*roles.values())):
         raise AssertionError("a retained Basis person crossed roles")
     digest = sha256(json.dumps(membership, sort_keys=True).encode()).hexdigest()
+    if membership_out is not None:
+        membership_out.update(membership)
     return {"languages": report, "membership_sha256": digest, "shared_language_roster": len(multilingual),
             "joint_role_roster": {role: len(people) for role, people in roles.items()}}
 
 
-def run(root, cut_trials=None):
+def run(root, cut_trials=None, *, estimate=False):
     from huggingface_hub import HfApi
 
     if not (root / ".campaign-machine").is_file():
@@ -189,9 +191,19 @@ def run(root, cut_trials=None):
         durations, received = recording_seconds(source.get("repo"), revision, os.environ["HF_TOKEN"])
         if set(durations) != {(language, call.name) for language, rows in calls.items() for call in rows}:
             raise ValueError("Basis recording manifest does not cover the pinned file inventory")
+        membership = {} if estimate else None
         report = {"revision": revision, "scope": "joint metadata-only four-role candidate",
                   "minimum_held_roster": 30, "provisional_dev_roster": 10, "trials_per_language": cut_trials,
-                  "recording_manifest_bytes": received, **joint_cut(calls, cut_trials, durations)}
+                  "recording_manifest_bytes": received,
+                  **joint_cut(calls, cut_trials, durations, membership_out=membership)}
+        if estimate:
+            from .basis_stage0_yield import estimate_yield
+
+            prior = json.loads((root / "reports/basis-stage0-joint-cut.json").read_text())
+            if report["membership_sha256"] != prior["membership_sha256"]:
+                raise ValueError("the Basis split did not reproduce its verified receipt")
+            estimate_yield(root, source, membership, report["membership_sha256"])
+            return
         _write_json(root / "reports/basis-stage0-joint-cut.json", report)
         print(json.dumps(report, indent=2))
         return
@@ -223,7 +235,10 @@ def run(root, cut_trials=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--cut-trials", type=int, help="search candidate splits allowing bridge-call exclusions")
+    parser.add_argument("--estimate-yield", action="store_true", help="estimate paused turns on the verified split")
     args = parser.parse_args()
     if args.cut_trials is not None and args.cut_trials < 1:
         parser.error("cut trials must be positive")
-    run(data_root(), args.cut_trials)
+    if args.estimate_yield and args.cut_trials is None:
+        parser.error("yield estimation requires the verified cut's trial count")
+    run(data_root(), args.cut_trials, estimate=args.estimate_yield)
