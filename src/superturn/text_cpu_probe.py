@@ -225,6 +225,30 @@ def token_needs(tokenizer, records, name):
     return report
 
 
+def encoder_screen(detail, languages, lengths, idle, loaded, load, expected_workers):
+    counts = {language: detail["token_needs"][language]["full_two_lines"] for language in languages}
+    missing_languages = [language for language, count in counts.items() if not count["n"]]
+    p90 = max((count["p90"] for count in counts.values() if count["n"]), default=None)
+    bracket = next((length for length in lengths if p90 is not None and length >= p90), None)
+    key = str(bracket)
+    gates = {
+        "all_screen_languages_represented": not missing_languages,
+        "measured_at_or_above_required_tokens": bracket is not None,
+        "idle_p99_under_5_ms": bracket is not None
+        and idle[key]["synthetic_text_to_scalar"]["p99_ms"] < 5,
+        "loaded_p99_at_most_10_ms": bracket is not None and loaded is not None
+        and loaded[key]["synthetic_text_to_scalar"]["p99_ms"] <= 10,
+        "all_pinned_load_workers_ran": loaded is not None
+        and load["workers_with_cpu_ticks"] == expected_workers,
+    }
+    return {
+        "languages": languages, "missing_languages": missing_languages, "largest_p90": p90,
+        "conservative_measured_bucket": bracket, "p90_exceeds_128": p90 is not None and p90 > LENGTHS[-1],
+        "timed_input_scope": "English synthetic strings at matching token lengths",
+        "checks": gates, "passed": all(gates.values()),
+    }
+
+
 def timed(call, warmups, iterations):
     for i in range(warmups):
         call(i)
@@ -417,25 +441,9 @@ def run(root, names, corpus, warmups, iterations, report_name, *, lengths=LENGTH
                                      "idle": idle, "loaded": loaded, "load_verification": load}
                 if precision == "int8" and name != "smollm2":
                     languages = ("en",) if name == "minilm-en" else LANGUAGES
-                    p90 = max(detail["token_needs"][language]["full_two_lines"].get("p90", 0)
-                              for language in languages)
-                    required = min(p90, LENGTHS[-1])
-                    bracket = next((length for length in lengths if length >= required), None)
-                    key = str(bracket)
-                    gates = {
-                        "measured_at_or_above_required_tokens": bracket is not None,
-                        "idle_p99_under_5_ms": bracket is not None
-                        and idle[key]["synthetic_text_to_scalar"]["p99_ms"] < 5,
-                        "loaded_p99_at_most_10_ms": bracket is not None and loaded is not None
-                        and loaded[key]["synthetic_text_to_scalar"]["p99_ms"] <= 10,
-                        "all_pinned_load_workers_ran": loaded is not None
-                        and load["workers_with_cpu_ticks"] == len(placement) - 1,
-                    }
-                    detail["screen_at_p90_bucket"] = {
-                        "languages": languages, "largest_p90": p90, "conservative_measured_bucket": bracket,
-                        "p90_exceeds_128": p90 > LENGTHS[-1],
-                        "checks": gates, "passed": all(gates.values()),
-                    }
+                    detail["screen_at_p90_bucket"] = encoder_screen(
+                        detail, languages, lengths, idle, loaded, load, expected_workers=len(placement) - 1,
+                    )
                 _write_json(root / report_name, result)
     finally:
         os.sched_setaffinity(0, affinity)
