@@ -62,7 +62,7 @@ for obj in artifacts.values():
             raise ValueError("the candidate disagrees with its recorded checkpoint hash")
     core.add(path)
 training = set(core)
-for folder in ("cache/own-teacher-targets", "cache/own-teacher-pool",
+for folder in ("cache/own-teacher-targets", "cache/own-teacher-pool", "cache/harper-valley",
                "raw/harper-valley", "raw/livekit_eot_diagnostic", "raw/livekit_multilingual_diagnostic",
                "raw/spring-hindi-paired-pilot", "raw/datahive-conversation-pilot"):
     source = base / folder
@@ -71,6 +71,9 @@ for folder in ("cache/own-teacher-targets", "cache/own-teacher-pool",
     training.update(path for path in source.rglob("*") if path.is_file() and not path.name.endswith((".partial", ".part")))
 for name in ("large-v3.pt", "large-v3.json"):
     training.add(base / "cache/open-speech-encoder" / name)
+hindi_pcm = base / "runs/hindi-single-reviewer-pilot/pcm.npy"
+if hindi_pcm.is_file():
+    training.add(hindi_pcm)
 record = {"artifacts": artifacts, "profiles": {}}
 for profile, paths in (("core", core), ("training", training)):
     files = "".join(f"{path.as_posix()}\n" for path in sorted(paths))
