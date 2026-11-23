@@ -440,7 +440,19 @@ def run(plan, directory, budget, workers, key, *, smoke_source=None, attempts_pe
     if len(accepted) == len(plan):
         stop = "complete"
     meter.finish(stop)
-    ordered = sorted(accepted.values(), key=lambda row: row["slot"])
+    return export_generation(plan, directory, state, stop)
+
+
+def export_generation(plan, directory, state, stop, *, exclude=()):
+    digest = plan_checksum(plan)
+    if state["plan_sha256"] != digest:
+        raise ValueError("the export ledger belongs to a different generation plan")
+    accepted, attempts = state["accepted"], state["attempts"]
+    scale = bool(plan and plan[0].get("scale_family"))
+    exclude = set(exclude)
+    if not exclude <= accepted.keys():
+        raise ValueError("the audit excluded dialogue slots missing from the ledger")
+    ordered = [accepted[slot] for slot in sorted(accepted.keys() - exclude)]
     examples = [example for row in ordered for example in paired_examples(row)]
     payload = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n" for row in ordered)
     temporary = directory / "dialogues.tmp"
@@ -476,6 +488,8 @@ def run(plan, directory, budget, workers, key, *, smoke_source=None, attempts_pe
         receipt["revalidation_rejected"] = state.get("revalidation_rejected", 0)
         receipt["export_rejected"] = len(state.get("excluded_sample_keys", ()))
         receipt["provider_backoffs"] = state.get("provider_backoffs", 0)
+    if exclude:
+        receipt["snapshot_audit_excluded"] = len(exclude)
     _write_json(directory / "receipt.json", receipt)
     display = dict(receipt)
     if scale:

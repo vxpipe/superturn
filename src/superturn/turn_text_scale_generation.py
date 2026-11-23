@@ -3,6 +3,7 @@
 import argparse
 from collections import Counter
 from fcntl import LOCK_EX, LOCK_NB, flock
+from hashlib import sha256
 import json
 import os
 from pathlib import Path
@@ -13,7 +14,7 @@ from .ami_calibration import _write_json
 from .shards import seed_for
 from .sources import data_root
 from .turn_generation import (CATALOGUE, GENERATOR, GEN_INPUT, GEN_OUTPUT, GEN_RESERVE_USD,
-                              normalize, plan_checksum, request_json, run, sample_key)
+                              export_generation, normalize, plan_checksum, request_json, run, sample_key)
 
 SCALE_VERSION = "en-scale-v1"
 BUDGET = 25.
@@ -240,15 +241,35 @@ def main():
     parser.add_argument("--budget-usd", type=float, default=BUDGET)
     parser.add_argument("--workers", type=int, default=10)
     parser.add_argument("--refill-from", type=Path, help="reopen slots rejected in a matching Vast pretraining audit")
+    parser.add_argument("--exclude-from", type=Path, help="filter a snapshot using its matching audit JSON")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--plan", action="store_true")
     mode.add_argument("--smoke", action="store_true", help="use a small portion of the same resumable ledger budget")
+    mode.add_argument("--snapshot", type=Path, help="export the last durable ledger without generation requests")
     args = parser.parse_args()
     plan = build_plan(json.loads(CATALOGUE.read_text()))
     if args.plan:
         print(json.dumps({"plan_sha256": plan_checksum(plan), "target": len(plan),
                           "counts": Counter(f"{row['scale_family']}/{row['split']}" for row in plan)}, indent=2))
         return
+    if args.snapshot:
+        with (args.directory / "run.lock").open("a") as lock:
+            flock(lock, LOCK_EX | LOCK_NB)
+            state = json.loads((args.directory / "state.json").read_text())
+            excluded = []
+            if args.exclude_from:
+                audit = json.loads(args.exclude_from.read_text())
+                payload = "".join(json.dumps(row, ensure_ascii=False, sort_keys=True) + "\n"
+                                  for _, row in sorted(state["accepted"].items())).encode()
+                if (audit["dialogues_sha256"] != sha256(payload).hexdigest()
+                        or audit["plan_sha256"] != state["plan_sha256"]):
+                    raise ValueError("the audit does not match the frozen generation ledger")
+                excluded = audit["excluded_slots"]
+            args.snapshot.mkdir(parents=True, exist_ok=True)
+            export_generation(plan, args.snapshot, state, "user_stopped", exclude=excluded)
+        return
+    if args.exclude_from:
+        parser.error("--exclude-from requires --snapshot")
     key = os.environ.get("GEMINI_API_KEY")
     if not key or not 0 < args.budget_usd <= BUDGET or not 1 <= args.workers <= 10:
         parser.error("set GEMINI_API_KEY, use no more than $25 and use 1–10 workers")

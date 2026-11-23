@@ -1,0 +1,11 @@
+{
+  "source_dialogues_sha256": "d9410442e092e9cd1edfa04012e9c55879defa1a5cd3744636d7f1aecd1f4412",
+  "plan_sha256": "9ed895d4eca80023c6815e76088b727f9094a8d06ce90c0b31db868587e0eebc",
+  "accepted_before_audit": 18536,
+  "accepted_after_audit": 18239,
+  "exclusions_by_reason": {
+    "benchmark_eight_word_overlap": 69,
+    "duplicate_model_input": 228
+  },
+  "release_for_teacher_fit": false
+}
