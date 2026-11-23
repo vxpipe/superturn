@@ -378,11 +378,13 @@ def run(plan, directory, budget, workers, key, *, smoke_source=None, attempts_pe
     meter.skip(len(accepted))
     stop = "attempt_limit"
     extra_attempts = state.get("additional_attempts", {})
+    scale = bool(plan and plan[0].get("scale_family"))
+    worker_limit, consecutive_failures = workers, 0
     with ThreadPoolExecutor(max_workers=workers) as pool:
         while pending := [spec for spec in plan if spec["slot"] not in accepted
                           and attempts.get(spec["slot"], 0) < attempts_per_slot + extra_attempts.get(spec["slot"], 0)]:
             reserve = GEN_RESERVE_USD
-            available = min(workers, int((budget - state["spend_usd"] + 1e-9) / reserve))
+            available = min(worker_limit, int((budget - state["spend_usd"] + 1e-9) / reserve))
             if available <= 0:
                 stop = "budget_cap"
                 break
@@ -395,12 +397,13 @@ def run(plan, directory, budget, workers, key, *, smoke_source=None, attempts_pe
             _write_json(state_path, state)
             jobs = [pool.submit(generate_batch, batch, key, max(attempts[spec["slot"]] for spec in batch))
                     for batch in batches]
+            errors = []
             for job in jobs:
                 try:
                     rows, spend = job.result()
                 except ApiError as error:
                     print(str(error), flush=True)
-                    stop = "provider_error"
+                    errors.append(str(error))
                     continue
                 state["spend_usd"] += spend - reserve
                 if spend > reserve:
@@ -416,8 +419,24 @@ def run(plan, directory, budget, workers, key, *, smoke_source=None, attempts_pe
                     accepted[row["slot"]] = row
                     meter.advance(1)
                 _write_json(state_path, state)
-            if stop in {"provider_error", "reservation_exceeded"}:
+            if stop == "reservation_exceeded":
                 break
+            if not errors:
+                consecutive_failures = 0
+                continue
+            consecutive_failures += 1
+            transient = all(error.startswith(("HTTP 429 ", "HTTP 502 ", "HTTP 503 ", "HTTP 504 ",
+                                              "network timeout or connection failure")) for error in errors)
+            if not scale or not transient or consecutive_failures > 5:
+                stop = "provider_error"
+                break
+            if len(errors) == len(batches):
+                worker_limit = max(1, worker_limit // 2)
+            delay = 5 * 2 ** (consecutive_failures - 1)
+            state["provider_backoffs"] = state.get("provider_backoffs", 0) + 1
+            _write_json(state_path, state)
+            print(f"provider unavailable, resuming from the reserved ledger in {delay}s", flush=True)
+            time.sleep(delay)
     if len(accepted) == len(plan):
         stop = "complete"
     meter.finish(stop)
@@ -451,14 +470,15 @@ def run(plan, directory, budget, workers, key, *, smoke_source=None, attempts_pe
         "estimated_spend_including_unknown_requests_usd": round(state["spend_usd"], 6),
         "stop": stop,
     }
-    if plan and plan[0].get("scale_family"):
+    if scale:
         receipt["accepted_by_family_and_role"] = dict(Counter(
             f"{row['scale_family']}/{row['split']}" for row in ordered))
         receipt["revalidation_rejected"] = state.get("revalidation_rejected", 0)
         receipt["export_rejected"] = len(state.get("excluded_sample_keys", ()))
+        receipt["provider_backoffs"] = state.get("provider_backoffs", 0)
     _write_json(directory / "receipt.json", receipt)
     display = dict(receipt)
-    if plan and plan[0].get("scale_family"):
+    if scale:
         del display["target_per_criterion"]
     print(json.dumps(display, indent=2))
     return receipt

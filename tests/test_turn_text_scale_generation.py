@@ -1,5 +1,6 @@
 import json
 
+from superturn import turn_generation as generator
 from superturn.turn_generation import CATALOGUE
 from superturn.turn_text_scale_generation import TOTALS, build_plan, clean_scale_row, scale_examples
 from superturn.turn_text_scale_trial import evaluate_dialogues, harper_continuous_turns
@@ -50,3 +51,23 @@ def test_overlap_transcript_joins_segments_from_the_same_speaker_only():
     assert list(harper_continuous_turns(reversed(rows))) == [
         "can you check which times are available next week", "i can look", "the calendar is open",
     ]
+
+
+def test_retry_keeps_a_separate_spend_reservation(monkeypatch, tmp_path):
+    spec = {"scale_family": "G3", "slot": "en/one", "language": "en", "criterion": "example",
+            "native_script": "Latn", "pause_style": "G3", "split": "train"}
+    delays = []
+
+    def fake_batch(rows, key, attempt):
+        if attempt == 1:
+            raise generator.ApiError("HTTP 503 from model")
+        assert attempt == 2
+        return [{**rows[0], "previous_agent": "where will you be", "caller_before_pause": "at home",
+                 "caller_after_pause": "", "next_agent": "someone can meet you there"}], .006
+
+    monkeypatch.setattr(generator, "generate_batch", fake_batch)
+    monkeypatch.setattr(generator.time, "sleep", delays.append)
+    receipt = generator.run([spec], tmp_path, .10, 1, "test")
+    assert receipt["stop"] == "complete" and receipt["accepted_dialogues"] == 1
+    assert receipt["estimated_spend_including_unknown_requests_usd"] == .044
+    assert receipt["provider_backoffs"] == 1 and delays == [5]
