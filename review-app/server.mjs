@@ -10,11 +10,13 @@ const bundle = resolve(process.env.REVIEW_BUNDLE ?? join(appDir, '../data/review
 const independent = process.argv.includes('--independent');
 const basis = process.argv.includes('--basis');
 const harper = process.argv.includes('--harper');
+const harperSupplement = process.argv.includes('--harper-supplement');
 const restricted = basis || harper;
 if (basis && (!independent || bundle !== '/dev/shm/superturn-basis-review')) {
   throw new Error('Basis review requires the private memory-backed independent packet');
 }
-if (harper && (!independent || basis || bundle !== '/dev/shm/superturn-harper-review')) {
+const harperRoot = harperSupplement ? '/dev/shm/superturn-harper-supplement' : '/dev/shm/superturn-harper-review';
+if ((harperSupplement && !harper) || (harper && (!independent || basis || bundle !== harperRoot))) {
   throw new Error('Harper review requires the dedicated independent packet');
 }
 const packetDir = join(bundle, harper ? 'harper-review' : independent ? 'hindi-review-b' : 'hindi-review-a');
@@ -116,7 +118,7 @@ async function start() {
   await server.register(fastifyStatic, { root: dist, serve: !dev });
   const ballots = (!independent || harper ? process.env.REVIEW_BALLOTS : undefined) ?? join(packetDir, 'ballots');
   registerDraftStore(server, resolve(ballots),
-    harper ? 'superturn_harper_reviewer'
+    harperSupplement ? 'superturn_harper_supplement_reviewer' : harper ? 'superturn_harper_reviewer'
       : basis ? 'superturn_basis_reviewer' : independent ? 'superturn_independent_reviewer' : undefined);
   const waveforms = new Map();
   server.get('/api/packet', async (_request, reply) => {

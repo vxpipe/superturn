@@ -128,3 +128,12 @@ each recording reviewed, including recordings with no eligible pause.
 The app autosaves the ballot separately from the memory-backed audio.
 Score a completed draft on Vast with
 `python -m superturn.harper_text_review SAVED_DRAFT.json`.
+
+Build the separate causal development supplement on Vast with
+`python -m superturn.harper_text_review --build-supplement`.
+From the project checkout run `bin/vast-basis-review start harper-supplement`
+and `bin/vast-basis-review tunnel harper-supplement`. Forward port 8771
+through rocksalt with `ssh -N -L 8771:127.0.0.1:8771 rocksalt` and open
+`http://127.0.0.1:8771/`. Its autosave and blind reference have separate
+storage. Score the completed supplement with
+`python -m superturn.harper_text_review --score-supplement SAVED_DRAFT.json`.

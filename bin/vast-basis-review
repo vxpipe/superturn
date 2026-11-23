@@ -3,9 +3,13 @@
 source "$(dirname "$0")/_lib.sh"
 
 case "${2:-basis}" in
-  basis) packet=basis; port=8769 ;;
-  harper) packet=harper; port=8770 ;;
-  *) die "packet must be basis or harper" ;;
+  basis) packet=basis; port=8769; bundle=superturn-basis-review; flags=--basis; ballots="" ;;
+  harper) packet=harper; port=8770; bundle=superturn-harper-review; flags=--harper
+          ballots="REVIEW_BALLOTS=$REMOTE_DATA/labels/harper-text-review" ;;
+  harper-supplement) packet=harper-supplement; port=8771; bundle=superturn-harper-supplement
+          flags="--harper --harper-supplement"
+          ballots="REVIEW_BALLOTS=$REMOTE_DATA/labels/harper-text-supplement-review" ;;
+  *) die "packet must be basis, harper or harper-supplement" ;;
 esac
 
 case "${1:-}" in
@@ -18,12 +22,8 @@ case "${1:-}" in
     rsync -az -e "ssh ${opts[*]}" "$ROOT/review-app/dist" "$ROOT/review-app/node_modules" \
       "$SSH_HOST:$REMOTE_REPO/review-app/"
     rsync -azL -e "ssh ${opts[*]}" "$node_bin" "$SSH_HOST:$REMOTE_REPO/review-app/.runtime/node"
-    ballots=""
-    if [[ "$packet" == harper ]]; then
-      ballots="REVIEW_BALLOTS=$REMOTE_DATA/labels/harper-text-review"
-    fi
     "$ROOT/bin/vast-run" -n "$packet-review" \
-      "ulimit -c 0; cd review-app && $ballots REVIEW_BUNDLE=/dev/shm/superturn-$packet-review PORT=$port .runtime/node server.mjs --independent --$packet"
+      "ulimit -c 0; cd review-app && $ballots REVIEW_BUNDLE=/dev/shm/$bundle PORT=$port .runtime/node server.mjs --independent $flags"
     ;;
   tunnel)
     ssh_target
@@ -31,5 +31,5 @@ case "${1:-}" in
     exec ssh "${opts[@]}" -o ExitOnForwardFailure=yes -fN \
       -L "127.0.0.1:$port:127.0.0.1:$port" "$SSH_HOST"
     ;;
-  *) die "usage: bin/vast-basis-review start|tunnel [basis|harper]" ;;
+  *) die "usage: bin/vast-basis-review start|tunnel [basis|harper|harper-supplement]" ;;
 esac

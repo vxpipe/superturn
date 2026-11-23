@@ -18,6 +18,8 @@ from .shards import seed_for
 from .sources import data_root
 
 REVIEW_ROOT = Path("/dev/shm/superturn-harper-review")
+SUPPLEMENT_ROOT = Path("/dev/shm/superturn-harper-supplement")
+SUPPLEMENT_REPORT = "harper-text-supplemental-listening-packet.json"
 DURATION = 20
 SAMPLES = DURATION * RATE
 AUDIT_TARGET = 11
@@ -104,8 +106,9 @@ class ListeningPacket:
         selected.extend([row for row in self.uniform if row.call not in used_calls][:UNIFORM_TARGET])
         return sorted(selected, key=lambda row: seed_for("harper-blind-order-v1", row.rank))
 
-    def write(self, root):
-        picked = self._select()
+    def write(self, root, *, picked=None, report_name="harper-text-listening-packet.json", supplemental_counts=None):
+        if picked is None:
+            picked = self._select()
         if not picked:
             raise ValueError("Harper replay yielded no eligible excerpts")
         ids = [f"call-{row.rank:016x}" for row in picked]
@@ -140,9 +143,13 @@ class ListeningPacket:
             "windows_by_cohort": dict(Counter(row.cohort for row in picked)),
             "unique_calls": len({row.call for row in picked}),
             "unique_callers": len({row.caller for row in picked}),
-            "unavailable": dict(self.unavailable), "shift_population_expected": AUDIT_TARGET,
+            "unavailable": dict(self.unavailable),
         }
-        _write_json(root / "reports/harper-text-listening-packet.json", report)
+        if supplemental_counts is None:
+            report["shift_population_expected"] = AUDIT_TARGET
+        else:
+            report["previously_uncovered_candidates_within_gap_cap"] = supplemental_counts
+        _write_json(root / "reports" / report_name, report)
         print(json.dumps(report, indent=2), flush=True)
 
 
@@ -266,7 +273,8 @@ def summarize_calls(calls):
 
 def verified_packet(root, review_root):
     reference = review_root / "private-reference.json"
-    receipt = json.loads((root / "reports/harper-text-listening-packet.json").read_text())
+    report_name = SUPPLEMENT_REPORT if review_root == SUPPLEMENT_ROOT else "harper-text-listening-packet.json"
+    receipt = json.loads((root / "reports" / report_name).read_text())
     payload = reference.read_bytes()
     if sha256(payload).hexdigest() != receipt["private_reference_sha256"]:
         raise ValueError("the Harper listening reference changed")
@@ -311,7 +319,7 @@ def audit_input_coverage(root, review_root=REVIEW_ROOT):
     lines = payload.splitlines()
     for line in lines:
         row = json.loads(line)
-        packed[row["call"], row["caller_sample"]] = row["label"], row["gap_ms"] * RATE / 1000
+        packed[row["call"], row["caller_sample"]] = row["label"], row["gap_ms"] * RATE / 1000, row["caller"]
     if len(packed) != pack_receipt["rows"] or len(lines) != len(packed):
         raise ValueError("unexpected causal input membership")
 
@@ -341,7 +349,7 @@ def audit_input_coverage(root, review_root=REVIEW_ROOT):
                 stratum = f"{record['cohort']}/{label}/{band}"
                 seen.setdefault(stratum, set()).add(key)
                 if key in packed:
-                    if packed[key] != (label, gap):
+                    if packed[key][:2] != (label, gap):
                         raise ValueError("the review and development label or gap disagree")
                     covered.setdefault(stratum, set()).add(key)
 
@@ -356,17 +364,87 @@ def audit_input_coverage(root, review_root=REVIEW_ROOT):
         "packed_inputs_sha256": pack_receipt["serialized_sha256"],
         "windows_reproduced": len(packet["windows"]),
         "packed_inputs_by_gap_and_label": dict(Counter(f"{label}/{gap_band(gap * 1000 / RATE)}"
-                                                       for label, gap in packed.values())),
+                                                       for label, gap, _ in packed.values())),
         "unique_packed_inputs_covered": len(set().union(*covered.values())),
         "by_cohort_label_and_gap": {name: {"proposals": len(keys), "packed_inputs": len(covered.get(name, ()))}
                                     for name, keys in sorted(seen.items())},
     }
     _write_json(root / "reports/harper-text-audit-input-coverage.json", result)
     print(json.dumps(result, indent=2))
+    return packed, set().union(*covered.values()), packet
 
 
-def score(root, ballot):
-    packet, receipt = verified_packet(root, REVIEW_ROOT)
+def supplemental_packet(root):
+    """Extend the factual check to missing deployment shifts and longer pauses."""
+    from .harper_valley_audit import audit_call
+
+    packet = ListeningPacket(SUPPLEMENT_ROOT, "pending")
+    packed, already_covered, original = audit_input_coverage(root)
+    packet.membership = original["membership_sha256"]
+    quotas = {
+        ("shift", "300_to_800_ms"): None,
+        ("hold", "300_to_800_ms"): 5,
+        ("hold", "over_800_ms"): 8,
+        ("shift", "over_800_ms"): 8,
+    }
+    existing_calls = {window["call"] for window in original["windows"].values()}
+    groups = {stratum: [] for stratum in quotas}
+    for (call, stop), (label, gap, caller) in packed.items():
+        if (call, stop) in already_covered:
+            continue
+        band = gap_band(gap * 1000 / RATE)
+        rank = seed_for("harper-supplement-v1", packet.membership, call, stop)
+        if gap > SAMPLES - 5 * RATE:
+            packet.unavailable[f"{label}_{band}_gap_exceeds_clip_capacity"] += 1
+            continue
+        groups[label, band].append((call in existing_calls, rank, call, stop, int(gap), caller))
+
+    detect = silero()
+    picked, used_calls = [], set()
+    total = sum(len(groups[stratum]) if quota is None else quota for stratum, quota in quotas.items())
+    progress = Progress("harper-text-supplement", total, "windows")
+    for (label, band), quota in quotas.items():
+        candidates = sorted(groups[label, band])
+        target = len(candidates) if quota is None else quota
+        count = 0
+        for prior_call, rank, call, stop, gap, caller in candidates:
+            if quota is not None and (prior_call or call in used_calls):
+                continue
+            excerpt = []
+
+            def render(audio, origins, _vad, _words, _omissions, start, end):
+                edge = stop + origins["caller"] - start
+                onset = edge + gap
+                low = max(0, onset + 2 * RATE - SAMPLES)
+                high = min(end - start - SAMPLES, edge - 3 * RATE)
+                if low > high:
+                    return
+                left = low + rank % (high - low + 1)
+                tracks = {role: pcm[start - origins[role]:end - origins[role]] for role, pcm in audio.items()}
+                proposals = [(edge, onset, label, "caller", "caller" if label == "hold" else "agent")]
+                excerpt.append(packet._window(call, caller, left, rank, tracks, proposals, edge - left,
+                                              f"supplement_{label}_{band}"))
+
+            audit_call(root / "raw/harper-valley", call, detect, recover_clock=True, observe=render)
+            if not excerpt:
+                packet.unavailable[f"{label}_{band}_anchor_cannot_fit"] += 1
+                continue
+            picked.extend(excerpt)
+            used_calls.add(call)
+            count += 1
+            progress.advance(1)
+            if count == target:
+                break
+        if count != target:
+            raise ValueError(f"supplemental {label}/{band} listening quota could not be filled")
+    picked.sort(key=lambda row: seed_for("harper-supplement-blind-order-v1", row.rank))
+    pool_counts = {f"{label}/{band}": len(rows) for (label, band), rows in groups.items()}
+    packet.write(root, picked=picked, report_name=SUPPLEMENT_REPORT, supplemental_counts=pool_counts)
+    progress.finish()
+
+
+def score(root, ballot, *, review_root=REVIEW_ROOT):
+    packet, receipt = verified_packet(root, review_root)
     windows = packet["windows"]
     ballot_bytes = ballot.read_bytes()
     saved = json.loads(ballot_bytes)["draft"]["windows"]
@@ -395,18 +473,26 @@ def score(root, ballot):
               "primary_stop_tolerance_ms": 250, "sensitivity_stop_tolerance_ms": 80,
               "ballot_sha256": sha256(ballot_bytes).hexdigest(),
               "private_reference_sha256": receipt["private_reference_sha256"]}
-    _write_json(root / "reports/harper-text-listening-score.json", result)
+    report_name = ("harper-text-supplemental-listening-score.json" if review_root == SUPPLEMENT_ROOT
+                   else "harper-text-listening-score.json")
+    _write_json(root / "reports" / report_name, result)
     print(json.dumps(result, indent=2))
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("ballot", nargs="?", type=Path, help="complete review draft from the local-loopback reviewer")
-    parser.add_argument("--input-coverage", action="store_true", help="cross-check sealed windows against causal inputs")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--input-coverage", action="store_true", help="cross-check sealed windows against causal inputs")
+    mode.add_argument("--build-supplement", action="store_true", help="render a separate blind development supplement")
+    mode.add_argument("--score-supplement", action="store_true", help="score a ballot for the supplement")
     args = parser.parse_args()
-    if args.input_coverage == (args.ballot is not None):
+    builds = args.input_coverage or args.build_supplement
+    if builds == (args.ballot is not None):
         parser.error("provide either a completed ballot or --input-coverage")
     if args.input_coverage:
         audit_input_coverage(data_root())
+    elif args.build_supplement:
+        supplemental_packet(data_root())
     else:
-        score(data_root(), args.ballot)
+        score(data_root(), args.ballot, review_root=SUPPLEMENT_ROOT if args.score_supplement else REVIEW_ROOT)
